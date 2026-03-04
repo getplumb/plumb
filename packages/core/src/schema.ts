@@ -68,6 +68,16 @@ export const CREATE_VEC_RAW_LOG = `
   )
 `;
 
+/**
+ * sqlite-vec virtual table for KNN vector search over facts.
+ * FLOAT[384] matches BAAI/bge-small-en-v1.5 output dimension.
+ */
+export const CREATE_VEC_FACTS = `
+  CREATE VIRTUAL TABLE IF NOT EXISTS vec_facts USING vec0(
+    embedding FLOAT[384]
+  )
+`;
+
 export function applySchema(db: import('better-sqlite3').Database): void {
   db.exec(CREATE_FACTS_TABLE);
   for (const idx of CREATE_FACTS_INDEXES) {
@@ -78,4 +88,12 @@ export function applySchema(db: import('better-sqlite3').Database): void {
     db.exec(idx);
   }
   db.exec(CREATE_VEC_RAW_LOG);
+  db.exec(CREATE_VEC_FACTS);
+
+  // Conditional migration: add vec_rowid column to facts if it doesn't exist yet.
+  const columns = db.pragma('table_info(facts)') as Array<{ name: string }>;
+  const hasVecRowid = columns.some((c) => c.name === 'vec_rowid');
+  if (!hasVecRowid) {
+    db.exec('ALTER TABLE facts ADD COLUMN vec_rowid INTEGER');
+  }
 }

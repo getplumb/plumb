@@ -5,49 +5,14 @@ import { mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { applySchema } from './schema.js';
 import type { MemoryStore } from './store.js';
-import { DecayRate, type Fact, type IngestResult, type MessageExchange, type SearchResult, type StoreStatus } from './types.js';
+import type { Fact, IngestResult, MessageExchange, SearchResult, StoreStatus } from './types.js';
 import { extractFacts } from './extractor.js';
 import { embed } from './embedder.js';
 import { formatExchange } from './chunker.js';
 import { searchRawLog, type RawLogSearchResult } from './raw-log-search.js';
+import { searchFacts } from './fact-search.js';
 
 export type { RawLogSearchResult };
-
-/** Row shape as stored in SQLite (all values are TEXT/REAL/INTEGER). */
-interface FactRow {
-  id: string;
-  user_id: string;
-  subject: string;
-  predicate: string;
-  object: string;
-  confidence: number;
-  decay_rate: string;
-  timestamp: string;
-  source_session_id: string;
-  source_session_label: string | null;
-  context: string | null;
-  deleted_at: string | null;
-}
-
-
-function rowToFact(row: FactRow): Fact {
-  return {
-    id: row.id,
-    subject: row.subject,
-    predicate: row.predicate,
-    object: row.object,
-    confidence: row.confidence,
-    decayRate: row.decay_rate as DecayRate,
-    timestamp: new Date(row.timestamp),
-    sourceSessionId: row.source_session_id,
-    ...(row.source_session_label !== null ? { sourceSessionLabel: row.source_session_label } : {}),
-    ...(row.context !== null ? { context: row.context } : {}),
-  };
-}
-
-function decayRateToString(rate: DecayRate): string {
-  return rate;
-}
 
 export interface LocalStoreOptions {
   /** Absolute path to the SQLite database file. Defaults to ~/.plumb/memory.db */
@@ -78,59 +43,55 @@ export class LocalStore implements MemoryStore {
 
   async store(fact: Omit<Fact, 'id'>): Promise<string> {
     const id = crypto.randomUUID();
-    const stmt = this.#db.prepare<[
-      string, string, string, string, string,
-      number, string, string, string,
-      string | null, string | null
-    ]>(`
-      INSERT INTO facts
-        (id, user_id, subject, predicate, object,
-         confidence, decay_rate, timestamp, source_session_id,
-         source_session_label, context)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
 
-    stmt.run(
-      id,
-      this.#userId,
-      fact.subject,
-      fact.predicate,
-      fact.object,
-      fact.confidence,
-      decayRateToString(fact.decayRate),
-      fact.timestamp.toISOString(),
-      fact.sourceSessionId,
-      fact.sourceSessionLabel ?? null,
-      fact.context ?? null,
-    );
+    // Embed concatenated fact text for vector search.
+    const text = `${fact.subject} ${fact.predicate} ${fact.object} ${fact.context ?? ''}`.trim();
+    const embedding = await embed(text);
+    const vecBlob = Buffer.from(embedding.buffer);
+
+    const doInsert = this.#db.transaction(() => {
+      this.#db.prepare<[
+        string, string, string, string, string,
+        number, string, string, string,
+        string | null, string | null
+      ]>(`
+        INSERT INTO facts
+          (id, user_id, subject, predicate, object,
+           confidence, decay_rate, timestamp, source_session_id,
+           source_session_label, context)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        id,
+        this.#userId,
+        fact.subject,
+        fact.predicate,
+        fact.object,
+        fact.confidence,
+        fact.decayRate,
+        fact.timestamp.toISOString(),
+        fact.sourceSessionId,
+        fact.sourceSessionLabel ?? null,
+        fact.context ?? null,
+      );
+
+      // Insert embedding into vec_facts (auto-assigned rowid).
+      const vecInfo = this.#db.prepare<[Buffer]>(
+        `INSERT INTO vec_facts(embedding) VALUES (?)`,
+      ).run(vecBlob);
+
+      // Back-fill vec_rowid so fact-search can join without a mapping table.
+      this.#db.prepare<[number | bigint, string]>(
+        `UPDATE facts SET vec_rowid = ? WHERE id = ?`,
+      ).run(vecInfo.lastInsertRowid, id);
+    });
+
+    doInsert();
 
     return id;
   }
 
   async search(query: string, limit = 20): Promise<readonly SearchResult[]> {
-    // TODO T-004: replace with hybrid search (BM25 + vector via sqlite-vec + RRF + cross-encoder rerank).
-    // For now: basic SQL LIKE search across subject, predicate, object, context.
-    const pattern = `%${query}%`;
-    const rows = this.#db.prepare<[string, string, string, string, string, number], FactRow>(`
-      SELECT * FROM facts
-      WHERE user_id = ?
-        AND deleted_at IS NULL
-        AND (subject LIKE ? OR predicate LIKE ? OR object LIKE ? OR context LIKE ?)
-      ORDER BY timestamp DESC
-      LIMIT ?
-    `).all(this.#userId, pattern, pattern, pattern, pattern, limit);
-
-    const now = Date.now();
-    return rows.map((row) => {
-      const fact = rowToFact(row);
-      const ageInDays = (now - fact.timestamp.getTime()) / (1000 * 60 * 60 * 24);
-      return {
-        fact,
-        // Placeholder score: 1.0 — T-006 will replace with full decay computation.
-        score: 1.0,
-        ageInDays,
-      };
-    });
+    return searchFacts(this.#db, this.#userId, query, limit);
   }
 
   async delete(id: string): Promise<void> {
