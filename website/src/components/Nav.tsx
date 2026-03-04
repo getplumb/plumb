@@ -17,7 +17,7 @@ export default function Nav() {
         {/* Desktop nav */}
         <nav className="hidden items-center gap-8 md:flex">
           <a
-            href="https://docs.getplumb.dev"
+            href="https://github.com/getplumb/plumb"
             className="text-sm text-text-secondary transition-colors hover:text-text-primary"
           >
             Docs
@@ -27,12 +27,6 @@ export default function Nav() {
             className="text-sm text-text-secondary transition-colors hover:text-text-primary"
           >
             GitHub
-          </a>
-          <a
-            href="https://getplumb.dev/signup"
-            className="rounded-md bg-accent px-4 py-1.5 text-sm font-medium text-white transition-colors hover:bg-accent-hover"
-          >
-            Sign up
           </a>
         </nav>
 
@@ -68,7 +62,7 @@ export default function Nav() {
         <div className="border-t border-border bg-surface px-6 py-4 md:hidden">
           <nav className="flex flex-col gap-4">
             <a
-              href="https://docs.getplumb.dev"
+              href="https://github.com/getplumb/plumb"
               className="text-sm text-text-secondary hover:text-text-primary"
               onClick={() => setOpen(false)}
             >
@@ -80,13 +74,6 @@ export default function Nav() {
               onClick={() => setOpen(false)}
             >
               GitHub
-            </a>
-            <a
-              href="https://getplumb.dev/signup"
-              className="inline-block w-fit rounded-md bg-accent px-4 py-1.5 text-sm font-medium text-white hover:bg-accent-hover"
-              onClick={() => setOpen(false)}
-            >
-              Sign up
             </a>
           </nav>
         </div>

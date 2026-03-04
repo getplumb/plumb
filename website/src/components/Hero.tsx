@@ -42,6 +42,16 @@ export default function Hero() {
               <span className="text-text-primary">plumb init</span>
             </div>
           </div>
+
+          {/* GitHub star badge */}
+          <div className="mt-4 flex justify-center">
+            <a href="https://github.com/getplumb/plumb" target="_blank" rel="noopener noreferrer">
+              <img
+                src="https://img.shields.io/github/stars/getplumb/plumb?style=flat&label=Stars&color=6366F1"
+                alt="GitHub Stars"
+              />
+            </a>
+          </div>
         </motion.div>
 
         {/* CTAs */}
@@ -49,17 +59,17 @@ export default function Hero() {
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5, delay: 0.3 }}
-          className="mt-8 flex flex-col items-center gap-4 sm:flex-row-reverse sm:justify-center"
+          className="mt-8 flex flex-col items-center gap-3"
         >
-          <span className="inline-flex items-center rounded-md bg-accent px-6 py-2.5 text-sm font-medium text-white">
-            Interested in hosted? <span className="ml-1 select-all font-normal opacity-90">hello@getplumb.dev</span>
-          </span>
           <a
-            href="https://docs.getplumb.dev/self-host"
-            className="text-sm text-text-secondary transition-colors hover:text-text-primary"
+            href="https://github.com/getplumb/plumb"
+            className="rounded-md bg-accent px-6 py-2.5 text-sm font-medium text-white transition-colors hover:bg-accent-hover"
           >
-            Self-host for free &rarr;
+            Self-host for free
           </a>
+          <p className="text-xs text-text-muted">
+            Hosted version coming soon — hello@getplumb.dev
+          </p>
         </motion.div>
       </div>
     </section>

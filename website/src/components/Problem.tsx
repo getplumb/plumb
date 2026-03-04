@@ -34,7 +34,7 @@ const problems = [
 
 export default function Problem() {
   return (
-    <section className="border-t border-border py-24 md:py-32">
+    <section className="border-t border-border bg-surface py-24 md:py-32">
       <div className="mx-auto max-w-5xl px-6">
         <motion.h2
           initial={{ opacity: 0, y: 20 }}

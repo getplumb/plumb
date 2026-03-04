@@ -41,7 +41,7 @@ const plans = [
 
 export default function Pricing() {
   return (
-    <section className="border-t border-border py-24 md:py-32">
+    <section className="border-t border-border bg-surface py-24 md:py-32">
       <div className="mx-auto max-w-4xl px-6">
         <motion.h2
           initial={{ opacity: 0, y: 20 }}
@@ -97,18 +97,12 @@ export default function Pricing() {
                 ))}
               </ul>
 
-              {plan.highlighted ? (
-                <div className="mt-8 text-center text-sm text-text-muted">
-                  Early access: <span className="text-text-secondary select-all">hello@getplumb.dev</span>
-                </div>
-              ) : (
-                <a
-                  href={plan.href}
-                  className="mt-8 block rounded-md border border-border px-4 py-2.5 text-center text-sm font-medium text-text-primary transition-colors hover:bg-surface"
-                >
-                  {plan.cta}
-                </a>
-              )}
+              <a
+                href={plan.href}
+                className="mt-8 block rounded-md border border-border px-4 py-2.5 text-center text-sm font-medium text-text-primary transition-colors hover:bg-surface"
+              >
+                {plan.cta}
+              </a>
             </motion.div>
           ))}
         </div>
