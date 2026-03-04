@@ -1,0 +1,91 @@
+---
+title: Self-Hosting
+description: Run Plumb from source locally
+---
+
+# Self-Hosting
+
+Run Plumb directly from the GitHub repository. MIT licensed, fully local, no cloud dependencies.
+
+## Prerequisites
+
+- Node.js 18+ (20+ recommended)
+- pnpm 9+
+- Git
+
+## Clone and Install
+
+```bash
+git clone https://github.com/getplumb/plumb.git
+cd plumb
+pnpm install
+```
+
+## Build the MCP Server
+
+```bash
+pnpm --filter @plumb/mcp-server build
+```
+
+This compiles TypeScript to JavaScript and prepares the MCP server for execution.
+
+## Run Locally
+
+### Initialize the database
+
+```bash
+node packages/mcp-server/dist/index.js init
+```
+
+Creates `~/.plumb/memory.db` with the required schema.
+
+### Start the MCP server
+
+```bash
+node packages/mcp-server/dist/index.js serve
+```
+
+The server runs on stdio, communicating via JSON-RPC as per the MCP specification.
+
+## Configure Your MCP Client
+
+Point your MCP client to the local build:
+
+```json
+{
+  "mcpServers": {
+    "plumb": {
+      "command": "node",
+      "args": [
+        "/path/to/plumb/packages/mcp-server/dist/index.js",
+        "serve"
+      ]
+    }
+  }
+}
+```
+
+Replace `/path/to/plumb` with your actual clone path.
+
+## Development Mode
+
+For active development with automatic rebuilds:
+
+```bash
+pnpm --filter @plumb/mcp-server dev
+```
+
+This runs TypeScript in watch mode. Changes to source files trigger recompilation.
+
+## Data Location
+
+- **Database**: `~/.plumb/memory.db` (SQLite)
+- **Logs**: `~/.plumb/logs/` (if configured)
+
+All data stays local. No external services required.
+
+## Next Steps
+
+- [Understand the architecture](/how-it-works)
+- [Explore available MCP tools](/mcp-tools)
+- [Contribute on GitHub](https://github.com/getplumb/plumb)

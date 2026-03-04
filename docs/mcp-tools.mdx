@@ -1,0 +1,118 @@
+---
+title: MCP Tools
+description: Available MCP tools reference
+---
+
+# MCP Tools Reference
+
+Plumb exposes three primary tools via the Model Context Protocol.
+
+## search_memory
+
+Search stored conversations and facts using semantic search.
+
+**Use case**: Retrieve relevant context from past interactions.
+
+### Parameters
+
+- `query` (string, required): Search query text
+- `limit` (number, optional): Maximum results to return (default: 10)
+- `min_confidence` (number, optional): Minimum confidence score for facts (default: 0.5)
+
+### Returns
+
+Array of search results, each containing:
+
+- `type`: "conversation" or "fact"
+- `content`: The conversation text or fact data
+- `score`: Relevance score (0.0-1.0)
+- `timestamp`: When this was stored
+- `source`: Reference to the original conversation
+
+### Example
+
+```json
+{
+  "query": "user's preferred programming language",
+  "limit": 5,
+  "min_confidence": 0.7
+}
+```
+
+## ingest
+
+Store a new conversation exchange in both Layer 1 (raw log) and trigger Layer 2 (fact extraction).
+
+**Use case**: Add new context to memory after each conversation turn.
+
+### Parameters
+
+- `user_message` (string, required): User's message text
+- `assistant_message` (string, required): AI's response text
+- `metadata` (object, optional): Additional context (session_id, user_id, tags, etc.)
+
+### Returns
+
+- `ingested`: Boolean indicating success
+- `conversation_id`: ID of the stored conversation exchange
+- `facts_extracted`: Number of new facts extracted
+
+### Example
+
+```json
+{
+  "user_message": "I always use vim for editing code",
+  "assistant_message": "Got it, I'll remember you prefer vim as your editor.",
+  "metadata": {
+    "session_id": "sess_abc123",
+    "user_id": "user_xyz"
+  }
+}
+```
+
+## get_facts
+
+Retrieve all stored facts matching a subject or predicate filter.
+
+**Use case**: Query structured knowledge directly without semantic search.
+
+### Parameters
+
+- `subject` (string, optional): Filter facts by subject
+- `predicate` (string, optional): Filter facts by predicate
+- `min_confidence` (number, optional): Minimum confidence threshold (default: 0.5)
+- `limit` (number, optional): Maximum facts to return (default: 50)
+
+### Returns
+
+Array of facts, each containing:
+
+- `subject`: What the fact is about
+- `predicate`: The relationship or attribute
+- `object`: The value
+- `confidence`: Current confidence score (0.0-1.0)
+- `source`: Reference to the conversation where this was learned
+- `created_at`: When the fact was first extracted
+- `updated_at`: When the fact was last reinforced or modified
+
+### Example
+
+```json
+{
+  "subject": "user",
+  "min_confidence": 0.8
+}
+```
+
+Returns all high-confidence facts about the user.
+
+## Future Tools (Planned)
+
+- `forget`: Explicitly delete specific facts or conversations
+- `update_fact`: Manually adjust fact confidence or content
+- `export_memory`: Export all data to JSON for backup
+- `import_memory`: Import previously exported memory data
+
+---
+
+For implementation details, see the [source code](https://github.com/getplumb/plumb/tree/main/packages/mcp-server).

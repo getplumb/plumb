@@ -1,0 +1,83 @@
+---
+title: Quickstart
+description: Get Plumb running in 5 minutes
+---
+
+# Quickstart
+
+Install and configure Plumb as an MCP server for Claude Desktop, OpenClaw, or any MCP-compatible client.
+
+## Install
+
+**Coming soon:** The `@plumb/mcp-server` package will be available on npm. For now, see [Self-Hosting](/self-hosting) to run from source.
+
+```bash
+npm install -g @plumb/mcp-server@latest
+```
+
+## Initialize
+
+Run the initialization command to set up your local database:
+
+```bash
+plumb init
+```
+
+This creates a SQLite database at `~/.plumb/memory.db` and initializes the schema.
+
+## Configure MCP Client
+
+Add Plumb to your MCP client configuration.
+
+### Claude Desktop (claude_desktop_config.json)
+
+```json
+{
+  "mcpServers": {
+    "plumb": {
+      "command": "plumb",
+      "args": ["serve"]
+    }
+  }
+}
+```
+
+### Generic MCP Configuration (mcp.json)
+
+```json
+{
+  "mcpServers": {
+    "plumb": {
+      "command": "plumb",
+      "args": ["serve"]
+    }
+  }
+}
+```
+
+### OpenClaw Configuration
+
+Add to your OpenClaw MCP server configuration:
+
+```json
+{
+  "plumb": {
+    "command": "plumb",
+    "args": ["serve"]
+  }
+}
+```
+
+## Verify
+
+Restart your MCP client. Plumb should appear in your available tools:
+
+- `search_memory` - Search stored memories and facts
+- `ingest` - Store new conversation context
+- `get_facts` - Retrieve extracted facts
+
+## Next Steps
+
+- [Learn how Plumb works](/how-it-works) - Two-layer architecture explained
+- [Self-host from source](/self-hosting) - Clone and build locally
+- [MCP Tools Reference](/mcp-tools) - Complete tool documentation
