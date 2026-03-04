@@ -1,0 +1,17 @@
+export type { Fact, IngestResult, MessageExchange, SearchResult, StoreStatus } from './types.js';
+export { DecayRate } from './types.js';
+export type { MemoryStore } from './store.js';
+export type { RawLogChunk, ScoreResult } from './scorer.js';
+export { computeDecay, scoreFact, scoreRawLog } from './scorer.js';
+export { LocalStore } from './local-store.js';
+export type { LocalStoreOptions, RawLogSearchResult } from './local-store.js';
+export { extractFacts } from './extractor.js';
+export { callLLM } from './llm-client.js';
+export { embed, embedQuery, rerankScores, EMBED_DIM } from './embedder.js';
+export { Bm25, tokenize } from './bm25.js';
+export { chunkExchange, formatExchange, CHUNK_WORDS, OVERLAP_WORDS } from './chunker.js';
+export type { Chunk } from './chunker.js';
+export { searchRawLog } from './raw-log-search.js';
+export type { ScoredFact, RawChunk, MemoryContext, ReadPathOptions, ReadPathStore } from './read-path.js';
+export { buildMemoryContext } from './read-path.js';
+export { formatContextBlock, formatAge } from './context-builder.js';

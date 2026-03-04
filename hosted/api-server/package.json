@@ -1,0 +1,27 @@
+{
+  "name": "@plumb/api-server",
+  "version": "0.1.0",
+  "description": "Plumb hosted HTTP API server — MCP over HTTP+SSE, deployed to Fly.io (BSL 1.1)",
+  "license": "BSL-1.1",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "echo \"No tests yet\" && exit 0",
+    "lint": "echo \"No lint yet\" && exit 0",
+    "clean": "rm -rf dist *.tsbuildinfo"
+  },
+  "dependencies": {
+    "@plumb/core": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0"
+  }
+}
