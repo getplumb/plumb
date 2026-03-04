@@ -1,0 +1,100 @@
+---
+title: How It Works
+description: Two-layer memory architecture
+---
+
+# How Plumb Works
+
+Plumb uses a two-layer architecture: raw conversation storage and extracted fact storage.
+
+## Layer 1: Conversation Log
+
+Every message exchange between user and AI gets stored verbatim. Full context, full history. No summarization, no compression.
+
+This layer answers: "What was said?"
+
+### Storage
+
+- Raw text messages with timestamps
+- User ID, session ID, context metadata
+- Vector embeddings for semantic search
+- Never deleted, append-only log
+
+## Layer 2: Fact Extraction
+
+The AI analyzes conversation history and extracts structured facts. These facts have confidence scores and source references.
+
+This layer answers: "What did we learn?"
+
+### Fact Structure
+
+- **Subject**: What the fact is about (e.g., "user preference")
+- **Predicate**: The relationship or attribute (e.g., "uses")
+- **Object**: The value (e.g., "TypeScript")
+- **Confidence**: 0.0-1.0 score based on clarity and evidence
+- **Source**: Reference to the conversation exchange where this was learned
+
+### Example
+
+From this exchange:
+> User: "I prefer using pnpm for all my Node.js projects"
+
+Extracted fact:
+```json
+{
+  "subject": "user",
+  "predicate": "prefers_package_manager",
+  "object": "pnpm",
+  "confidence": 0.95,
+  "source": "conversation_id:abc123"
+}
+```
+
+## Confidence Scoring
+
+Facts are scored based on:
+
+- **Explicitness**: Direct statements score higher than inferred context
+- **Repetition**: Facts mentioned multiple times gain confidence
+- **Recency**: Recent facts score higher (recency decay applied)
+- **Contradiction**: New facts can lower confidence of old, conflicting facts
+
+Confidence decays over time unless reinforced. Old facts fade, making room for updated context.
+
+## Recency Decay
+
+All facts experience time-based confidence decay:
+
+- **Half-life**: 30 days (configurable)
+- **Minimum**: Facts never drop below 0.1 confidence
+- **Reinforcement**: Mentioning a fact resets decay
+
+This keeps memory fresh and prevents stale information from dominating search results.
+
+## Search and Retrieval
+
+When the AI searches memory:
+
+1. **Vector search** on Layer 1 finds relevant conversation exchanges
+2. **Fact retrieval** from Layer 2 surfaces high-confidence facts matching the query
+3. **Ranking** combines vector similarity + confidence score + recency
+
+Results provide both conversational context (Layer 1) and structured knowledge (Layer 2).
+
+## Why Two Layers?
+
+**Layer 1** provides full conversational context when needed. Great for "what did we discuss last week?"
+
+**Layer 2** provides distilled knowledge without noise. Great for "what do I know about this user?"
+
+Together, they balance verbatim accuracy with structured intelligence.
+
+## Implementation
+
+Plumb uses:
+
+- **SQLite** for relational storage (facts, metadata)
+- **sqlite-vec** for vector embeddings and semantic search
+- **JSON-RPC** via MCP for client communication
+
+Everything runs locally. No API calls required.
