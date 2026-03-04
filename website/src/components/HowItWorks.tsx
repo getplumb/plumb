@@ -7,13 +7,22 @@ const steps = [
     number: "01",
     title: "Ingest",
     description: "Agents talk. Plumb listens. Every conversation is logged automatically via the MCP protocol — no manual saves, no commands.",
-    snippet: null,
+    snippet: `User: I prefer spaces over tabs
+Agent: Noted, I'll use spaces for indentation`,
+    label: "conversation.log",
   },
   {
     number: "02",
     title: "Extract",
     description: "Facts are pulled from raw conversation logs, deduplicated, and scored by confidence. Stale facts decay over time so your agent stays current.",
-    snippet: null,
+    snippet: `{
+  "subject": "user",
+  "predicate": "prefers",
+  "object": "spaces over tabs",
+  "confidence": 0.95,
+  "decay": 0.98
+}`,
+    label: "extracted fact",
   },
   {
     number: "03",
@@ -30,6 +39,7 @@ const steps = [
     }
   }
 }`,
+    label: "mcp.json",
   },
 ];
 
@@ -67,22 +77,10 @@ export default function HowItWorks() {
                 </p>
               </div>
 
-              {step.snippet ? (
-                <div className="rounded-lg border border-border bg-surface p-4 font-mono text-xs leading-relaxed text-text-secondary">
-                  <div className="mb-2 text-text-muted">mcp.json</div>
-                  <pre className="overflow-x-auto whitespace-pre">{step.snippet}</pre>
-                </div>
-              ) : (
-                <div className="flex h-32 items-center justify-center rounded-lg border border-border-subtle bg-surface">
-                  <div className="flex items-center gap-3 text-text-muted">
-                    <div className="h-2 w-2 rounded-full bg-accent" />
-                    <span className="font-mono text-xs">{step.title.toLowerCase()}</span>
-                    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" />
-                    </svg>
-                  </div>
-                </div>
-              )}
+              <div className="rounded-lg border border-border bg-surface p-4 font-mono text-xs leading-relaxed text-text-secondary">
+                <div className="mb-2 text-text-muted">{step.label}</div>
+                <pre className="overflow-x-auto whitespace-pre">{step.snippet}</pre>
+              </div>
             </motion.div>
           ))}
         </div>
