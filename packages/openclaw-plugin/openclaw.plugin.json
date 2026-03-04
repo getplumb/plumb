@@ -1,0 +1,8 @@
+{
+  "id": "plumb",
+  "name": "Plumb Memory",
+  "version": "0.1.0",
+  "description": "Auto-ingest and memory injection for OpenClaw",
+  "kind": "memory",
+  "main": "dist/plugin-module.js"
+}

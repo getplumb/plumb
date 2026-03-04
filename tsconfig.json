@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "baseUrl": ".",
+    "paths": {
+      "@plumb/core": ["./packages/core/src/index.ts"],
+      "@plumb/core/*": ["./packages/core/src/*"],
+      "@plumb/openclaw-plugin": ["./packages/openclaw-plugin/src/index.ts"],
+      "@plumb/openclaw-plugin/*": ["./packages/openclaw-plugin/src/*"]
+    }
+  },
+  "include": ["integration-test.ts"]
+}
