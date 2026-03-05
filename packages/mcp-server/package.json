@@ -1,14 +1,33 @@
 {
-  "name": "@plumb/mcp-server",
+  "name": "@getplumb/mcp-server",
   "version": "0.1.0",
   "description": "Plumb MCP stdio server — exposes memory tools to Claude and other MCP clients",
   "license": "MIT",
+  "author": "Plumb Team",
+  "homepage": "https://docs.getplumb.dev",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/plumb-labs/plumb",
+    "directory": "packages/mcp-server"
+  },
+  "keywords": [
+    "mcp",
+    "memory",
+    "ai",
+    "claude",
+    "context",
+    "knowledge-graph"
+  ],
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
     "plumb-mcp": "./dist/index.js"
   },
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "exports": {
     ".": {
       "import": "./dist/index.js",
@@ -19,14 +38,22 @@
     "build": "tsc",
     "test": "vitest run",
     "lint": "echo \"No lint yet\" && exit 0",
-    "clean": "rm -rf dist *.tsbuildinfo"
+    "clean": "rm -rf dist *.tsbuildinfo",
+    "prepublishOnly": "pnpm build"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=18"
   },
   "dependencies": {
+    "@getplumb/core": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.27.1",
-    "@plumb/core": "workspace:*",
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@types/node": "^25.3.3",
     "typescript": "^5.4.0",
     "vitest": "^4.0.18"
   }

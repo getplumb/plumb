@@ -1,5 +1,5 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import type { LocalStore } from '@plumb/core';
+import type { LocalStore } from '@getplumb/core';
 import { registerMemoryStore } from './tools/memory-store.js';
 import { registerMemorySearch } from './tools/memory-search.js';
 import { registerMemoryDelete } from './tools/memory-delete.js';

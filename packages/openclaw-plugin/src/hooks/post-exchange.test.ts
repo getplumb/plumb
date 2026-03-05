@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createPostExchangeHook } from './post-exchange.js';
-import type { LocalStore, MessageExchange } from '@plumb/core';
+import type { LocalStore, MessageExchange } from '@getplumb/core';
 import type { PluginHookLlmOutputEvent, PluginHookAgentContext } from 'openclaw/plugin-sdk';
+import * as errorLogger from '../error-logger.js';
 
 describe('createPostExchangeHook', () => {
   let mockStore: LocalStore;
@@ -148,6 +149,48 @@ describe('createPostExchangeHook', () => {
 
     // Wait for promise rejection to be caught
     await new Promise(resolve => setTimeout(resolve, 10));
+  });
+
+  it('logs ingest errors to error log', async () => {
+    const appendErrorSpy = vi.spyOn(errorLogger, 'appendError').mockImplementation(() => {});
+    const testError = new Error('Database write failed');
+    testError.stack = 'Error: Database write failed\n    at test';
+
+    ingestSpy.mockRejectedValue(testError);
+    const hook = createPostExchangeHook(mockStore, 'test-user');
+
+    const event: PluginHookLlmOutputEvent & { prompt?: string } = {
+      runId: 'run-123',
+      sessionId: 'session-abc',
+      provider: 'anthropic',
+      model: 'claude-opus-4-6',
+      assistantTexts: ['Response'],
+      prompt: 'Prompt',
+    };
+
+    const ctx: PluginHookAgentContext = {
+      sessionId: 'session-xyz',
+    };
+
+    hook(event, ctx);
+
+    // Wait for async error handling
+    await new Promise(resolve => setTimeout(resolve, 20));
+
+    expect(appendErrorSpy).toHaveBeenCalledOnce();
+    const errorEntry = appendErrorSpy.mock.calls[0]?.[0];
+    expect(errorEntry).toBeDefined();
+    expect(errorEntry?.type).toBe('ingest_error');
+    expect(errorEntry?.message).toBe('Database write failed');
+    expect(errorEntry?.stack).toBe('Error: Database write failed\n    at test');
+    expect(errorEntry?.context).toEqual({
+      sessionId: 'session-xyz',
+      userId: 'test-user',
+      source: 'openclaw',
+    });
+    expect(errorEntry?.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+
+    appendErrorSpy.mockRestore();
   });
 
   it('handles missing prompt field gracefully', async () => {

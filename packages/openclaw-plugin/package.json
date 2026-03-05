@@ -1,5 +1,5 @@
 {
-  "name": "@plumb/openclaw-plugin",
+  "name": "@getplumb/openclaw-plugin",
   "version": "0.1.0",
   "description": "Plumb OpenClaw plugin — auto-ingest and memory injection for OpenClaw",
   "license": "MIT",
@@ -20,9 +20,11 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.27.1",
-    "@plumb/core": "workspace:*"
+    "@getplumb/core": "workspace:*"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "better-sqlite3": "^12.6.2",
     "openclaw": "^2026.3.2",
     "typescript": "^5.4.0",
     "vitest": "^4.0.18"

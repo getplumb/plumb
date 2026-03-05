@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { LocalStore, SearchResult, StoreStatus } from '@plumb/core';
-import { DecayRate } from '@plumb/core';
+import type { LocalStore, SearchResult, StoreStatus } from '@getplumb/core';
+import { DecayRate } from '@getplumb/core';
 import { createPlumbServer } from './server.js';
 
 // Minimal mock of LocalStore — only the 4 methods used by our tools.

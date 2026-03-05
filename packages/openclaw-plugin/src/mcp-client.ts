@@ -1,6 +1,6 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import type { StoreStatus } from '@plumb/core';
+import type { StoreStatus } from '@getplumb/core';
 
 /** A single search result returned by the MCP server's memory_search tool. */
 export interface MemorySearchResult {

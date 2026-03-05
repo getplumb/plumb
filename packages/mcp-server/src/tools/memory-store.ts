@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import type { LocalStore } from '@plumb/core';
-import { DecayRate } from '@plumb/core';
+import type { LocalStore } from '@getplumb/core';
+import { DecayRate } from '@getplumb/core';
 
 const inputSchema = {
   content: z.string().describe('The fact or information to store'),
