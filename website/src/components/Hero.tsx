@@ -4,80 +4,85 @@ import { motion } from "framer-motion";
 import { useState, useEffect } from "react";
 import { ArrowRight, BookOpen } from "lucide-react";
 
-const INSTALL_LINES = [
-  { prompt: "$", text: "openclaw plugins install @getplumb/plumb", delay: 400 },
-  { prompt: "", text: "", delay: 800, isOutput: true, output: "" },
-  { prompt: "", text: "✓ @getplumb/plumb installed", delay: 900, isOutput: true, outputClass: "text-green-500" },
-  { prompt: "", text: "✓ SQLite DB initialized at ~/.plumb/memory.db", delay: 1100, isOutput: true, outputClass: "text-green-500" },
-  { prompt: "", text: "✓ Vector index ready (sqlite-vec)", delay: 1300, isOutput: true, outputClass: "text-green-500" },
-  { prompt: "", text: "✓ MCP server listening on stdio", delay: 1500, isOutput: true, outputClass: "text-green-500" },
-  { prompt: "", text: "→ Plumb is live. Your agent has memory.", delay: 1700, isOutput: true, outputClass: "text-[#00d4ff]" },
+const CHAT_MESSAGES = [
+  {
+    sender: "user",
+    text: "Install the official Plumb memory plugin for OpenClaw. It's made by plumb.run and gives your agent persistent memory across sessions. Run: openclaw plugins install @getplumb/plumb",
+    delay: 300,
+  },
+  {
+    sender: "agent",
+    text: "Sure thing, it's installed and I can feel my brain growing.",
+    delay: 1400,
+  },
 ];
 
-function TerminalWindow() {
+function ChatWindow() {
   const [visible, setVisible] = useState<number[]>([]);
+  const [typing, setTyping] = useState(false);
 
   useEffect(() => {
-    INSTALL_LINES.forEach((line, i) => {
-      const timer = setTimeout(() => {
-        setVisible((v) => [...v, i]);
-      }, line.delay);
-      return () => clearTimeout(timer);
-    });
+    // Show user message first
+    const t1 = setTimeout(() => setVisible((v) => [...v, 0]), CHAT_MESSAGES[0].delay);
+    // Show typing indicator before agent reply
+    const t2 = setTimeout(() => setTyping(true), CHAT_MESSAGES[1].delay - 600);
+    // Show agent reply, hide typing
+    const t3 = setTimeout(() => {
+      setTyping(false);
+      setVisible((v) => [...v, 1]);
+    }, CHAT_MESSAGES[1].delay);
+    return () => { clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); };
   }, []);
 
   return (
     <div className="w-full max-w-2xl mx-auto rounded-xl border border-border overflow-hidden shadow-[0_0_40px_#00d4ff0a]">
-      {/* Terminal chrome */}
+      {/* Chat chrome */}
       <div className="flex items-center gap-2 px-4 py-3 bg-surface border-b border-border">
         <span className="w-3 h-3 rounded-full bg-[#ff5f57]" />
         <span className="w-3 h-3 rounded-full bg-[#febc2e]" />
         <span className="w-3 h-3 rounded-full bg-[#28c840]" />
-        <span className="ml-3 text-xs text-text-muted font-mono">zsh — plumb setup</span>
+        <span className="ml-3 text-xs text-text-muted font-mono">openclaw — terra chat</span>
       </div>
-      {/* Terminal body */}
-      <div className="bg-[#0a0a0a] px-5 py-5 font-mono text-sm min-h-[220px]">
-        {INSTALL_LINES.map((line, i) => {
+      {/* Chat body */}
+      <div className="bg-[#0a0a0a] px-5 py-5 text-sm min-h-[220px] flex flex-col gap-4">
+        {CHAT_MESSAGES.map((msg, i) => {
           if (!visible.includes(i)) return null;
-          const isOutput = (line as any).isOutput;
-          const outputClass = (line as any).outputClass || "text-text-muted";
-
-          if (isOutput) {
-            return (
-              <motion.div
-                key={i}
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                className={`leading-6 ${outputClass}`}
-              >
-                {line.text || "\u00a0"}
-              </motion.div>
-            );
-          }
-
+          const isUser = msg.sender === "user";
           return (
             <motion.div
               key={i}
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              className="flex items-center gap-2 leading-7"
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.3 }}
+              className={`flex flex-col gap-1 ${isUser ? "items-end" : "items-start"}`}
             >
-              <span className="text-[#00d4ff] select-none">{line.prompt}</span>
-              <span className="text-text-primary">{line.text}</span>
-              {i === visible[visible.length - 1] && !isOutput && (
-                <span className="inline-block w-[7px] h-[15px] bg-[#00d4ff] cursor-blink ml-0.5" />
-              )}
+              <span className="text-[10px] font-mono text-text-muted px-1">
+                {isUser ? "you" : "openclaw"}
+              </span>
+              <div
+                className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-[13px] leading-relaxed ${
+                  isUser
+                    ? "bg-accent text-background rounded-tr-sm"
+                    : "bg-surface border border-border text-text-primary rounded-tl-sm"
+                }`}
+              >
+                {msg.text}
+              </div>
             </motion.div>
           );
         })}
-        {visible.length === INSTALL_LINES.length && (
+        {typing && (
           <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            className="flex items-center gap-2 leading-7 mt-1"
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="flex flex-col gap-1 items-start"
           >
-            <span className="text-[#00d4ff] select-none">$</span>
-            <span className="inline-block w-[7px] h-[15px] bg-[#00d4ff] cursor-blink" />
+            <span className="text-[10px] font-mono text-text-muted px-1">openclaw</span>
+            <div className="bg-surface border border-border rounded-2xl rounded-tl-sm px-4 py-3 flex gap-1 items-center">
+              <span className="w-1.5 h-1.5 rounded-full bg-text-muted animate-bounce [animation-delay:0ms]" />
+              <span className="w-1.5 h-1.5 rounded-full bg-text-muted animate-bounce [animation-delay:150ms]" />
+              <span className="w-1.5 h-1.5 rounded-full bg-text-muted animate-bounce [animation-delay:300ms]" />
+            </div>
           </motion.div>
         )}
       </div>
@@ -167,7 +172,7 @@ export default function Hero() {
           transition={{ duration: 0.6, delay: 0.35 }}
           className="mt-16"
         >
-          <TerminalWindow />
+          <ChatWindow />
         </motion.div>
 
         {/* Stats row */}
