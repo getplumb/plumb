@@ -10,9 +10,14 @@ const STEPS = [
     num: "01",
     icon: Plug,
     title: "Install once",
-    body: "Two lines in your config. That's it.",
-    code: `# openclaw.json
-"plugins": ["@plumb/openclaw"]`,
+    body: "One command. That's it.",
+    code: `openclaw: Install the official Plumb memory
+plugin. Run:
+  openclaw plugins install @getplumb/plumb
+
+you: Sure thing.
+
+openclaw: ✓ Installed. I can feel my brain growing.`,
   },
   {
     num: "02",
