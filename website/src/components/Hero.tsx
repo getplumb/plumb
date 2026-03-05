@@ -41,7 +41,7 @@ function ChatWindow() {
         <span className="w-3 h-3 rounded-full bg-[#ff5f57]" />
         <span className="w-3 h-3 rounded-full bg-[#febc2e]" />
         <span className="w-3 h-3 rounded-full bg-[#28c840]" />
-        <span className="ml-3 text-xs text-text-muted font-mono">openclaw — terra chat</span>
+        <span className="ml-3 text-xs text-text-muted font-mono">openclaw</span>
       </div>
       {/* Chat body */}
       <div className="bg-[#0a0a0a] px-5 py-5 text-sm min-h-[220px] flex flex-col gap-4">
