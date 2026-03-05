@@ -8,9 +8,9 @@ import { MessageSquare, Cpu, SearchCode, Plug } from "lucide-react";
 const STEPS = [
   {
     num: "01",
-    icon: MessageSquare,
-    title: "Agent responds normally",
-    body: "Every LLM response is captured by the Plumb plugin via the OpenClaw llm_output hook. No changes to your workflow.",
+    icon: Plug,
+    title: "Install once",
+    body: "Two lines in your config. That's it.",
     code: `# openclaw.json
 "plugins": ["@plumb/openclaw"]`,
   },
@@ -18,7 +18,7 @@ const STEPS = [
     num: "02",
     icon: Cpu,
     title: "Facts are passively extracted",
-    body: "Plumb runs a lightweight extraction pipeline in the background — chunking, embedding, and classifying facts into Subject → Predicate → Object triples.",
+    body: "Plumb runs a lightweight extraction pipeline in the background — chunking, embedding, and classifying facts from every LLM response into Subject → Predicate → Object triples. No changes to your workflow.",
     code: `→ "Clay uses Slack as primary channel"
    S: agent.channel
    P: primary
@@ -36,11 +36,11 @@ subagent.timeout.default = 600s
   },
   {
     num: "04",
-    icon: Plug,
-    title: "MCP-native — works with any agent",
-    body: "Plumb exposes a standard MCP tool (memory/retrieve). Drop it into Claude Code, Cursor, or any MCP-compatible client in two lines of config.",
-    code: `# claude_desktop_config.json
-"plumb": { "command": "plumb", "args": ["serve"] }`,
+    icon: MessageSquare,
+    title: "Your agent just got smarter",
+    body: "Your agent responds normally. It just has context it didn't have before. No new tools, no changed workflow — it's simply better.",
+    code: `# no changes needed
+# your agent already knows`,
   },
 ];
 
