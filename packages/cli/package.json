@@ -1,7 +1,7 @@
 {
-  "name": "plumb-memory",
+  "name": "@getplumb/cli",
   "version": "0.1.0",
-  "description": "Plumb CLI — plumb status / connect / export",
+  "description": "Plumb CLI — memory management and AI context tools",
   "license": "MIT",
   "author": "Plumb Team",
   "homepage": "https://docs.getplumb.dev",
@@ -49,11 +49,16 @@
   },
   "dependencies": {
     "@getplumb/core": "workspace:*",
-    "commander": "^12.1.0"
+    "@inquirer/prompts": "^8.3.0",
+    "commander": "^12.1.0",
+    "openai": "^4.104.0"
   },
   "devDependencies": {
     "@types/node": "^25.3.3",
     "tsx": "^4.0.0",
     "typescript": "^5.4.0"
+  },
+  "optionalDependencies": {
+    "@anthropic-ai/sdk": "^0.78.0"
   }
 }
