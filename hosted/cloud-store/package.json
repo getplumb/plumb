@@ -1,5 +1,5 @@
 {
-  "name": "@plumb/cloud-store",
+  "name": "@getplumb/cloud-store",
   "version": "0.1.0",
   "description": "Plumb cloud storage driver — Postgres + pgvector via Supabase (BSL 1.1)",
   "license": "BSL-1.1",
@@ -14,14 +14,18 @@
   },
   "scripts": {
     "build": "tsc",
-    "test": "echo \"No tests yet\" && exit 0",
+    "test": "vitest run",
     "lint": "echo \"No lint yet\" && exit 0",
     "clean": "rm -rf dist *.tsbuildinfo"
   },
   "dependencies": {
-    "@plumb/core": "workspace:*"
+    "@getplumb/core": "workspace:*",
+    "@supabase/supabase-js": "^2.39.0",
+    "pg": "^8.11.3"
   },
   "devDependencies": {
-    "typescript": "^5.4.0"
+    "@types/pg": "^8.10.9",
+    "typescript": "^5.4.0",
+    "vitest": "^1.2.0"
   }
 }

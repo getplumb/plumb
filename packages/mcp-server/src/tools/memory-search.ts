@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import type { LocalStore } from '@plumb/core';
+import type { LocalStore } from '@getplumb/core';
 
 const inputSchema = {
   query: z.string().describe('Natural language query to search memory'),

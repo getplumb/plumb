@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import type { LocalStore } from '@plumb/core';
+import type { LocalStore } from '@getplumb/core';
 
 const inputSchema = {
   id: z.string().uuid().describe('The fact_id of the fact to delete'),

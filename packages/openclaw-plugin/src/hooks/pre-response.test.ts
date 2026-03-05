@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createPreResponseHook } from './pre-response.js';
-import type { LocalStore, MemoryContext } from '@plumb/core';
+import type { LocalStore, MemoryContext } from '@getplumb/core';
 
 // Mock the @plumb/core functions
 vi.mock('@plumb/core', async () => {
@@ -12,7 +12,7 @@ vi.mock('@plumb/core', async () => {
   };
 });
 
-import { buildMemoryContext, formatContextBlock } from '@plumb/core';
+import { buildMemoryContext, formatContextBlock } from '@getplumb/core';
 
 type PluginHookBeforePromptBuildEvent = {
   prompt: string;
@@ -78,7 +78,7 @@ describe('createPreResponseHook', () => {
     buildMemoryContextSpy.mockResolvedValue(mockMemoryContext);
     formatContextBlockSpy.mockReturnValue(formattedContext);
 
-    const hook = createPreResponseHook(mockStore, false);
+    const hook = createPreResponseHook(mockStore, null, false);
     const event: PluginHookBeforePromptBuildEvent = {
       prompt: 'What am I working on?',
       messages: [],
@@ -105,7 +105,7 @@ describe('createPreResponseHook', () => {
     buildMemoryContextSpy.mockResolvedValue(emptyMemoryContext);
     formatContextBlockSpy.mockReturnValue('');
 
-    const hook = createPreResponseHook(mockStore, false);
+    const hook = createPreResponseHook(mockStore, null, false);
     const event: PluginHookBeforePromptBuildEvent = {
       prompt: 'Random query',
       messages: [],
@@ -128,7 +128,7 @@ describe('createPreResponseHook', () => {
     buildMemoryContextSpy.mockResolvedValue(mockMemoryContext);
     formatContextBlockSpy.mockReturnValue('   \n  ');
 
-    const hook = createPreResponseHook(mockStore, false);
+    const hook = createPreResponseHook(mockStore, null, false);
     const event: PluginHookBeforePromptBuildEvent = {
       prompt: 'Test',
       messages: [],
@@ -158,7 +158,7 @@ describe('createPreResponseHook', () => {
         )
     );
 
-    const hook = createPreResponseHook(mockStore, false);
+    const hook = createPreResponseHook(mockStore, null, false);
     const event: PluginHookBeforePromptBuildEvent = {
       prompt: 'Slow query',
       messages: [],
@@ -174,7 +174,7 @@ describe('createPreResponseHook', () => {
   });
 
   it('returns void when store is null', async () => {
-    const hook = createPreResponseHook(null, false);
+    const hook = createPreResponseHook(null, null, false);
     const event: PluginHookBeforePromptBuildEvent = {
       prompt: 'Test query',
       messages: [],
@@ -217,7 +217,7 @@ describe('createPreResponseHook', () => {
     buildMemoryContextSpy.mockResolvedValue(mockMemoryContext);
     formatContextBlockSpy.mockReturnValue(formattedContext);
 
-    const hook = createPreResponseHook(mockStore, true); // shadowMode = true
+    const hook = createPreResponseHook(mockStore, null, true); // shadowMode = true
     const event: PluginHookBeforePromptBuildEvent = {
       prompt: 'What language do I use?',
       messages: [],
@@ -238,7 +238,7 @@ describe('createPreResponseHook', () => {
   it('handles errors from buildMemoryContext gracefully', async () => {
     buildMemoryContextSpy.mockRejectedValue(new Error('Database error'));
 
-    const hook = createPreResponseHook(mockStore, false);
+    const hook = createPreResponseHook(mockStore, null, false);
     const event: PluginHookBeforePromptBuildEvent = {
       prompt: 'Test query',
       messages: [],
@@ -265,7 +265,7 @@ describe('createPreResponseHook', () => {
       throw new Error('Formatting error');
     });
 
-    const hook = createPreResponseHook(mockStore, false);
+    const hook = createPreResponseHook(mockStore, null, false);
     const event: PluginHookBeforePromptBuildEvent = {
       prompt: 'Test query',
       messages: [],

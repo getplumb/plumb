@@ -1,4 +1,5 @@
-import type { LocalStore } from '@plumb/core';
+import type { LocalStore } from '@getplumb/core';
+import { appendError } from '../error-logger.js';
 
 // Import from full path since these aren't re-exported from openclaw/plugin-sdk
 type PluginHookLlmOutputEvent = {
@@ -45,16 +46,34 @@ export function createPostExchangeHook(store: LocalStore, userId: string) {
 
     // Fire-and-forget ingest — never blocks the hook
     (async () => {
-      await store.ingest({
-        userMessage: exchange.userMessage,
-        agentResponse: exchange.agentResponse,
-        timestamp: new Date(exchange.timestamp),
-        source: exchange.source,
-        sessionId: exchange.sessionId,
-        ...(exchange.sessionLabel && { sessionLabel: exchange.sessionLabel }),
-      });
-    })().catch((e: unknown) => {
-      console.debug('[plumb] ingest error:', e);
-    });
+      try {
+        await store.ingest({
+          userMessage: exchange.userMessage,
+          agentResponse: exchange.agentResponse,
+          timestamp: new Date(exchange.timestamp),
+          source: exchange.source,
+          sessionId: exchange.sessionId,
+          ...(exchange.sessionLabel && { sessionLabel: exchange.sessionLabel }),
+        });
+      } catch (e: unknown) {
+        // Log error to ~/.plumb/errors.log for debugging
+        const errorEntry = {
+          timestamp: new Date().toISOString(),
+          type: 'ingest_error',
+          message: e instanceof Error ? e.message : String(e),
+          context: {
+            sessionId: exchange.sessionId,
+            userId,
+            source: exchange.source,
+          },
+          ...(e instanceof Error && e.stack ? { stack: e.stack } : {}),
+        };
+
+        appendError(errorEntry);
+
+        // Also log to console for immediate visibility during development
+        console.debug('[plumb] ingest error:', e);
+      }
+    })();
   };
 }

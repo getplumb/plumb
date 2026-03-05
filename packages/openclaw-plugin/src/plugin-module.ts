@@ -1,8 +1,9 @@
-import { LocalStore } from '@plumb/core';
+import { LocalStore } from '@getplumb/core';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createPostExchangeHook } from './hooks/post-exchange.js';
 import { createPreResponseHook } from './hooks/pre-response.js';
+import { NudgeManager } from './nudge.js';
 
 // Define types inline since they aren't re-exported from openclaw/plugin-sdk
 type PluginLogger = {
@@ -63,12 +64,13 @@ export const plugin: OpenClawPluginDefinition = {
     );
 
     const store = new LocalStore({ dbPath, userId });
+    const nudgeManager = new NudgeManager();
 
     // Register the llm_output hook for auto-ingest
     api.on('llm_output', createPostExchangeHook(store, userId));
 
     // Register the before_prompt_build hook for memory injection
-    api.on('before_prompt_build', createPreResponseHook(store, shadowMode));
+    api.on('before_prompt_build', createPreResponseHook(store, nudgeManager, shadowMode));
 
     // Clean up on session end
     api.on('session_end', async () => {

@@ -31,6 +31,7 @@ export interface IngestResult {
   readonly rawLogId: string;
   readonly factsExtracted: number;
   readonly factIds: readonly string[];
+  readonly skipped?: boolean;
 }
 
 export interface StoreStatus {

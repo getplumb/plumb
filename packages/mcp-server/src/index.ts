@@ -1,10 +1,14 @@
 #!/usr/bin/env node
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { LocalStore } from '@plumb/core';
+import { LocalStore } from '@getplumb/core';
 import { createPlumbServer } from './server.js';
+import { resolveConfig } from './config.js';
 
 async function main(): Promise<void> {
-  const store = new LocalStore();
+  const config = resolveConfig();
+  console.error(`[plumb] Starting with userId=${config.userId}, dbPath=${config.dbPath}`);
+
+  const store = new LocalStore({ dbPath: config.dbPath, userId: config.userId });
   const server = createPlumbServer(store);
   const transport = new StdioServerTransport();
 

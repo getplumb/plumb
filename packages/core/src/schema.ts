@@ -47,7 +47,9 @@ export const CREATE_RAW_LOG_TABLE = `
     source        TEXT NOT NULL,
     chunk_text    TEXT NOT NULL,
     chunk_index   INTEGER NOT NULL,
-    vec_rowid     INTEGER
+    vec_rowid     INTEGER,
+    content_hash  TEXT,
+    UNIQUE(user_id, content_hash)
   )
 `;
 
@@ -78,6 +80,18 @@ export const CREATE_VEC_FACTS = `
   )
 `;
 
+/**
+ * Nudge log table for tracking one-time upgrade prompts.
+ * Each trigger type fires exactly once per install.
+ */
+export const CREATE_NUDGE_LOG_TABLE = `
+  CREATE TABLE IF NOT EXISTS nudge_log (
+    id            TEXT PRIMARY KEY,
+    trigger_type  TEXT NOT NULL,
+    fired_at      TEXT NOT NULL
+  )
+`;
+
 export function applySchema(db: import('better-sqlite3').Database): void {
   db.exec(CREATE_FACTS_TABLE);
   for (const idx of CREATE_FACTS_INDEXES) {
@@ -91,9 +105,25 @@ export function applySchema(db: import('better-sqlite3').Database): void {
   db.exec(CREATE_VEC_FACTS);
 
   // Conditional migration: add vec_rowid column to facts if it doesn't exist yet.
-  const columns = db.pragma('table_info(facts)') as Array<{ name: string }>;
-  const hasVecRowid = columns.some((c) => c.name === 'vec_rowid');
+  const factsColumns = db.pragma('table_info(facts)') as Array<{ name: string }>;
+  const hasVecRowid = factsColumns.some((c) => c.name === 'vec_rowid');
   if (!hasVecRowid) {
     db.exec('ALTER TABLE facts ADD COLUMN vec_rowid INTEGER');
+  }
+
+  // Conditional migration: add content_hash column to raw_log if it doesn't exist yet.
+  const rawLogColumns = db.pragma('table_info(raw_log)') as Array<{ name: string }>;
+  const hasContentHash = rawLogColumns.some((c) => c.name === 'content_hash');
+  if (!hasContentHash) {
+    db.exec('ALTER TABLE raw_log ADD COLUMN content_hash TEXT');
+    // Create unique constraint on (user_id, content_hash).
+    // SQLite UNIQUE constraints ignore NULL values, so existing rows with NULL won't conflict.
+    db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_raw_log_content_hash ON raw_log(user_id, content_hash)');
+  }
+
+  // Conditional migration: create nudge_log table if it doesn't exist yet.
+  const tables = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='nudge_log'`).all();
+  if (tables.length === 0) {
+    db.exec(CREATE_NUDGE_LOG_TABLE);
   }
 }
