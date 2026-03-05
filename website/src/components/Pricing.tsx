@@ -17,7 +17,7 @@ const plans = [
       "Unlimited sessions",
     ],
     cta: "Self-host",
-    href: "https://docs.getplumb.dev/self-host",
+    href: "https://docs.plumb.run/self-host",
     highlighted: false,
   },
   {
@@ -34,7 +34,7 @@ const plans = [
       "Priority support",
     ],
     cta: "Join the waitlist",
-    href: "mailto:hello@getplumb.dev",
+    href: "mailto:hello@plumb.run",
     highlighted: true,
   },
 ];

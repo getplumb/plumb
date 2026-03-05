@@ -14,7 +14,7 @@ export const metadata: Metadata = {
   openGraph: {
     title: "Plumb — AI Memory Infrastructure",
     description: "Persistent, local-first memory for AI agents.",
-    url: "https://getplumb.dev",
+    url: "https://plumb.run",
     siteName: "Plumb",
     locale: "en_US",
     type: "website",
