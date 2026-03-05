@@ -68,7 +68,7 @@ export default function Hero() {
             Self-host for free
           </a>
           <p className="text-xs text-text-muted">
-            Hosted version coming soon — hello@getplumb.dev
+            Hosted version coming soon — hello@plumb.run
           </p>
         </motion.div>
       </div>

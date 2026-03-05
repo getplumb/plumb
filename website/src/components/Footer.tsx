@@ -10,7 +10,7 @@ export default function Footer() {
             GitHub
           </a>
           <a
-            href="https://docs.getplumb.dev"
+            href="https://docs.plumb.run"
             className="text-sm text-text-muted transition-colors hover:text-text-secondary"
           >
             Docs
