@@ -5,15 +5,13 @@ import { useState, useEffect } from "react";
 import { ArrowRight, BookOpen } from "lucide-react";
 
 const INSTALL_LINES = [
-  { prompt: "$", text: "npm install -g plumb-server", delay: 400 },
+  { prompt: "$", text: "openclaw plugins install @getplumb/plumb", delay: 400 },
   { prompt: "", text: "", delay: 800, isOutput: true, output: "" },
-  { prompt: "", text: "✓ plumb-server@1.0.0 installed", delay: 900, isOutput: true, outputClass: "text-green-500" },
-  { prompt: "$", text: "plumb init", delay: 1400 },
-  { prompt: "", text: "", delay: 1800, isOutput: true, output: "" },
-  { prompt: "", text: "✓ SQLite DB initialized at ~/.plumb/memory.db", delay: 1900, isOutput: true, outputClass: "text-green-500" },
-  { prompt: "", text: "✓ Vector index ready (sqlite-vec)", delay: 2100, isOutput: true, outputClass: "text-green-500" },
-  { prompt: "", text: "✓ MCP server listening on stdio", delay: 2300, isOutput: true, outputClass: "text-green-500" },
-  { prompt: "", text: "→ Add to your openclaw.json to connect.", delay: 2500, isOutput: true, outputClass: "text-[#00d4ff]" },
+  { prompt: "", text: "✓ @getplumb/plumb installed", delay: 900, isOutput: true, outputClass: "text-green-500" },
+  { prompt: "", text: "✓ SQLite DB initialized at ~/.plumb/memory.db", delay: 1100, isOutput: true, outputClass: "text-green-500" },
+  { prompt: "", text: "✓ Vector index ready (sqlite-vec)", delay: 1300, isOutput: true, outputClass: "text-green-500" },
+  { prompt: "", text: "✓ MCP server listening on stdio", delay: 1500, isOutput: true, outputClass: "text-green-500" },
+  { prompt: "", text: "→ Plumb is live. Your agent has memory.", delay: 1700, isOutput: true, outputClass: "text-[#00d4ff]" },
 ];
 
 function TerminalWindow() {
