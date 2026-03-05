@@ -8,12 +8,13 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "Plumb — AI Memory Infrastructure",
+  title: "Plumb — Decouple your agent's memory from its prompt.",
   description:
-    "Persistent, local-first memory for AI agents. Automatic ingestion. Confidence-scored facts. MCP-native.",
+    "Plumb is an MCP-compliant memory server that extracts, structures, and serves exactly the right context to your agents. Save tokens, stop hallucinations, and never lose context again.",
   openGraph: {
     title: "Plumb — AI Memory Infrastructure",
-    description: "Persistent, local-first memory for AI agents.",
+    description:
+      "Plumb is an MCP-compliant memory server that extracts, structures, and serves exactly the right context to your agents.",
     url: "https://plumb.run",
     siteName: "Plumb",
     locale: "en_US",
@@ -22,7 +23,8 @@ export const metadata: Metadata = {
   twitter: {
     card: "summary_large_image",
     title: "Plumb — AI Memory Infrastructure",
-    description: "Persistent, local-first memory for AI agents.",
+    description:
+      "Plumb is an MCP-compliant memory server that extracts, structures, and serves exactly the right context to your agents.",
   },
 };
 
@@ -33,7 +35,9 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className="dark">
-      <body className={`${inter.variable} font-sans bg-background text-text-primary antialiased`}>
+      <body
+        className={`${inter.variable} font-sans bg-background text-text-primary antialiased`}
+      >
         {children}
       </body>
     </html>

@@ -2,9 +2,11 @@
 @tailwind components;
 @tailwind utilities;
 
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap');
+
 :root {
   --font-inter: "Inter", system-ui, sans-serif;
-  --font-geist-mono: "GeistMono", ui-monospace, monospace;
+  --font-mono: "JetBrains Mono", "GeistMono", ui-monospace, monospace;
 }
 
 html {
@@ -16,7 +18,7 @@ html {
   width: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: #0A0A0A;
+  background: #0a0a0a;
 }
 ::-webkit-scrollbar-thumb {
   background: #27272a;
@@ -26,7 +28,22 @@ html {
   background: #3f3f46;
 }
 
-/* Code block styles */
-code {
-  font-family: var(--font-geist-mono);
+/* Monospace font */
+code, pre, .font-mono {
+  font-family: var(--font-mono);
+}
+
+/* Terminal cursor blink */
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+.cursor-blink {
+  animation: blink 1.1s step-end infinite;
+}
+
+/* Glow keyframes */
+@keyframes pulse-glow {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
 }

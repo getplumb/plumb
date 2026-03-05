@@ -1,73 +1,182 @@
 "use client";
 
 import { motion } from "framer-motion";
+import { useInView } from "framer-motion";
+import { useRef } from "react";
+import { X, Check, TrendingDown, TrendingUp } from "lucide-react";
 
-const problems = [
-  {
-    icon: (
-      <svg className="h-6 w-6 text-accent" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-        <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 3.75h.008v.008H12v-.008Z" />
-      </svg>
-    ),
-    title: "Every session starts from scratch",
-    description: "Your agent forgets what it learned yesterday. You repeat yourself, every time.",
-  },
-  {
-    icon: (
-      <svg className="h-6 w-6 text-accent" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-        <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.087.16 2.185.283 3.293.369V21l4.076-4.076a1.526 1.526 0 0 1 1.037-.443 48.282 48.282 0 0 0 5.68-.494c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0 0 12 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018Z" />
-      </svg>
-    ),
-    title: '"Remember this" shouldn\'t be a command',
-    description: "Manual memory management breaks flow. Context should be captured automatically.",
-  },
-  {
-    icon: (
-      <svg className="h-6 w-6 text-accent" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-        <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6A2.25 2.25 0 0 1 6 3.75h2.25A2.25 2.25 0 0 1 10.5 6v2.25a2.25 2.25 0 0 1-2.25 2.25H6a2.25 2.25 0 0 1-2.25-2.25V6ZM3.75 15.75A2.25 2.25 0 0 1 6 13.5h2.25a2.25 2.25 0 0 1 2.25 2.25V18a2.25 2.25 0 0 1-2.25 2.25H6A2.25 2.25 0 0 1 3.75 18v-2.25ZM13.5 6a2.25 2.25 0 0 1 2.25-2.25H18A2.25 2.25 0 0 1 20.25 6v2.25A2.25 2.25 0 0 1 18 10.5h-2.25a2.25 2.25 0 0 1-2.25-2.25V6ZM13.5 15.75a2.25 2.25 0 0 1 2.25-2.25H18a2.25 2.25 0 0 1 2.25 2.25V18A2.25 2.25 0 0 1 18 20.25h-2.25a2.25 2.25 0 0 1-2.25-2.25v-2.25Z" />
-      </svg>
-    ),
-    title: "Context is scattered across tools",
-    description: "Notes in one place, chat history in another. No single source of truth for what your agent knows.",
-  },
+const OLD_MEMORY_LINES = [
+  { text: "# MEMORY.md — Clay's Long-Term Memory", class: "text-text-muted" },
+  { text: "", class: "" },
+  { text: "## Critical Operational Rules", class: "text-text-muted" },
+  { text: "- Primary channel: Slack. Telegram = fallback", class: "text-red-400 line-through decoration-red-500/60", waste: true },
+  { text: "- Reminders: Slack #reminders (C0AHAMP6ZLN)", class: "text-red-400 line-through decoration-red-500/60", waste: true },
+  { text: "- CC claywaters13@gmail.com on external emails", class: "text-red-400 line-through decoration-red-500/60", waste: true },
+  { text: "- LinkedIn: NEVER send without explicit approval", class: "text-red-400 line-through decoration-red-500/60", waste: true },
+  { text: "", class: "" },
+  { text: "## Sub-Agent Defaults", class: "text-text-muted" },
+  { text: "- Timeout: 600s (900s for browser tasks)", class: "text-red-400 line-through decoration-red-500/60", waste: true },
+  { text: "- Model: Claude Haiku 4.5 for sub-agents", class: "text-red-400 line-through decoration-red-500/60", waste: true },
+  { text: "- Default: anthropic/claude-haiku-4-5", class: "text-red-400 line-through decoration-red-500/60", waste: true },
+  { text: "", class: "" },
+  { text: "## Key Tool Locations", class: "text-text-muted" },
+  { text: "- Notion task DB: a50b0f76-4900...", class: "text-red-400 line-through decoration-red-500/60", waste: true },
+  { text: "- Career facts: clay_career_facts.md", class: "text-red-400 line-through decoration-red-500/60", waste: true },
+  { text: "- Full memory: memory/MEMORY_FULL_BACKUP.md", class: "text-red-400 line-through decoration-red-500/60", waste: true },
+  { text: "... 847 more lines ...", class: "text-text-muted italic" },
 ];
 
-export default function Problem() {
-  return (
-    <section className="border-t border-border bg-surface py-24 md:py-32">
-      <div className="mx-auto max-w-5xl px-6">
-        <motion.h2
-          initial={{ opacity: 0, y: 20 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true }}
-          transition={{ duration: 0.5 }}
-          className="text-center text-2xl font-semibold text-text-primary sm:text-3xl"
-        >
-          AI agents have no long-term memory
-        </motion.h2>
+const NEW_FACTS = [
+  { subject: "agent.channel", predicate: "primary", object: "slack", score: 0.99, tag: "RULE" },
+  { subject: "subagent.timeout", predicate: "default_ms", object: "600000", score: 0.99, tag: "CONFIG" },
+  { subject: "subagent.model", predicate: "default", object: "claude-haiku-4-5", score: 0.97, tag: "CONFIG" },
+  { subject: "email.cc_rule", predicate: "external_mail", object: "claywaters13@gmail.com", score: 0.99, tag: "RULE" },
+  { subject: "notion.tasks_db", predicate: "id", object: "a50b0f76-4900-431e", score: 0.95, tag: "TOOL" },
+  { subject: "linkedin", predicate: "send_policy", object: "require_explicit_approval", score: 0.99, tag: "RULE" },
+];
 
-        <div className="mt-16 grid gap-8 md:grid-cols-3">
-          {problems.map((problem, i) => (
-            <motion.div
-              key={problem.title}
-              initial={{ opacity: 0, y: 20 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true }}
-              transition={{ duration: 0.5, delay: i * 0.1 }}
-              className="rounded-lg border border-border bg-surface p-6"
-            >
-              <div className="mb-4 flex h-10 w-10 items-center justify-center rounded-md bg-accent-dim">
-                {problem.icon}
+const TAG_COLORS: Record<string, string> = {
+  RULE: "text-[#f97316] bg-[#f9731612]",
+  CONFIG: "text-accent bg-accent-dim",
+  TOOL: "text-purple-400 bg-purple-400/10",
+};
+
+export default function Problem() {
+  const ref = useRef(null);
+  const inView = useInView(ref, { once: true, amount: 0.2 });
+
+  return (
+    <section ref={ref} className="py-24 md:py-32 border-t border-border">
+      <div className="mx-auto max-w-7xl px-6">
+
+        {/* Section header */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={inView ? { opacity: 1, y: 0 } : {}}
+          transition={{ duration: 0.5 }}
+          className="mb-16 text-center"
+        >
+          <p className="font-mono text-xs tracking-[0.2em] text-accent uppercase mb-3">The Problem</p>
+          <h2 className="text-3xl font-bold text-text-primary md:text-4xl">
+            Flat files don't scale. Knowledge graphs do.
+          </h2>
+          <p className="mt-4 text-text-secondary max-w-xl mx-auto">
+            Every token you spend loading stale context is a token you can't spend solving the actual problem.
+          </p>
+        </motion.div>
+
+        {/* Side-by-side comparison */}
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+
+          {/* Left: Old Way */}
+          <motion.div
+            initial={{ opacity: 0, x: -20 }}
+            animate={inView ? { opacity: 1, x: 0 } : {}}
+            transition={{ duration: 0.5, delay: 0.1 }}
+            className="rounded-xl border border-red-500/20 overflow-hidden"
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between px-5 py-3 bg-red-500/5 border-b border-red-500/20">
+              <div className="flex items-center gap-2">
+                <X size={14} className="text-red-400" />
+                <span className="font-mono text-sm text-red-400">MEMORY.md</span>
               </div>
-              <h3 className="text-base font-medium text-text-primary">
-                {problem.title}
-              </h3>
-              <p className="mt-2 text-sm leading-relaxed text-text-secondary">
-                {problem.description}
-              </p>
-            </motion.div>
-          ))}
+              <div className="flex items-center gap-2 rounded-full bg-red-500/10 px-2.5 py-0.5">
+                <TrendingUp size={12} className="text-red-400" />
+                <span className="text-xs text-red-400 font-mono">~12,400 tokens injected</span>
+              </div>
+            </div>
+            {/* Content */}
+            <div className="bg-surface px-5 py-5 font-mono text-[13px] overflow-hidden max-h-[360px]">
+              {OLD_MEMORY_LINES.map((line, i) => (
+                <div key={i} className={`leading-6 ${line.class} ${line.waste ? "opacity-60" : ""}`}>
+                  {line.text || "\u00a0"}
+                  {line.waste && (
+                    <span className="ml-2 font-sans text-[10px] text-red-400/70 bg-red-400/10 px-1 py-0.5 rounded">
+                      wasted
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+            {/* Footer callout */}
+            <div className="px-5 py-3 bg-red-500/5 border-t border-red-500/20 flex items-center gap-2">
+              <span className="text-xs text-red-400 font-mono">↳ 98% of these tokens are irrelevant to your current task.</span>
+            </div>
+          </motion.div>
+
+          {/* Right: Plumb Way */}
+          <motion.div
+            initial={{ opacity: 0, x: 20 }}
+            animate={inView ? { opacity: 1, x: 0 } : {}}
+            transition={{ duration: 0.5, delay: 0.15 }}
+            className="rounded-xl border border-accent/20 overflow-hidden"
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between px-5 py-3 bg-accent-dim border-b border-accent/20">
+              <div className="flex items-center gap-2">
+                <Check size={14} className="text-accent" />
+                <span className="font-mono text-sm text-accent">plumb.db — retrieved facts</span>
+              </div>
+              <div className="flex items-center gap-2 rounded-full bg-green-dim px-2.5 py-0.5">
+                <TrendingDown size={12} className="text-green-" />
+                <span className="text-xs text-green-500 font-mono">~340 tokens injected</span>
+              </div>
+            </div>
+            {/* Fact rows */}
+            <div className="bg-surface divide-y divide-border">
+              {/* Column headers */}
+              <div className="grid grid-cols-[1fr_1fr_1fr_72px_64px] gap-2 px-5 py-2 text-[11px] font-mono text-text-muted uppercase tracking-wider">
+                <span>Subject</span>
+                <span>Predicate</span>
+                <span>Object</span>
+                <span>Tag</span>
+                <span className="text-right">Score</span>
+              </div>
+              {NEW_FACTS.map((fact, i) => (
+                <motion.div
+                  key={i}
+                  initial={{ opacity: 0, x: 10 }}
+                  animate={inView ? { opacity: 1, x: 0 } : {}}
+                  transition={{ duration: 0.3, delay: 0.3 + i * 0.07 }}
+                  className="grid grid-cols-[1fr_1fr_1fr_72px_64px] gap-2 px-5 py-3 font-mono text-[12px] hover:bg-surface-2 transition-colors"
+                >
+                  <span className="text-text-primary truncate">{fact.subject}</span>
+                  <span className="text-text-muted truncate">{fact.predicate}</span>
+                  <span className="text-accent truncate">{fact.object}</span>
+                  <span>
+                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${TAG_COLORS[fact.tag]}`}>
+                      {fact.tag}
+                    </span>
+                  </span>
+                  <span className={`text-right font-semibold ${fact.score >= 0.97 ? "text-green-500" : "text-text-secondary"}`}>
+                    {(fact.score * 100).toFixed(0)}%
+                  </span>
+                </motion.div>
+              ))}
+            </div>
+            {/* Footer callout */}
+            <div className="px-5 py-3 bg-accent-dim border-t border-accent/20 flex items-center gap-2">
+              <span className="text-xs text-accent font-mono">↳ Only facts relevant to this query were retrieved.</span>
+            </div>
+          </motion.div>
         </div>
+
+        {/* Token savings callout */}
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={inView ? { opacity: 1, y: 0 } : {}}
+          transition={{ duration: 0.4, delay: 0.5 }}
+          className="mt-8 flex flex-col sm:flex-row items-center justify-center gap-3 text-sm text-text-muted"
+        >
+          <span className="font-mono text-red-400">12,400 tokens</span>
+          <span>→ stale, full-file injection</span>
+          <span className="hidden sm:block text-border">|</span>
+          <span className="font-mono text-green-500">340 tokens</span>
+          <span>→ exact-match retrieval via Plumb</span>
+          <span className="hidden sm:block text-border">|</span>
+          <span className="font-mono text-accent font-semibold">97.3% reduction</span>
+        </motion.div>
       </div>
     </section>
   );

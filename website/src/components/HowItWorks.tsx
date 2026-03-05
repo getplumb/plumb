@@ -1,88 +1,109 @@
 "use client";
 
 import { motion } from "framer-motion";
+import { useInView } from "framer-motion";
+import { useRef } from "react";
+import { MessageSquare, Cpu, SearchCode, Plug } from "lucide-react";
 
-const steps = [
+const STEPS = [
   {
-    number: "01",
-    title: "Ingest",
-    description: "Agents talk. Plumb listens. Every conversation is logged automatically via the MCP protocol — no manual saves, no commands.",
-    snippet: `User: I prefer spaces over tabs
-Agent: Noted, I'll use spaces for indentation`,
-    label: "conversation.log",
+    num: "01",
+    icon: MessageSquare,
+    title: "Agent responds normally",
+    body: "Every LLM response is captured by the Plumb plugin via the OpenClaw llm_output hook. No changes to your workflow.",
+    code: `# openclaw.json
+"plugins": ["@plumb/openclaw"]`,
   },
   {
-    number: "02",
-    title: "Extract",
-    description: "Facts are pulled from raw conversation logs, deduplicated, and scored by confidence. Stale facts decay over time so your agent stays current.",
-    snippet: `{
-  "subject": "user",
-  "predicate": "prefers",
-  "object": "spaces over tabs",
-  "confidence": 0.95,
-  "decay": 0.98
-}`,
-    label: "extracted fact",
+    num: "02",
+    icon: Cpu,
+    title: "Facts are passively extracted",
+    body: "Plumb runs a lightweight extraction pipeline in the background — chunking, embedding, and classifying facts into Subject → Predicate → Object triples.",
+    code: `→ "Clay uses Slack as primary channel"
+   S: agent.channel
+   P: primary
+   O: slack  [0.99]`,
   },
   {
-    number: "03",
-    title: "Retrieve",
-    description: "When your agent needs context, a single MCP tool call returns the most relevant facts. Drop this into your config and it just works.",
-    snippet: `{
-  "mcpServers": {
-    "plumb": {
-      "command": "plumb",
-      "args": ["serve", "--mcp"],
-      "env": {
-        "PLUMB_STORE": "~/.plumb/store.db"
-      }
-    }
-  }
-}`,
-    label: "mcp.json",
+    num: "03",
+    icon: SearchCode,
+    title: "Semantic retrieval before each prompt",
+    body: "Before your agent's next call, Plumb queries the vector store for relevant facts and injects them as a compact, structured block — never the full file.",
+    code: `[PLUMB MEMORY — 6 facts, 340 tokens]
+agent.channel.primary = slack
+subagent.timeout.default = 600s
+...`,
+  },
+  {
+    num: "04",
+    icon: Plug,
+    title: "MCP-native — works with any agent",
+    body: "Plumb exposes a standard MCP tool (memory/retrieve). Drop it into Claude Code, Cursor, or any MCP-compatible client in two lines of config.",
+    code: `# claude_desktop_config.json
+"plumb": { "command": "plumb", "args": ["serve"] }`,
   },
 ];
 
 export default function HowItWorks() {
+  const ref = useRef(null);
+  const inView = useInView(ref, { once: true, amount: 0.1 });
+
   return (
-    <section className="border-t border-border py-24 md:py-32">
-      <div className="mx-auto max-w-5xl px-6">
-        <motion.h2
+    <section ref={ref} className="py-24 md:py-32 border-t border-border">
+      <div className="mx-auto max-w-7xl px-6">
+
+        {/* Section header */}
+        <motion.div
           initial={{ opacity: 0, y: 20 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true }}
+          animate={inView ? { opacity: 1, y: 0 } : {}}
           transition={{ duration: 0.5 }}
-          className="text-center text-2xl font-semibold text-text-primary sm:text-3xl"
+          className="mb-16 text-center"
         >
-          How it works
-        </motion.h2>
+          <p className="font-mono text-xs tracking-[0.2em] text-accent uppercase mb-3">How It Works</p>
+          <h2 className="text-3xl font-bold text-text-primary md:text-4xl">
+            Invisible until you need it.
+          </h2>
+          <p className="mt-4 text-text-secondary max-w-xl mx-auto">
+            Plumb runs entirely in the background. Install once, forget it exists, then wonder why your agents suddenly got smarter.
+          </p>
+        </motion.div>
 
-        <div className="mt-16 space-y-16 md:space-y-20">
-          {steps.map((step, i) => (
-            <motion.div
-              key={step.number}
-              initial={{ opacity: 0, y: 20 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true }}
-              transition={{ duration: 0.5, delay: i * 0.1 }}
-              className="grid items-start gap-8 md:grid-cols-2"
-            >
-              <div>
-                <span className="font-mono text-sm text-accent">{step.number}</span>
-                <h3 className="mt-2 text-xl font-semibold text-text-primary">
-                  {step.title}
-                </h3>
-                <p className="mt-3 text-sm leading-relaxed text-text-secondary">
-                  {step.description}
-                </p>
-              </div>
+        {/* Steps */}
+        <div className="relative">
+          {/* Connector line (desktop) */}
+          <div className="absolute left-0 right-0 top-[28px] hidden h-px bg-gradient-to-r from-transparent via-border to-transparent lg:block" />
 
-              <div className="rounded-lg border border-border bg-surface p-4 font-mono text-xs leading-relaxed text-text-secondary">
-                <div className="mb-2 text-text-muted">{step.label}</div>
-                <pre className="overflow-x-auto whitespace-pre">{step.snippet}</pre>
-              </div>
-            </motion.div>
-          ))}
+          <div className="grid grid-cols-1 gap-8 lg:grid-cols-4">
+            {STEPS.map((step, i) => {
+              const Icon = step.icon;
+              return (
+                <motion.div
+                  key={step.num}
+                  initial={{ opacity: 0, y: 24 }}
+                  animate={inView ? { opacity: 1, y: 0 } : {}}
+                  transition={{ duration: 0.45, delay: 0.08 * i }}
+                  className="relative"
+                >
+                  {/* Step number bubble */}
+                  <div className="relative mb-5 flex items-center gap-3">
+                    <div className="z-10 flex h-14 w-14 shrink-0 items-center justify-center rounded-xl border border-accent/30 bg-accent-dim shadow-accent-sm">
+                      <Icon size={22} className="text-accent" />
+                    </div>
+                    <span className="font-mono text-3xl font-bold text-border select-none">{step.num}</span>
+                  </div>
+
+                  {/* Title + body */}
+                  <h3 className="mb-2 text-[15px] font-semibold text-text-primary">{step.title}</h3>
+                  <p className="mb-4 text-sm leading-relaxed text-text-secondary">{step.body}</p>
+
+                  {/* Inline code snippet */}
+                  <div className="rounded-lg border border-border bg-[#0a0a0a] p-3 font-mono text-[11px] leading-5 text-text-muted whitespace-pre">
+                    {step.code}
+                  </div>
+                </motion.div>
+              );
+            })}
+          </div>
         </div>
       </div>
     </section>
