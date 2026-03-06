@@ -1,0 +1,548 @@
+---
+title: 'CLI Reference'
+description: 'Plumb command-line tools'
+---
+
+# CLI Reference
+
+Plumb provides a command-line interface for setup, inspection, export, and maintenance.
+
+## Installation
+
+The CLI is bundled with the MCP server:
+
+```bash
+npm install -g @getplumb/mcp-server
+```
+
+This installs:
+- `plumb` — CLI for management commands
+- `plumb-mcp` — MCP server binary (used by MCP clients)
+
+## plumb setup
+
+Interactive setup wizard for configuring LLM provider credentials.
+
+### Usage
+
+```bash
+plumb setup
+```
+
+### What It Does
+
+1. Prompts for LLM provider selection (OpenAI, Anthropic, Ollama, OpenAI-compatible)
+2. Asks for API key (if needed)
+3. Validates the key with a test LLM call
+4. Writes environment variables to your shell RC file (~/.zshrc, ~/.bashrc, etc.)
+
+### Environment Variables Set
+
+- `PLUMB_LLM_PROVIDER` — Provider name (openai, anthropic, ollama, openai-compatible)
+- `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` — API key for the provider
+- `OPENAI_BASE_URL` (for OpenAI-compatible providers)
+
+### Example
+
+```bash
+$ plumb setup
+
+? Select LLM provider: anthropic
+? Enter Anthropic API key: sk-ant-***
+✓ Validating key...
+✓ API key is valid
+✓ Wrote PLUMB_LLM_PROVIDER=anthropic to ~/.zshrc
+✓ Wrote ANTHROPIC_API_KEY=sk-ant-*** to ~/.zshrc
+
+Restart your shell or run: source ~/.zshrc
+```
+
+---
+
+## plumb status
+
+Display memory store statistics: fact count, raw log count, last ingestion time, storage size.
+
+### Usage
+
+```bash
+plumb status [options]
+```
+
+### Options
+
+| Flag | Description |
+|------|-------------|
+| `--db <path>` | Database file path (default: ~/.plumb/memory.db) |
+| `--userId <id>` | User ID to show status for (default: "default") |
+| `--json` | Output JSON instead of human-readable format |
+| `--verbose` | Show full fact list with confidence and decay |
+
+### Example (Human-Readable)
+
+```bash
+$ plumb status
+
+Plumb Memory — Local Store
+──────────────────────────
+Facts:          247
+Raw log:        1,523 exchanges
+Last ingestion: 3 hours ago
+Storage:        3.1 MB
+
+Top subjects:
+  user                 (142 facts)
+  project              (58 facts)
+  system               (32 facts)
+  repository           (15 facts)
+
+MCP server:     installed (/usr/local/bin/plumb-mcp)
+```
+
+### Example (JSON)
+
+```bash
+$ plumb status --json
+
+{
+  "factCount": 247,
+  "rawLogCount": 1523,
+  "lastIngestion": "2026-03-06T12:30:45.123Z",
+  "storageBytes": 3145728,
+  "topSubjects": [
+    { "subject": "user", "count": 142 },
+    { "subject": "project", "count": 58 }
+  ],
+  "mcpServer": {
+    "installed": true,
+    "path": "/usr/local/bin/plumb-mcp"
+  }
+}
+```
+
+### Example (Verbose)
+
+```bash
+$ plumb status --verbose
+
+Plumb Memory — Local Store
+──────────────────────────
+Facts:          247
+Raw log:        1,523 exchanges
+Last ingestion: 3 hours ago
+Storage:        3.1 MB
+
+Facts:
+──────────────────────────
+  user prefers_package_manager pnpm
+    confidence: 92% | decay: medium | 3 days ago
+    context: I always use pnpm for Node projects
+
+  user prefers_editor vim
+    confidence: 95% | decay: slow | 1 week ago
+    context: I always use vim for editing code
+
+  ...
+```
+
+---
+
+## plumb export
+
+Export all memory data (facts + raw log) to JSON and Markdown files.
+
+### Usage
+
+```bash
+plumb export [options]
+```
+
+### Options
+
+| Flag | Description |
+|------|-------------|
+| `--db <path>` | Database file path (default: ~/.plumb/memory.db) |
+| `--userId <id>` | User ID to export data for (default: "default") |
+| `--json` | Print facts.json to stdout only (for piping) |
+
+### Output (Default Mode)
+
+Creates timestamped directory `plumb-export-<timestamp>/` with:
+
+- `facts.json` — All extracted facts (Layer 2)
+- `facts.md` — Human-readable fact list
+- `raw-log.json` — Full conversation log (Layer 1)
+- `raw-log.md` — Human-readable conversation log
+- `export-summary.json` — Metadata (timestamp, fact count, raw log count)
+
+### Example (Default)
+
+```bash
+$ plumb export
+
+✓ Exported 247 facts and 1523 log entries
+✓ Export written to: plumb-export-2026-03-06T15-42-10Z
+```
+
+### Example (JSON to stdout)
+
+```bash
+$ plumb export --json | jq '.[] | select(.subject == "user")'
+
+{
+  "subject": "user",
+  "predicate": "prefers_package_manager",
+  "object": "pnpm",
+  "confidence": 0.92,
+  "timestamp": "2026-03-03T10:15:30.000Z"
+}
+```
+
+### Use Cases
+
+- Backup your memory before testing
+- Migrate to a new database
+- Inspect facts for debugging
+- Share memory data with another tool
+
+---
+
+## plumb ingest
+
+Manually ingest text, files, or directories into memory (Layer 1 + Layer 2).
+
+### Usage
+
+```bash
+plumb ingest [options]
+```
+
+### Options
+
+| Flag | Description |
+|------|-------------|
+| `--db <path>` | Database file path (default: ~/.plumb/memory.db) |
+| `--userId <id>` | User ID to ingest data for (default: "default") |
+| `--text <string>` | Ingest raw text inline |
+| `--stdin` | Read from stdin |
+| `--file <path>` | File path or directory to ingest |
+| `--glob <pattern>` | Glob pattern for filtering files in directory mode |
+| `--dryRun` | Preview without writing to DB |
+| `--delay <ms>` | Delay between chunks (default: 0 for dir, 800ms for file) |
+| `--concurrency <n>` | Concurrency level (default: 1, max: 5) |
+
+### Example (Inline Text)
+
+```bash
+$ plumb ingest --text "User prefers TypeScript for all new projects"
+
+✓ Ingested 1 chunk
+✓ Fact extraction queued
+```
+
+### Example (File)
+
+```bash
+$ plumb ingest --file ./meeting-notes.txt
+
+✓ Ingested 12 chunks from meeting-notes.txt
+✓ Fact extraction queued for 12 chunks
+```
+
+### Example (Directory)
+
+```bash
+$ plumb ingest --file ./docs --glob "*.md"
+
+✓ Found 24 markdown files
+✓ Ingested 156 chunks
+✓ Fact extraction queued for 156 chunks
+```
+
+### Example (Stdin)
+
+```bash
+$ cat conversation.txt | plumb ingest --stdin
+
+✓ Ingested 8 chunks from stdin
+✓ Fact extraction queued for 8 chunks
+```
+
+### Notes
+
+- Text split into chunks on paragraph boundaries (double newline)
+- Minimum chunk size: 100 characters
+- Fact extraction runs async (may take seconds to minutes)
+- Use `--dryRun` to preview chunks before ingesting
+
+---
+
+## plumb reprocess
+
+Re-extract facts from existing raw log chunks (e.g., after improving extraction prompts).
+
+### Usage
+
+```bash
+plumb reprocess [options]
+```
+
+### Options
+
+| Flag | Description |
+|------|-------------|
+| `--db <path>` | Database file path (default: ~/.plumb/memory.db) |
+| `--userId <id>` | User ID to reprocess data for (default: "default") |
+| `--since <date>` | Reprocess chunks after this date (ISO or relative: 7d, 30d, 90d) |
+| `--session <id>` | Reprocess chunks from a specific session_id |
+| `--source <label>` | Reprocess chunks from a specific source label |
+| `--all` | Reprocess all chunks (requires --yes) |
+| `--embed` | Also re-embed (default: re-extract only) |
+| `--yes` | Skip confirmation prompt |
+| `--dryRun` | Show what would change without modifying DB |
+| `--limit <n>` | Process at most N chunks |
+| `--delay <ms>` | Delay between LLM calls (default: 200ms) |
+
+### Example (Recent Chunks)
+
+```bash
+$ plumb reprocess --since 7d
+
+Found 42 chunks from the last 7 days.
+Re-extract facts from these chunks? (y/N): y
+
+✓ Reprocessed 42 chunks
+✓ Extracted 87 new facts
+```
+
+### Example (Specific Session)
+
+```bash
+$ plumb reprocess --session sess_abc123 --yes
+
+✓ Reprocessed 15 chunks from session sess_abc123
+✓ Extracted 28 new facts
+```
+
+### Example (Dry Run)
+
+```bash
+$ plumb reprocess --all --dryRun
+
+Would reprocess 1,523 chunks:
+  - Session 'project setup': 120 chunks
+  - Session 'bug investigation': 85 chunks
+  - ...
+
+No changes made (dry run).
+```
+
+### Use Cases
+
+- Upgrade extraction prompt and re-extract facts
+- Fix incorrectly extracted facts (delete old, re-extract new)
+- Backfill facts for data ingested before Layer 2 was enabled
+
+---
+
+## plumb connect
+
+Print MCP configuration snippets for connecting Plumb to various tools.
+
+### Usage
+
+```bash
+plumb connect <tool>
+```
+
+### Supported Tools
+
+| Tool | Description |
+|------|-------------|
+| `claude-desktop` | Claude Desktop app (macOS/Windows/Linux) |
+| `claude-code` | Claude Code (auto-registers via `claude mcp add`) |
+| `cursor` | Cursor editor (macOS/Windows/Linux) |
+| `openclaw` | OpenClaw CLI (prints plugin setup instructions) |
+
+### Example (Claude Desktop)
+
+```bash
+$ plumb connect claude-desktop
+
+Connecting Plumb to claude-desktop
+──────────────────────────────────
+
+Config file: ~/Library/Application Support/Claude/claude_desktop_config.json
+
+Add this to your config file:
+
+{
+  "mcpServers": {
+    "plumb": {
+      "command": "plumb-mcp",
+      "args": []
+    }
+  }
+}
+
+Then restart the application to load the MCP server.
+```
+
+### Example (Claude Code)
+
+```bash
+$ plumb connect claude-code
+
+Connecting Plumb to claude-code
+────────────────────────────────
+
+Run this command to register Plumb (recommended):
+  claude mcp add plumb --scope user -- plumb-mcp
+
+✓ Updated ~/.claude/CLAUDE.md with Plumb memory integration instructions
+```
+
+### Example (OpenClaw)
+
+```bash
+$ plumb connect openclaw
+
+OpenClaw Plugin Setup
+─────────────────────
+
+OpenClaw uses a plugin-based approach instead of MCP config.
+To connect Plumb to OpenClaw:
+
+1. Install the Plumb OpenClaw plugin:
+   npm install -g @getplumb/openclaw-plugin
+
+2. Configure the plugin in openclaw.json:
+   Add to ~/.openclaw/openclaw.json (or your project config):
+
+   {
+     "plugins": {
+       "plumb": {
+         "enabled": true,
+         "config": {
+           "dbPath": "/home/user/.plumb/memory.db",
+           "userId": "your-username",
+           "shadowMode": false
+         }
+       }
+     }
+   }
+
+3. Restart OpenClaw to load the plugin.
+```
+
+---
+
+## plumb health
+
+Check Plumb installation health (MCP server, database, LLM provider).
+
+### Usage
+
+```bash
+plumb health
+```
+
+### Output
+
+```bash
+$ plumb health
+
+Plumb Health Check
+──────────────────
+✓ MCP server installed (/usr/local/bin/plumb-mcp)
+✓ Database exists (~/.plumb/memory.db, 3.1 MB)
+✓ LLM provider configured (anthropic)
+✓ API key valid (test call succeeded)
+✓ All checks passed
+```
+
+---
+
+## plumb fix
+
+Attempt to auto-fix common issues (missing DB, invalid config, etc.).
+
+### Usage
+
+```bash
+plumb fix
+```
+
+### What It Does
+
+1. Creates database if missing
+2. Initializes schema if DB is empty
+3. Repairs corrupted indexes
+4. Validates configuration
+
+### Example
+
+```bash
+$ plumb fix
+
+✓ Database exists
+✓ Schema is valid
+✓ Indexes are valid
+✓ No issues found
+```
+
+---
+
+## plumb uninstall
+
+Remove Plumb CLI and MCP server from your system.
+
+### Usage
+
+```bash
+plumb uninstall
+```
+
+### What It Does
+
+1. Removes global npm packages
+2. Optionally removes database (asks for confirmation)
+3. Optionally removes environment variables from shell RC file
+
+### Example
+
+```bash
+$ plumb uninstall
+
+Remove database (~/.plumb/memory.db)? (y/N): n
+Remove environment variables from ~/.zshrc? (y/N): y
+
+✓ Removed @getplumb/mcp-server
+✓ Removed environment variables
+✓ Database preserved at ~/.plumb/memory.db
+```
+
+---
+
+## Environment Variables
+
+Plumb respects these environment variables:
+
+| Variable | Description |
+|----------|-------------|
+| `PLUMB_DB_PATH` | Override default database path (~/.plumb/memory.db) |
+| `PLUMB_USER_ID` | Default user ID (default: "default") |
+| `PLUMB_LLM_PROVIDER` | LLM provider (openai, anthropic, ollama, openai-compatible) |
+| `OPENAI_API_KEY` | OpenAI API key |
+| `ANTHROPIC_API_KEY` | Anthropic API key |
+| `OPENAI_BASE_URL` | OpenAI-compatible base URL |
+| `OLLAMA_HOST` | Ollama server URL (default: http://localhost:11434/v1) |
+| `PLUMB_DISABLE_EXTRACTION` | Set to "true" to disable Layer 2 fact extraction |
+
+---
+
+## Next Steps
+
+- [MCP Tools](/mcp-tools) — Model Context Protocol tools reference
+- [OpenClaw Plugin](/openclaw-plugin) — Native OpenClaw integration
+- [Self-Hosting](/self-hosting) — Run Plumb from source

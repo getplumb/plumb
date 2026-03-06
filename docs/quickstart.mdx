@@ -1,83 +1,177 @@
 ---
-title: Quickstart
-description: Get Plumb running in 5 minutes
+title: 'Quickstart'
+description: 'Get Plumb running in 5 minutes'
 ---
 
 # Quickstart
 
-Install and configure Plumb as an MCP server for Claude Desktop, OpenClaw, or any MCP-compatible client.
+Get Plumb memory working with your AI assistant in under 5 minutes.
 
-## Install
+## For OpenClaw Users (Recommended)
 
-**Coming soon:** The `@plumb/mcp-server` package will be available on npm. For now, see [Self-Hosting](/self-hosting) to run from source.
-
-```bash
-npm install -g @plumb/mcp-server@latest
-```
-
-## Initialize
-
-Run the initialization command to set up your local database:
+If you use OpenClaw, install the plugin for zero-config memory integration:
 
 ```bash
-plumb init
+openclaw plugin install @getplumb/openclaw-plugin
 ```
 
-This creates a SQLite database at `~/.plumb/memory.db` and initializes the schema.
+That's it. Memory gets auto-injected into every conversation. Skip to [Verify](#verify) to confirm it's working.
 
-## Configure MCP Client
+See [OpenClaw Plugin](/openclaw-plugin) for advanced configuration options.
 
-Add Plumb to your MCP client configuration.
+## For MCP-Compatible Clients
 
-### Claude Desktop (claude_desktop_config.json)
+If you use Claude Desktop, Claude Code, Cursor, or another MCP client, install the MCP server:
+
+### 1. Install the MCP Server
+
+```bash
+npm install -g @getplumb/mcp-server
+```
+
+This installs `plumb-mcp` globally, making it available to any MCP client.
+
+### 2. Configure Your LLM Provider
+
+Plumb needs an LLM for fact extraction. Run the setup wizard:
+
+```bash
+plumb setup
+```
+
+Follow the prompts to configure OpenAI, Anthropic, Ollama, or an OpenAI-compatible provider. This writes environment variables to your shell RC file.
+
+### 3. Add to MCP Client Config
+
+Connect Plumb to your tool:
+
+**Claude Desktop** — Add to `claude_desktop_config.json`:
 
 ```json
 {
   "mcpServers": {
     "plumb": {
-      "command": "plumb",
-      "args": ["serve"]
+      "command": "plumb-mcp",
+      "args": []
     }
   }
 }
 ```
 
-### Generic MCP Configuration (mcp.json)
+Config location:
+- macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- Linux: `~/.config/Claude/claude_desktop_config.json`
+- Windows: `%APPDATA%\Claude\claude_desktop_config.json`
+
+**Claude Code** — Run:
+
+```bash
+plumb connect claude-code
+```
+
+This auto-registers Plumb via `claude mcp add` and updates `~/.claude/CLAUDE.md` with usage instructions.
+
+**Cursor** — Add to settings.json:
 
 ```json
 {
-  "mcpServers": {
+  "mcp.servers": {
     "plumb": {
-      "command": "plumb",
-      "args": ["serve"]
+      "command": "plumb-mcp",
+      "args": []
     }
   }
 }
 ```
 
-### OpenClaw Configuration
+**Other MCP clients** — Use:
 
-Add to your OpenClaw MCP server configuration:
-
-```json
-{
-  "plumb": {
-    "command": "plumb",
-    "args": ["serve"]
-  }
-}
+```bash
+plumb connect <tool>
 ```
+
+Supported: `claude-desktop`, `claude-code`, `cursor`, `openclaw`.
+
+### 4. Restart Your Client
+
+Restart Claude Desktop, Claude Code, or Cursor to load the MCP server.
 
 ## Verify
 
-Restart your MCP client. Plumb should appear in your available tools:
+Check that Plumb is working:
 
-- `search_memory` - Search stored memories and facts
-- `ingest` - Store new conversation context
-- `get_facts` - Retrieve extracted facts
+### For OpenClaw Users
+
+```bash
+plumb status
+```
+
+You should see memory statistics (fact count, raw log count, storage size).
+
+### For MCP Client Users
+
+In your AI conversation, the following tools should appear:
+- `memory_search` — Search stored facts and conversations
+- `memory_store` — Explicitly store a fact
+- `memory_delete` — Remove a fact by ID
+- `memory_status` — Get memory statistics
+
+Ask the AI: *"What memory tools do you have?"* or *"Call memory_status"* to confirm.
+
+## First Memory Stored
+
+Start a conversation with your AI:
+
+> You: "I prefer using pnpm for Node.js projects"
+>
+> AI: "Got it, I'll remember that you prefer pnpm."
+
+Behind the scenes:
+1. Plumb stores the exchange in Layer 1 (raw log)
+2. Fact extraction runs async, creating a fact: `user prefers_package_manager pnpm` (confidence: 0.9)
+3. Next conversation, the AI retrieves this fact automatically
+
+## Check Status
+
+Run:
+
+```bash
+plumb status
+```
+
+Output:
+
+```
+Plumb Memory — Local Store
+──────────────────────────
+Facts:          1
+Raw log:        1 exchange
+Last ingestion: 2 minutes ago
+Storage:        127 KB
+
+Top subjects:
+  user                 (1 fact)
+
+MCP server:     installed (/usr/local/bin/plumb-mcp)
+```
+
+## Export Your Memory
+
+Export all data to JSON + Markdown:
+
+```bash
+plumb export
+```
+
+Creates `plumb-export-<timestamp>/` with:
+- `facts.json` — All extracted facts
+- `facts.md` — Human-readable fact list
+- `raw-log.json` — Full conversation log
+- `raw-log.md` — Human-readable log
 
 ## Next Steps
 
-- [Learn how Plumb works](/how-it-works) - Two-layer architecture explained
-- [Self-host from source](/self-hosting) - Clone and build locally
-- [MCP Tools Reference](/mcp-tools) - Complete tool documentation
+- [How It Works](/how-it-works) — Understand the two-layer architecture
+- [MCP Tools](/mcp-tools) — Learn all 4 MCP tools
+- [CLI Reference](/cli) — Full command documentation
+- [Self-Hosting](/self-hosting) — Run from source for development

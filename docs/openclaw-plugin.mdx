@@ -1,0 +1,362 @@
+---
+title: 'OpenClaw Plugin'
+description: 'Native OpenClaw integration with auto-injection'
+---
+
+# OpenClaw Plugin
+
+The Plumb OpenClaw plugin provides native memory integration for OpenClaw users. Memory gets auto-injected into every conversation without manual MCP configuration.
+
+## Why Use the Plugin?
+
+**Zero-config memory**: Install once, memory works in all conversations. No MCP config needed.
+
+**Auto-injection**: Plumb automatically searches memory before each AI response and injects relevant context. The AI doesn't need to call `memory_search` manually.
+
+**Plugin-native**: Integrates directly with OpenClaw's plugin system. No external MCP server process required.
+
+**vs. MCP Mode**: In MCP mode (Claude Desktop, etc.), the AI must explicitly call `memory_search` when it thinks memory is relevant. In plugin mode, memory is *always* available.
+
+## Installation
+
+```bash
+openclaw plugin install @getplumb/openclaw-plugin
+```
+
+This installs the plugin globally and makes it available to all OpenClaw projects.
+
+## Configuration
+
+Add to your OpenClaw config file (e.g., `~/.openclaw/openclaw.json` or project-specific config):
+
+```json
+{
+  "plugins": {
+    "plumb": {
+      "enabled": true,
+      "config": {
+        "mcpServerPath": "plumb-mcp",
+        "userId": "default",
+        "dbPath": "/home/user/.plumb/memory.db",
+        "shadowMode": false,
+        "llmProvider": "anthropic",
+        "llmModel": "claude-haiku-4-5-20251001",
+        "llmApiKey": "sk-ant-..."
+      }
+    }
+  }
+}
+```
+
+### Configuration Options
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `enabled` | boolean | Yes | Enable/disable the plugin |
+| `mcpServerPath` | string | Yes | Path to plumb-mcp binary (default: "plumb-mcp") |
+| `userId` | string | Yes | User ID for memory isolation (default: "default") |
+| `dbPath` | string | No | Database file path (default: ~/.plumb/memory.db) |
+| `shadowMode` | boolean | No | If true, retrieve memory but don't inject (for testing) |
+| `llmProvider` | string | No | LLM provider for fact extraction (openai, anthropic, ollama, openai-compatible) |
+| `llmModel` | string | No | LLM model ID (defaults vary by provider) |
+| `llmApiKey` | string | No | API key for LLM provider (overrides env vars) |
+
+### Service-Based Runtime Considerations
+
+**Important**: OpenClaw runs as a systemd service and does NOT source shell RC files like `~/.zshrc` or `~/.bashrc`. Environment variables set by `plumb setup` will not be visible to the OpenClaw gateway process.
+
+**Recommended approach**: Configure LLM provider directly in `openclaw.json` (as shown above).
+
+**Alternative**: Set environment variables for the OpenClaw service:
+
+```bash
+openclaw gateway env set PLUMB_LLM_PROVIDER=anthropic
+openclaw gateway env set ANTHROPIC_API_KEY=sk-ant-...
+openclaw gateway restart
+```
+
+## How It Works
+
+### Auto-Injection Flow
+
+1. User sends a message to the AI
+2. **Pre-response hook** fires (before AI sees the message)
+3. Plumb calls `memory_search` with the user's message as query
+4. Top results formatted as a `[PLUMB MEMORY]` block
+5. Block prepended to the AI's system prompt
+6. AI responds with memory context available
+7. **Post-exchange hook** fires (after AI responds)
+8. Exchange stored in Layer 1 (raw log)
+9. Fact extraction queued for Layer 2
+
+### Example Injection
+
+User message:
+
+> "Set up a new TypeScript project for me"
+
+Plumb searches memory and injects:
+
+```
+[PLUMB MEMORY]
+Relevant facts from past conversations:
+
+1. user prefers_package_manager pnpm (confidence: 0.92, 3 days ago)
+   Context: "I always use pnpm for Node projects"
+
+2. user prefers_config_format json (confidence: 0.85, 1 week ago)
+   Context: "I prefer JSON config files over YAML"
+
+3. project uses_testing_framework vitest (confidence: 0.78, 2 weeks ago)
+   Context: "Let's use Vitest for testing instead of Jest"
+
+[END PLUMB MEMORY]
+
+User: Set up a new TypeScript project for me
+```
+
+AI response:
+
+> "I'll set up a TypeScript project with pnpm (your preferred package manager). Should I configure Vitest for testing and use JSON for config files as usual?"
+
+The AI automatically incorporated memory context without explicitly calling a tool.
+
+## Shadow Mode
+
+Set `shadowMode: true` to test memory retrieval without injecting context:
+
+```json
+{
+  "plugins": {
+    "plumb": {
+      "enabled": true,
+      "config": {
+        "shadowMode": true,
+        ...
+      }
+    }
+  }
+}
+```
+
+**What happens**:
+- Memory search runs normally
+- Results logged to console
+- **No injection** into AI prompt
+- AI responds without memory context
+
+**Use case**: Validate that memory retrieval is working before enabling full injection.
+
+## Memory Injection Format
+
+The `[PLUMB MEMORY]` block contains:
+
+- **Facts (Layer 2)**: Subject-predicate-object triples with confidence and age
+- **Raw log snippets (Layer 1)**: Verbatim conversation excerpts
+- **Ranked by relevance**: Top N results (default: 10)
+- **Source references**: Session labels and timestamps
+
+### Example Block
+
+```
+[PLUMB MEMORY]
+Relevant facts from past conversations:
+
+1. user prefers_editor vim (confidence: 0.95, 1 week ago)
+   Source: "Editor preferences discussion"
+
+2. project uses_framework nextjs (confidence: 0.88, 3 days ago)
+   Source: "Project setup"
+
+3. Raw excerpt (2 days ago): "I always use ESLint with the Airbnb config"
+   Source: "Linting setup"
+
+[END PLUMB MEMORY]
+```
+
+## Troubleshooting
+
+### Plugin Not Loading
+
+Check plugin status:
+
+```bash
+openclaw plugin list
+```
+
+Expected output:
+
+```
+@getplumb/openclaw-plugin@0.1.0 (enabled)
+```
+
+If not listed, reinstall:
+
+```bash
+openclaw plugin install @getplumb/openclaw-plugin
+```
+
+### No Memory Injected
+
+1. Check that `enabled: true` in openclaw.json
+2. Verify `shadowMode: false` (or omitted)
+3. Check database exists: `plumb status`
+4. Verify memory data: `plumb export --json | jq 'length'`
+
+### Fact Extraction Not Working
+
+1. Check LLM provider config in openclaw.json
+2. Or check service environment variables:
+
+```bash
+openclaw gateway env list | grep PLUMB
+```
+
+3. Test LLM manually:
+
+```bash
+plumb setup  # Re-run setup wizard
+```
+
+### Memory Retrieval Slow
+
+- Large database (>100K facts): Consider pruning old facts
+- Slow embeddings: Use a local embedding model (Ollama)
+- High latency: Check LLM provider response time
+
+Check retrieval time in logs:
+
+```bash
+openclaw gateway logs | grep "Plumb memory search"
+```
+
+Expected: <100ms for search, <500ms for injection.
+
+## Configuration Examples
+
+### Minimal (Defaults)
+
+```json
+{
+  "plugins": {
+    "plumb": {
+      "enabled": true,
+      "config": {
+        "mcpServerPath": "plumb-mcp",
+        "userId": "default"
+      }
+    }
+  }
+}
+```
+
+Uses environment variables for LLM provider (from `plumb setup`).
+
+### Explicit LLM Config (Recommended)
+
+```json
+{
+  "plugins": {
+    "plumb": {
+      "enabled": true,
+      "config": {
+        "mcpServerPath": "plumb-mcp",
+        "userId": "default",
+        "dbPath": "/home/user/.plumb/memory.db",
+        "llmProvider": "anthropic",
+        "llmModel": "claude-haiku-4-5-20251001",
+        "llmApiKey": "sk-ant-api03-..."
+      }
+    }
+  }
+}
+```
+
+No dependency on environment variables.
+
+### Multi-User Setup
+
+```json
+{
+  "plugins": {
+    "plumb": {
+      "enabled": true,
+      "config": {
+        "mcpServerPath": "plumb-mcp",
+        "userId": "alice",
+        "dbPath": "/shared/plumb-memory.db"
+      }
+    }
+  }
+}
+```
+
+Each user has isolated facts via `userId`. Shared database, separate namespaces.
+
+### Shadow Mode (Testing)
+
+```json
+{
+  "plugins": {
+    "plumb": {
+      "enabled": true,
+      "config": {
+        "mcpServerPath": "plumb-mcp",
+        "userId": "default",
+        "shadowMode": true
+      }
+    }
+  }
+}
+```
+
+Memory logged but not injected.
+
+## Plugin Hooks
+
+The plugin implements two OpenClaw hooks:
+
+### Pre-Response Hook
+
+Fires before the AI sees the user's message.
+
+**Actions**:
+1. Extract user message text
+2. Call `memory_search` with message as query
+3. Format results as `[PLUMB MEMORY]` block
+4. Prepend block to system prompt
+
+**Hook name**: `llm_output` (runs before LLM sees input)
+
+### Post-Exchange Hook
+
+Fires after the AI responds.
+
+**Actions**:
+1. Extract user message + AI response
+2. Store exchange in Layer 1 (raw log)
+3. Queue fact extraction for Layer 2
+
+**Hook name**: `post_exchange` (runs after LLM responds)
+
+## Uninstall
+
+Remove the plugin:
+
+```bash
+openclaw plugin uninstall @getplumb/openclaw-plugin
+```
+
+This removes the plugin but preserves your database (`~/.plumb/memory.db`).
+
+To also remove the database:
+
+```bash
+rm -rf ~/.plumb
+```
+
+## Next Steps
+
+- [CLI Reference](/cli) — Manage memory with CLI tools
+- [MCP Tools](/mcp-tools) — Available tools (also used by plugin)
+- [How It Works](/how-it-works) — Deep dive into memory architecture
