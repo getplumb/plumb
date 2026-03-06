@@ -111,16 +111,18 @@ function rrf(
 /**
  * Hybrid search over facts.
  *
- * @param db      The WASM SQLite Database instance
- * @param userId  Scopes the search to this user's data
- * @param query   Natural language query string
- * @param limit   Number of results to return (default 20)
+ * @param db                The WASM SQLite Database instance
+ * @param userId            Scopes the search to this user's data
+ * @param query             Natural language query string
+ * @param limit             Number of results to return (default 20)
+ * @param preloadedCorpus   Optional pre-loaded vec_facts corpus (T-096: in-memory cache)
  */
 export async function searchFacts(
   db: WasmDb,
   userId: string,
   query: string,
   limit = 20,
+  preloadedCorpus?: Array<{ rowid: number; embedding: Float32Array }>,
 ): Promise<readonly SearchResult[]> {
   // ── 1. Fetch all non-deleted fact rows for this user ────────────────────
   const stmt = db.prepare(
@@ -155,17 +157,24 @@ export async function searchFacts(
   // ── 3. Vector search via JS cosine similarity ───────────────────────────
   const queryVec = await embedQuery(query);
 
-  // Fetch all embeddings from vec_facts
-  const vecStmt = db.prepare(`SELECT id, embedding FROM vec_facts`);
-  const vecCorpus: Array<{ id: number; embedding: Float32Array }> = [];
-  while (vecStmt.step()) {
-    const row = vecStmt.get({}) as { id: number; embedding: string };
-    vecCorpus.push({
-      id: row.id,
-      embedding: deserializeEmbedding(row.embedding),
-    });
+  // T-096: Use preloaded corpus if provided, otherwise fetch from vec_facts
+  let vecCorpus: Array<{ id: number; embedding: Float32Array }>;
+  if (preloadedCorpus !== undefined) {
+    // Map rowid → id for knnSearch compatibility
+    vecCorpus = preloadedCorpus.map(entry => ({ id: entry.rowid, embedding: entry.embedding }));
+  } else {
+    // Fetch all embeddings from vec_facts (legacy path, used if cache not provided)
+    const vecStmt = db.prepare(`SELECT id, embedding FROM vec_facts`);
+    vecCorpus = [];
+    while (vecStmt.step()) {
+      const row = vecStmt.get({}) as { id: number; embedding: string };
+      vecCorpus.push({
+        id: row.id,
+        embedding: deserializeEmbedding(row.embedding),
+      });
+    }
+    vecStmt.finalize();
   }
-  vecStmt.finalize();
 
   // Perform KNN search
   const vecFetchLimit = Math.min(allRows.length, Math.max(RERANK_TOP_K * 2, limit * 3, 50));
