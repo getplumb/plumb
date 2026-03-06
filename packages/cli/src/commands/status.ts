@@ -1,8 +1,7 @@
 import { LocalStore } from '@getplumb/core';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
 import { existsSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
+import { getDefaultDbPath } from '../utils/db-path.js';
 
 export interface StatusOptions {
   /** Path to the database file. Defaults to ~/.plumb/memory.db */
@@ -11,9 +10,9 @@ export interface StatusOptions {
   json?: boolean;
   /** User ID to show status for. Defaults to 'default' */
   userId?: string;
+  /** Print full fact list */
+  verbose?: boolean;
 }
-
-const DEFAULT_DB_PATH = join(homedir(), '.plumb', 'memory.db');
 
 /**
  * Check if the MCP server binary is installed.
@@ -74,7 +73,7 @@ function formatNumber(n: number): string {
  *   2. plumb status --json  → prints structured JSON to stdout
  */
 export async function statusCommand(options: StatusOptions): Promise<void> {
-  const dbPath = options.db ?? DEFAULT_DB_PATH;
+  const dbPath = options.db ?? getDefaultDbPath();
   const userId = options.userId ?? 'default';
 
   // Check if database exists.
@@ -85,7 +84,7 @@ export async function statusCommand(options: StatusOptions): Promise<void> {
   }
 
   // Open LocalStore and gather status data.
-  const store = new LocalStore({ dbPath, userId });
+  const store = await LocalStore.create({ dbPath, userId });
   const status = await store.status();
   const topSubjects = store.topSubjects(userId, 5);
   store.close();
@@ -133,5 +132,29 @@ export async function statusCommand(options: StatusOptions): Promise<void> {
     console.log(`MCP server:     installed (${mcpServerPath})`);
   } else {
     console.log('MCP server:     not found (run npm install -g @plumb/mcp-server)');
+  }
+
+  // --verbose: print all facts from the DB
+  if (options.verbose && status.factCount > 0) {
+    console.log();
+    console.log('Facts:');
+    console.log('──────────────────────────');
+    const verboseStore = await LocalStore.create({ dbPath, userId });
+    const results = await verboseStore.search('', status.factCount);
+    verboseStore.close();
+
+    // Sort by timestamp descending (most recent first)
+    const sorted = [...results].sort(
+      (a, b) => b.fact.timestamp.getTime() - a.fact.timestamp.getTime()
+    );
+
+    for (const { fact } of sorted) {
+      const conf = (fact.confidence * 100).toFixed(0);
+      const age = formatAge(fact.timestamp);
+      console.log(`  ${fact.subject} ${fact.predicate} ${fact.object}`);
+      console.log(`    confidence: ${conf}% | decay: ${fact.decayRate} | ${age}`);
+      if (fact.context) console.log(`    context: ${fact.context}`);
+      console.log();
+    }
   }
 }
