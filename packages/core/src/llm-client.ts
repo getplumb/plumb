@@ -2,13 +2,14 @@ import OpenAI from 'openai';
 
 /**
  * Default models per provider
+ * Recommended: google/gemini-2.0-flash (extremely cheap and fast)
  */
 const DEFAULT_MODELS: Record<string, string> = {
+  google: 'gemini-2.0-flash',
   openai: 'gpt-4o-mini',
   anthropic: 'claude-haiku-4-5-20251001',
   ollama: 'llama3.1',
   'openai-compatible': 'gpt-4o-mini',
-  google: 'gemini-2.0-flash',
 };
 
 /**
@@ -16,7 +17,7 @@ const DEFAULT_MODELS: Record<string, string> = {
  * When provided, these values take precedence over env vars.
  */
 export interface LLMConfig {
-  /** Provider: 'openai' | 'anthropic' | 'ollama' | 'google' | 'openai-compatible'. Defaults to 'openai'. */
+  /** Provider: 'google' (recommended) | 'openai' | 'anthropic' | 'ollama' | 'openai-compatible'. Defaults to 'openai'. */
   provider?: string;
   /** Model ID. Defaults to provider-specific default. */
   model?: string;

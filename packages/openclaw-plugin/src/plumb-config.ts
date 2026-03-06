@@ -7,9 +7,9 @@ import { join } from 'node:path';
  * Read from ~/.plumb/config.json at plugin activation time.
  */
 export interface PlumbLLMConfig {
-  /** LLM provider: 'openai', 'anthropic', 'ollama', 'openai-compatible', 'google' */
+  /** LLM provider: 'google' (recommended), 'openai', 'anthropic', 'ollama', 'openai-compatible' */
   llmProvider: 'openai' | 'anthropic' | 'ollama' | 'openai-compatible' | 'google';
-  /** LLM model ID. Optional — defaults vary by provider. */
+  /** LLM model ID. Optional — defaults vary by provider. Recommended: 'gemini-2.0-flash' for google. */
   llmModel?: string;
   /** API key for the LLM provider. Required. Never logged. */
   llmApiKey: string;
@@ -20,13 +20,14 @@ export interface PlumbLLMConfig {
 /**
  * Default model IDs per provider.
  * Matches the core package defaults in llm-client.ts.
+ * Recommended: google/gemini-2.0-flash (extremely cheap and fast).
  */
 const DEFAULT_MODELS: Record<string, string> = {
+  google: 'gemini-2.0-flash',
   openai: 'gpt-4o-mini',
   anthropic: 'claude-haiku-4-5-20251001',
   ollama: 'llama3.1',
   'openai-compatible': 'gpt-4o-mini',
-  google: 'gemini-2.0-flash',
 };
 
 const CONFIG_PATH = join(homedir(), '.plumb', 'config.json');

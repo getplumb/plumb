@@ -62,7 +62,8 @@ export const plugin: OpenClawPluginDefinition = {
   version: '0.1.0',
   kind: 'memory',
 
-  async activate(api: OpenClawPluginApi) {
+  activate(api: OpenClawPluginApi) {
+    void (async () => {
     const dbPath = (api.pluginConfig?.dbPath as string | undefined) ?? DEFAULT_DB_PATH;
     const userId = (api.pluginConfig?.userId as string | undefined) ?? 'default';
     const shadowMode = (api.pluginConfig?.shadowMode as boolean | undefined) ?? false;
@@ -114,15 +115,24 @@ export const plugin: OpenClawPluginDefinition = {
       // No config found — use no-op queue (zero network calls, zero env var reads)
       extractionQueue = new ExtractionQueue(async (_exchange, _userId) => []);
       api.logger.info(
-        '[plumb] Fact extraction disabled -- create ~/.plumb/config.json with llmProvider and llmApiKey to enable'
+        '[plumb] Fact extraction disabled -- create ~/.plumb/config.json to enable. Example: {"llmProvider":"google","llmModel":"gemini-2.0-flash","llmApiKey":"YOUR_KEY"}'
       );
     }
 
-    store = await LocalStore.create({
+    const storeOptions: Parameters<typeof LocalStore.create>[0] = {
       dbPath,
       userId,
       extractionQueue,
-    });
+    };
+    if (plumbConfig) {
+      storeOptions.llmConfig = {
+        provider: plumbConfig.llmProvider,
+        apiKey: plumbConfig.llmApiKey,
+        ...(plumbConfig.llmModel ? { model: plumbConfig.llmModel } : {}),
+        ...(plumbConfig.llmBaseUrl ? { baseUrl: plumbConfig.llmBaseUrl } : {}),
+      };
+    }
+    store = await LocalStore.create(storeOptions);
     const nudgeManager = new NudgeManager();
 
     // Start the extraction queue background drain loop (T-071)
@@ -182,5 +192,6 @@ export const plugin: OpenClawPluginDefinition = {
     });
 
     api.logger.info('[plumb] Plugin activated');
+    })();
   },
 };

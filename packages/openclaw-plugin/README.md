@@ -49,6 +49,33 @@ openclaw config set plugins.entries.plumb.config.userId "clay"
 openclaw gateway restart
 ```
 
+### Enabling Fact Extraction
+
+Fact extraction requires an LLM provider. Create `~/.plumb/config.json` with your API key:
+
+**Recommended (Gemini 2.0 Flash — extremely cheap and fast):**
+```json
+{
+  "llmProvider": "google",
+  "llmModel": "gemini-2.0-flash",
+  "llmApiKey": "YOUR_GEMINI_API_KEY"
+}
+```
+
+**Alternative (OpenAI):**
+```json
+{
+  "llmProvider": "openai",
+  "llmModel": "gpt-4o-mini",
+  "llmApiKey": "YOUR_OPENAI_API_KEY"
+}
+```
+
+Then restart the gateway:
+```bash
+openclaw gateway restart
+```
+
 ## Uninstall
 
 ```bash
