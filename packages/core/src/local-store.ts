@@ -72,6 +72,20 @@ export interface LocalStoreOptions {
    * instead of immediately calling extractFacts(). Defaults to a new ExtractionQueue instance.
    */
   extractionQueue?: ExtractionQueue;
+  /**
+   * Backlog processor tuning. Controls concurrency and idle behavior for drain loops.
+   * Defaults: concurrency=5, embedIdleMs=5000, extractIdleMs=5000, retryBackoffMs=2000
+   */
+  backlog?: {
+    /** Parallel extract requests (default 5) */
+    concurrency?: number;
+    /** Sleep duration when embed queue is empty (default 5000ms) */
+    embedIdleMs?: number;
+    /** Sleep duration when extract queue is empty (default 5000ms) */
+    extractIdleMs?: number;
+    /** Base backoff for 429 retries (default 2000ms) */
+    retryBackoffMs?: number;
+  };
 }
 
 export type { LLMConfig };
@@ -82,15 +96,16 @@ export class LocalStore implements MemoryStore {
   readonly #llmConfig: LLMConfig | undefined;
   readonly #extractionQueue: ExtractionQueue;
 
-  // Backlog processor state (T-087)
-  #embedBacklogTimer: ReturnType<typeof setInterval> | null = null;
-  #extractBacklogTimer: ReturnType<typeof setInterval> | null = null;
-  #embedBacklogRunning = false;
-  #extractBacklogRunning = false;
-  readonly #embedBacklogIntervalMs: number;
-  readonly #embedBacklogBatchSize: number;
-  readonly #extractBacklogIntervalMs: number;
-  readonly #extractBacklogBatchSize: number;
+  // Backlog processor state (T-095: drain loops)
+  #embedDrainStopped = false;
+  #extractDrainStopped = false;
+  #embedDrainPromise: Promise<void> | null = null;
+  #extractDrainPromise: Promise<void> | null = null;
+  readonly #embedIdleMs: number;
+  readonly #extractIdleMs: number;
+  readonly #extractConcurrency: number;
+  readonly #retryBackoffMs: number;
+  readonly #extractFn: ExtractFn;
 
   /** Expose database for plugin use (e.g., NudgeManager) */
   get db(): WasmDb {
@@ -111,18 +126,21 @@ export class LocalStore implements MemoryStore {
     db: WasmDb,
     userId: string,
     llmConfig: LLMConfig | undefined,
-    extractionQueue: ExtractionQueue
+    extractionQueue: ExtractionQueue,
+    extractFn: ExtractFn,
+    backlog?: LocalStoreOptions['backlog']
   ) {
     this.#db = db;
     this.#userId = userId;
     this.#llmConfig = llmConfig;
     this.#extractionQueue = extractionQueue;
+    this.#extractFn = extractFn;
 
-    // Initialize backlog processor config from env vars (T-087)
-    this.#embedBacklogIntervalMs = Number(process.env.PLUMB_EMBED_BACKLOG_INTERVAL_MS ?? 60_000);
-    this.#embedBacklogBatchSize = Number(process.env.PLUMB_EMBED_BACKLOG_BATCH_SIZE ?? 5);
-    this.#extractBacklogIntervalMs = Number(process.env.PLUMB_EXTRACT_BACKLOG_INTERVAL_MS ?? 120_000);
-    this.#extractBacklogBatchSize = Number(process.env.PLUMB_EXTRACT_BACKLOG_BATCH_SIZE ?? 3);
+    // Initialize backlog processor config — defaults run as fast as possible with concurrency.
+    this.#embedIdleMs = backlog?.embedIdleMs ?? 5000;
+    this.#extractIdleMs = backlog?.extractIdleMs ?? 5000;
+    this.#extractConcurrency = backlog?.concurrency ?? 5;
+    this.#retryBackoffMs = backlog?.retryBackoffMs ?? 2000;
   }
 
   /**
@@ -182,7 +200,7 @@ export class LocalStore implements MemoryStore {
     const extractionQueue = options.extractionQueue ?? new ExtractionQueue(extractFn);
 
     // Create store and assign to ref
-    const store = new LocalStore(db, userId, llmConfig, extractionQueue);
+    const store = new LocalStore(db, userId, llmConfig, extractionQueue, extractFn, options.backlog);
     storeRef = store;
 
     return store;
@@ -628,79 +646,98 @@ export class LocalStore implements MemoryStore {
   }
 
   /**
-   * Start background backlog processor loops (T-087).
-   * Processes rows with embed_status='pending' and extract_status='pending'.
+   * Start background backlog processor drain loops (T-095).
+   * Launches continuous async loops for embed and extract backlogs.
    * Call this after store.extractionQueue.start() in plugin-module.ts.
    */
   startBacklogProcessor(): void {
-    // Start embed backlog loop
-    if (this.#embedBacklogTimer === null) {
-      this.#embedBacklogTimer = setInterval(() => void this.#processEmbedBacklog(), this.#embedBacklogIntervalMs);
+    // Start embed drain loop
+    if (this.#embedDrainPromise === null) {
+      this.#embedDrainStopped = false;
+      this.#embedDrainPromise = this.#embedDrainLoop();
     }
 
-    // Start extract backlog loop (only if LLM config is present)
-    if (this.#llmConfig && this.#extractBacklogTimer === null) {
-      this.#extractBacklogTimer = setInterval(() => void this.#processExtractBacklog(), this.#extractBacklogIntervalMs);
+    // Start extract drain loop (only if LLM config is present)
+    if (this.#llmConfig && this.#extractDrainPromise === null) {
+      this.#extractDrainStopped = false;
+      this.#extractDrainPromise = this.#extractDrainLoop();
     }
   }
 
   /**
-   * Stop background backlog processor loops (T-087).
-   * Waits for any in-flight batch to complete before returning.
+   * Stop background backlog processor drain loops (T-095).
+   * Signals both loops to stop and awaits in-flight work.
    * Call this alongside store.extractionQueue.stop() in session_end and process exit handlers.
    */
   async stopBacklogProcessor(): Promise<void> {
-    // Clear intervals
-    if (this.#embedBacklogTimer !== null) {
-      clearInterval(this.#embedBacklogTimer);
-      this.#embedBacklogTimer = null;
+    // Signal loops to stop
+    this.#embedDrainStopped = true;
+    this.#extractDrainStopped = true;
+
+    // Await drain loop Promises (waits for in-flight work to complete)
+    const promises: Promise<void>[] = [];
+    if (this.#embedDrainPromise !== null) {
+      promises.push(this.#embedDrainPromise);
+      this.#embedDrainPromise = null;
     }
-    if (this.#extractBacklogTimer !== null) {
-      clearInterval(this.#extractBacklogTimer);
-      this.#extractBacklogTimer = null;
+    if (this.#extractDrainPromise !== null) {
+      promises.push(this.#extractDrainPromise);
+      this.#extractDrainPromise = null;
     }
 
-    // Wait for any in-flight batches to complete
-    while (this.#embedBacklogRunning || this.#extractBacklogRunning) {
-      await new Promise(resolve => setTimeout(resolve, 100));
+    await Promise.all(promises);
+  }
+
+  /**
+   * Continuous drain loop for embed backlog (T-095).
+   * Runs as fast as the Worker thread allows, with no artificial throttling.
+   * Only sleeps when the queue is empty.
+   */
+  async #embedDrainLoop(): Promise<void> {
+    while (!this.#embedDrainStopped) {
+      const processed = await this.#processEmbedBatch();
+      if (processed === 0) {
+        // Queue is empty — sleep before checking again
+        await new Promise(resolve => setTimeout(resolve, this.#embedIdleMs));
+      }
+      // If processed > 0: immediately loop to grab the next batch
     }
   }
 
   /**
-   * Process embed backlog: fetch pending rows, call embed(), update DB.
-   * T-087: Sequential processing (one row at a time) to keep CPU load predictable.
+   * Process one batch of embed backlog rows (T-095).
+   * Uses Promise.all for parallelism across the batch (embed runs in Worker, no API limits).
+   * Returns count of rows processed.
    */
-  async #processEmbedBacklog(): Promise<void> {
-    // Concurrent guard — skip if previous batch is still running
-    if (this.#embedBacklogRunning) return;
-    this.#embedBacklogRunning = true;
+  async #processEmbedBatch(): Promise<number> {
+    const BATCH_SIZE = 50; // Large batch — embed is CPU-bound, no rate limit
 
-    try {
-      // Fetch pending rows
-      const stmt = this.#db.prepare(`
-        SELECT id, chunk_text FROM raw_log
-        WHERE user_id = ? AND embed_status = 'pending'
-        ORDER BY rowid ASC
-        LIMIT ?
-      `);
-      stmt.bind([this.#userId, this.#embedBacklogBatchSize]);
+    // Fetch pending rows
+    const stmt = this.#db.prepare(`
+      SELECT id, chunk_text FROM raw_log
+      WHERE user_id = ? AND embed_status = 'pending'
+      ORDER BY rowid ASC
+      LIMIT ?
+    `);
+    stmt.bind([this.#userId, BATCH_SIZE]);
 
-      const pendingRows: Array<{ id: string; chunk_text: string }> = [];
-      while (stmt.step()) {
-        pendingRows.push(stmt.get({}) as any);
-      }
-      stmt.finalize();
+    const pendingRows: Array<{ id: string; chunk_text: string }> = [];
+    while (stmt.step()) {
+      pendingRows.push(stmt.get({}) as any);
+    }
+    stmt.finalize();
 
-      if (pendingRows.length === 0) return;
+    if (pendingRows.length === 0) return 0;
 
-      // Process rows sequentially
-      for (const row of pendingRows) {
+    // Process rows concurrently with Promise.all
+    await Promise.all(
+      pendingRows.map(async (row) => {
         try {
           const embedding = await embed(row.chunk_text);
           const embeddingJson = serializeEmbedding(embedding);
           const embedModel = 'Xenova/bge-small-en-v1.5';
 
-          // Insert into vec_raw_log
+          // Insert into vec_raw_log (transaction per row for isolation)
           this.#db.exec('BEGIN');
           const vecStmt = this.#db.prepare(`INSERT INTO vec_raw_log(embedding) VALUES (?)`);
           vecStmt.bind([embeddingJson]);
@@ -732,23 +769,20 @@ export class LocalStore implements MemoryStore {
           updateStmt.step();
           updateStmt.finalize();
         }
-      }
-    } finally {
-      this.#embedBacklogRunning = false;
-    }
+      })
+    );
+
+    return pendingRows.length;
   }
 
   /**
-   * Process extract backlog: fetch pending rows, enqueue to ExtractionQueue.
-   * T-087: Smaller batch size than embed (LLM calls cost money).
+   * Continuous drain loop for extract backlog (T-095).
+   * Fetches up to `concurrency` rows and processes them concurrently with 429 backoff.
+   * Only sleeps when the queue is empty.
    */
-  async #processExtractBacklog(): Promise<void> {
-    // Concurrent guard — skip if previous batch is still running
-    if (this.#extractBacklogRunning) return;
-    this.#extractBacklogRunning = true;
-
-    try {
-      // Fetch pending rows
+  async #extractDrainLoop(): Promise<void> {
+    while (!this.#extractDrainStopped) {
+      // Fetch pending rows (up to concurrency limit)
       const stmt = this.#db.prepare(`
         SELECT id, user_message, agent_response, timestamp, session_id, session_label, source
         FROM raw_log
@@ -756,7 +790,7 @@ export class LocalStore implements MemoryStore {
         ORDER BY rowid ASC
         LIMIT ?
       `);
-      stmt.bind([this.#userId, this.#extractBacklogBatchSize]);
+      stmt.bind([this.#userId, this.#extractConcurrency]);
 
       const pendingRows: Array<{
         id: string;
@@ -773,23 +807,59 @@ export class LocalStore implements MemoryStore {
       }
       stmt.finalize();
 
-      if (pendingRows.length === 0) return;
-
-      // Enqueue each row to ExtractionQueue (the drain loop handles the actual LLM call)
-      for (const row of pendingRows) {
-        const exchange: MessageExchange = {
-          userMessage: row.user_message,
-          agentResponse: row.agent_response,
-          timestamp: new Date(row.timestamp),
-          source: row.source as 'openclaw' | 'claude-code' | 'claude-desktop',
-          sessionId: row.session_id,
-          ...(row.session_label !== null ? { sessionLabel: row.session_label } : {}),
-        };
-
-        this.#extractionQueue.enqueue(exchange, this.#userId, row.id);
+      if (pendingRows.length === 0) {
+        // Queue is empty — sleep before checking again
+        await new Promise(resolve => setTimeout(resolve, this.#extractIdleMs));
+        continue;
       }
-    } finally {
-      this.#extractBacklogRunning = false;
+
+      // Process rows concurrently with 429 backoff
+      await Promise.all(
+        pendingRows.map(async (row) => {
+          const exchange: MessageExchange = {
+            userMessage: row.user_message,
+            agentResponse: row.agent_response,
+            timestamp: new Date(row.timestamp),
+            source: row.source as 'openclaw' | 'claude-code' | 'claude-desktop',
+            sessionId: row.session_id,
+            ...(row.session_label !== null ? { sessionLabel: row.session_label } : {}),
+          };
+
+          await this.#extractRowWithBackoff(exchange, row.id);
+        })
+      );
+    }
+  }
+
+  /**
+   * Extract facts for one row with exponential backoff on 429 errors (T-095).
+   * Calls extractFn directly (bypasses ExtractionQueue for backlog processing).
+   * extractFn already handles DB status updates (extract_status=done/failed).
+   */
+  async #extractRowWithBackoff(exchange: MessageExchange, sourceChunkId: string): Promise<void> {
+    const MAX_RETRIES = 4;
+    let attempt = 0;
+
+    while (attempt <= MAX_RETRIES) {
+      try {
+        await this.#extractFn(exchange, this.#userId, sourceChunkId);
+        return; // Success
+      } catch (err: unknown) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        const is429 = errorMsg.toLowerCase().includes('429') ||
+                      errorMsg.toLowerCase().includes('rate') ||
+                      errorMsg.toLowerCase().includes('quota');
+
+        if (is429 && attempt < MAX_RETRIES) {
+          // Exponential backoff: 2s, 4s, 8s, 16s
+          const backoffMs = this.#retryBackoffMs * Math.pow(2, attempt);
+          await new Promise(resolve => setTimeout(resolve, backoffMs));
+          attempt++;
+        } else {
+          // Not a 429, or max retries reached — extractFn already marked extract_status='failed'
+          return;
+        }
+      }
     }
   }
 
