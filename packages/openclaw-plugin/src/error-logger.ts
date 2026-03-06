@@ -11,32 +11,27 @@ export interface ErrorLogEntry {
 }
 
 /**
- * Derives the error log path from the DB path (if set) or defaults to ~/.plumb/errors.log.
- * If PLUMB_DB_PATH environment variable is set, we use its parent directory.
+ * Derives the error log path from the DB path or defaults to ~/.plumb/errors.log.
  */
-function getErrorLogPath(): string {
-  const dbPath = process.env.PLUMB_DB_PATH;
-
+function getErrorLogPath(dbPath?: string): string {
   if (dbPath) {
-    // Use the parent directory of the DB path
     return join(dirname(dbPath), 'errors.log');
   }
-
-  // Default: ~/.plumb/errors.log
   return join(homedir(), '.plumb', 'errors.log');
 }
 
 /**
- * Appends an error entry to ~/.plumb/errors.log (or PLUMB_DB_PATH parent if set).
+ * Appends an error entry to ~/.plumb/errors.log (or dbPath's parent directory if provided).
  * Format: JSONL (one JSON object per line).
  *
  * This function never throws — if the write fails, it silently logs to console.error only.
  *
- * @param entry - Error log entry with timestamp, type, message, and optional stack/context
+ * @param entry  - Error log entry with timestamp, type, message, and optional stack/context
+ * @param dbPath - Optional path to the Plumb DB; used to derive the log directory
  */
-export function appendError(entry: ErrorLogEntry): void {
+export function appendError(entry: ErrorLogEntry, dbPath?: string): void {
   try {
-    const logPath = getErrorLogPath();
+    const logPath = getErrorLogPath(dbPath);
     const logDir = dirname(logPath);
 
     // Ensure directory exists

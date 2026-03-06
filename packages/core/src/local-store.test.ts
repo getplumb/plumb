@@ -1,4 +1,4 @@
-import { test, after } from 'node:test';
+import { test, after, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -9,7 +9,12 @@ import { DecayRate } from './types.js';
 // Use a unique temp path per test run so tests don't interfere with each other.
 const dbPath = join(tmpdir(), `plumb-test-${Date.now()}.db`);
 
-const store = new LocalStore({ dbPath, userId: 'test-user' });
+let store: LocalStore;
+
+// Initialize store before running tests
+before(async () => {
+  store = await LocalStore.create({ dbPath, userId: 'test-user' });
+});
 
 after(() => {
   store.close();
@@ -76,7 +81,7 @@ test('delete() soft-deletes a fact (sets deleted_at, excludes from search)', asy
 });
 
 test('status() returns accurate factCount and rawLogCount', async () => {
-  const fresh = new LocalStore({
+  const fresh = await LocalStore.create({
     dbPath: join(tmpdir(), `plumb-status-test-${Date.now()}.db`),
     userId: 'status-test-user',
   });
@@ -134,7 +139,7 @@ test('ingest() writes to raw_log and returns rawLogId', async () => {
 });
 
 test('ingest() cross-session: facts from different sessions visible in same status()', async () => {
-  const crossStore = new LocalStore({
+  const crossStore = await LocalStore.create({
     dbPath: join(tmpdir(), `plumb-cross-session-${Date.now()}.db`),
     userId: 'cross-user',
   });

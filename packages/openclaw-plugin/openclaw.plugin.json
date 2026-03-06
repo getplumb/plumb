@@ -1,8 +1,39 @@
 {
   "id": "plumb",
   "name": "Plumb Memory",
-  "version": "0.1.0",
+  "version": "0.2.8",
   "description": "Auto-ingest and memory injection for OpenClaw",
   "kind": "memory",
-  "main": "dist/plugin-module.js"
+  "main": "dist/index.js",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "dbPath": {
+        "type": "string",
+        "description": "Path to the SQLite database file. Defaults to ~/.plumb/memory.db"
+      },
+      "userId": {
+        "type": "string",
+        "description": "User ID for scoping memory. Defaults to 'default'"
+      },
+      "shadowMode": {
+        "type": "boolean",
+        "description": "If true, retrieves memory context but does not inject it into prompts"
+      }
+    }
+  },
+  "uiHints": {
+    "dbPath": {
+      "label": "Database Path",
+      "placeholder": "~/.plumb/memory.db"
+    },
+    "userId": {
+      "label": "User ID",
+      "placeholder": "default"
+    },
+    "shadowMode": {
+      "label": "Shadow Mode (inject disabled)"
+    }
+  }
 }

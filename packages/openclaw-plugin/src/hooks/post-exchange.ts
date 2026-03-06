@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { LocalStore } from '@getplumb/core';
 import { appendError } from '../error-logger.js';
 
@@ -30,15 +31,32 @@ type PluginHookAgentContext = {
  *
  * Fire-and-forget pattern: returns void synchronously, ingests in background.
  * Errors are caught and logged silently to avoid disrupting the agent flow.
+ *
+ * @param store LocalStore instance for ingestion
+ * @param userId User ID for the exchange
+ * @param pendingPrompts Shared map containing user prompts stored by pre-response hook
  */
-export function createPostExchangeHook(store: LocalStore, userId: string) {
+export function createPostExchangeHook(
+  store: LocalStore,
+  userId: string,
+  pendingPrompts?: Map<string, string>,
+  dbPath?: string
+) {
   return (event: PluginHookLlmOutputEvent, ctx: PluginHookAgentContext): void => {
+    const sessionId = ctx.sessionId ?? event.sessionId ?? randomUUID();
+
+    // Retrieve and clear the user message from shared state
+    const userMessage = pendingPrompts?.get(sessionId) ?? '';
+    if (pendingPrompts && sessionId) {
+      pendingPrompts.delete(sessionId);
+    }
+
     const exchange = {
-      id: crypto.randomUUID(),
+      id: randomUUID(),
       userId,
-      sessionId: ctx.sessionId ?? event.sessionId ?? crypto.randomUUID(),
+      sessionId,
       sessionLabel: ctx.sessionKey,
-      userMessage: (event as any).prompt ?? '',
+      userMessage,
       agentResponse: event.assistantTexts.join('\n'),
       timestamp: new Date().toISOString(),
       source: 'openclaw' as const,
@@ -69,7 +87,7 @@ export function createPostExchangeHook(store: LocalStore, userId: string) {
           ...(e instanceof Error && e.stack ? { stack: e.stack } : {}),
         };
 
-        appendError(errorEntry);
+        appendError(errorEntry, dbPath);
 
         // Also log to console for immediate visibility during development
         console.debug('[plumb] ingest error:', e);

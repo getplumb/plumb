@@ -3,7 +3,7 @@
  *
  * Pipeline:
  *   1. BM25 keyword search over all raw_log chunk_text (built at query time)
- *   2. KNN vector search via sqlite-vec vec_raw_log virtual table
+ *   2. KNN vector search via JS cosine similarity (replaces sqlite-vec)
  *   3. Reciprocal Rank Fusion (RRF, k=60) merges both ranked lists
  *   4. Recency decay: score *= e^(-0.012 × age_in_days)
  *   5. Cross-encoder reranker (top-20 candidates → Xenova/ms-marco-MiniLM-L-6-v2)
@@ -13,9 +13,10 @@
  * The caller (LocalStore) passes its internal db handle — no separate DB connection.
  */
 
-import type Database from 'better-sqlite3';
+import type { WasmDb } from './wasm-db.js';
 import { Bm25 } from './bm25.js';
 import { embedQuery, rerankScores } from './embedder.js';
+import { knnSearch, deserializeEmbedding } from './vector-search.js';
 
 // RRF constant (standard k=60; higher = less weight on top-1 rank).
 const RRF_K = 60;
@@ -45,11 +46,6 @@ interface RawLogRow {
   session_label: string | null;
   timestamp: string;
   chunk_text: string;
-}
-
-interface VecRow {
-  rowid: number;
-  distance: number;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -92,26 +88,31 @@ function rrf(
 /**
  * Hybrid search over raw_log.
  *
- * @param db      The better-sqlite3 Database instance (with sqlite-vec loaded)
+ * @param db      The WASM SQLite Database instance
  * @param userId  Scopes the search to this user's data
  * @param query   Natural language query string
  * @param limit   Number of results to return (default 10)
  */
 export async function searchRawLog(
-  db: Database.Database,
+  db: WasmDb,
   userId: string,
   query: string,
   limit = 10,
 ): Promise<readonly RawLogSearchResult[]> {
   // ── 1. Fetch all raw_log rows for this user ──────────────────────────────
-  const allRows = db
-    .prepare<[string], RawLogRow>(
-      `SELECT id, session_id, session_label, timestamp, chunk_text
-       FROM raw_log
-       WHERE user_id = ?
-       ORDER BY timestamp DESC`,
-    )
-    .all(userId);
+  const stmt = db.prepare(
+    `SELECT id, session_id, session_label, timestamp, chunk_text, vec_rowid
+     FROM raw_log
+     WHERE user_id = ?
+     ORDER BY timestamp DESC`
+  );
+  stmt.bind([userId]);
+
+  const allRows: Array<RawLogRow & { vec_rowid: number | null }> = [];
+  while (stmt.step()) {
+    allRows.push(stmt.get({}) as any);
+  }
+  stmt.finalize();
 
   if (allRows.length === 0) return [];
 
@@ -126,36 +127,31 @@ export async function searchRawLog(
     .map((r, i): [string, number] => [r.id, bm25RawScores[i] ?? 0])
     .sort((a, b) => b[1] - a[1]);
 
-  // ── 3. Vector search via sqlite-vec ─────────────────────────────────────
+  // ── 3. Vector search via JS cosine similarity ───────────────────────────
   const queryVec = await embedQuery(query);
-  const queryBlob = Buffer.from(queryVec.buffer);
 
-  // Fetch enough candidates for RRF merge (all docs for small corpora, top-N otherwise).
+  // Fetch all embeddings from vec_raw_log
+  const vecStmt = db.prepare(`SELECT id, embedding FROM vec_raw_log`);
+  const vecCorpus: Array<{ id: number; embedding: Float32Array }> = [];
+  while (vecStmt.step()) {
+    const row = vecStmt.get({}) as { id: number; embedding: string };
+    vecCorpus.push({
+      id: row.id,
+      embedding: deserializeEmbedding(row.embedding),
+    });
+  }
+  vecStmt.finalize();
+
+  // Perform KNN search
   const vecFetchLimit = Math.min(allRows.length, Math.max(RERANK_TOP_K * 2, limit * 3, 50));
+  const vecResults = knnSearch(queryVec, vecCorpus, vecFetchLimit);
 
-  // Query vec_raw_log for nearest neighbours; resolve back to raw_log via vec_rowid column.
-  const vecRows = db
-    .prepare<[Buffer, number], VecRow>(
-      `SELECT rowid, distance FROM vec_raw_log
-       WHERE embedding MATCH ?
-       ORDER BY distance
-       LIMIT ?`,
-    )
-    .all(queryBlob, vecFetchLimit);
-
-  // raw_log.vec_rowid is backfilled during ingest() to the auto-assigned vec_raw_log rowid.
-  interface RawLogIdRow { id: string }
+  // Map vec_raw_log ids back to raw_log ids
   const vecRanked: Array<[string, number]> = [];
-  for (const vecRow of vecRows) {
-    const logRow = db
-      .prepare<[number, string], RawLogIdRow>(
-        `SELECT id FROM raw_log WHERE vec_rowid = ? AND user_id = ?`,
-      )
-      .get(vecRow.rowid, userId);
+  for (const vecResult of vecResults) {
+    const logRow = allRows.find((r) => r.vec_rowid === vecResult.id);
     if (logRow !== undefined) {
-      // sqlite-vec cosine distance is in [0,2] for normalized vectors.
-      // Similarity = 1 − distance gives [−1,1]; in practice ≥ 0 for meaningful matches.
-      vecRanked.push([logRow.id, 1 - vecRow.distance]);
+      vecRanked.push([logRow.id, 1 - vecResult.distance]);
     }
   }
 

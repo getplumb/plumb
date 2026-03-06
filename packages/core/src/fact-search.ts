@@ -3,7 +3,7 @@
  *
  * Pipeline:
  *   1. BM25 keyword search over concatenated fact text (subject+predicate+object+context)
- *   2. KNN vector search via sqlite-vec vec_facts virtual table
+ *   2. KNN vector search via JS cosine similarity (replaces sqlite-vec)
  *   3. Reciprocal Rank Fusion (RRF, k=60) merges both ranked lists
  *   4. Recency decay: score *= e^(-lambda × age_in_days), using per-fact decay_rate
  *   5. Cross-encoder reranker (top-20 candidates → Xenova/ms-marco-MiniLM-L-6-v2)
@@ -15,11 +15,12 @@
  *   fast=0.05 (half-life ~14 days) — transient state
  */
 
-import type Database from 'better-sqlite3';
+import type { WasmDb } from './wasm-db.js';
 import { Bm25 } from './bm25.js';
 import { embedQuery, rerankScores } from './embedder.js';
 import type { SearchResult } from './types.js';
 import { DecayRate } from './types.js';
+import { knnSearch, deserializeEmbedding } from './vector-search.js';
 
 // RRF constant (standard k=60).
 const RRF_K = 60;
@@ -49,11 +50,7 @@ interface FactRow {
   source_session_label: string | null;
   context: string | null;
   deleted_at: string | null;
-}
-
-interface VecRow {
-  rowid: number;
-  distance: number;
+  vec_rowid: number | null;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -114,28 +111,33 @@ function rrf(
 /**
  * Hybrid search over facts.
  *
- * @param db      The better-sqlite3 Database instance (with sqlite-vec loaded)
+ * @param db      The WASM SQLite Database instance
  * @param userId  Scopes the search to this user's data
  * @param query   Natural language query string
  * @param limit   Number of results to return (default 20)
  */
 export async function searchFacts(
-  db: Database.Database,
+  db: WasmDb,
   userId: string,
   query: string,
   limit = 20,
 ): Promise<readonly SearchResult[]> {
   // ── 1. Fetch all non-deleted fact rows for this user ────────────────────
-  const allRows = db
-    .prepare<[string], FactRow>(
-      `SELECT id, user_id, subject, predicate, object, confidence,
-              decay_rate, timestamp, source_session_id, source_session_label,
-              context, deleted_at
-       FROM facts
-       WHERE user_id = ? AND deleted_at IS NULL
-       ORDER BY timestamp DESC`,
-    )
-    .all(userId);
+  const stmt = db.prepare(
+    `SELECT id, user_id, subject, predicate, object, confidence,
+            decay_rate, timestamp, source_session_id, source_session_label,
+            context, deleted_at, vec_rowid
+     FROM facts
+     WHERE user_id = ? AND deleted_at IS NULL
+     ORDER BY timestamp DESC`
+  );
+  stmt.bind([userId]);
+
+  const allRows: FactRow[] = [];
+  while (stmt.step()) {
+    allRows.push(stmt.get({}) as any);
+  }
+  stmt.finalize();
 
   if (allRows.length === 0) return [];
 
@@ -150,32 +152,31 @@ export async function searchFacts(
     .map((r, i): [string, number] => [r.id, bm25RawScores[i] ?? 0])
     .sort((a, b) => b[1] - a[1]);
 
-  // ── 3. Vector search via sqlite-vec ─────────────────────────────────────
+  // ── 3. Vector search via JS cosine similarity ───────────────────────────
   const queryVec = await embedQuery(query);
-  const queryBlob = Buffer.from(queryVec.buffer);
 
+  // Fetch all embeddings from vec_facts
+  const vecStmt = db.prepare(`SELECT id, embedding FROM vec_facts`);
+  const vecCorpus: Array<{ id: number; embedding: Float32Array }> = [];
+  while (vecStmt.step()) {
+    const row = vecStmt.get({}) as { id: number; embedding: string };
+    vecCorpus.push({
+      id: row.id,
+      embedding: deserializeEmbedding(row.embedding),
+    });
+  }
+  vecStmt.finalize();
+
+  // Perform KNN search
   const vecFetchLimit = Math.min(allRows.length, Math.max(RERANK_TOP_K * 2, limit * 3, 50));
+  const vecResults = knnSearch(queryVec, vecCorpus, vecFetchLimit);
 
-  const vecRows = db
-    .prepare<[Buffer, number], VecRow>(
-      `SELECT rowid, distance FROM vec_facts
-       WHERE embedding MATCH ?
-       ORDER BY distance
-       LIMIT ?`,
-    )
-    .all(queryBlob, vecFetchLimit);
-
-  // Resolve vec_facts rowid back to facts via facts.vec_rowid column.
-  interface FactIdRow { id: string }
+  // Map vec_facts ids back to fact ids
   const vecRanked: Array<[string, number]> = [];
-  for (const vecRow of vecRows) {
-    const factRow = db
-      .prepare<[number, string], FactIdRow>(
-        `SELECT id FROM facts WHERE vec_rowid = ? AND user_id = ? AND deleted_at IS NULL`,
-      )
-      .get(vecRow.rowid, userId);
+  for (const vecResult of vecResults) {
+    const factRow = allRows.find((r) => r.vec_rowid === vecResult.id);
     if (factRow !== undefined) {
-      vecRanked.push([factRow.id, 1 - vecRow.distance]);
+      vecRanked.push([factRow.id, 1 - vecResult.distance]);
     }
   }
 
