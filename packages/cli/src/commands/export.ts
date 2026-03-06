@@ -1,8 +1,8 @@
 import { LocalStore } from '@getplumb/core';
-import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { formatFactsMarkdown, formatRawLogMarkdown } from '../formatters/markdown.js';
+import { getDefaultDbPath } from '../utils/db-path.js';
 
 export interface ExportOptions {
   /** Path to the database file. Defaults to ~/.plumb/memory.db */
@@ -13,16 +13,14 @@ export interface ExportOptions {
   userId?: string;
 }
 
-const DEFAULT_DB_PATH = join(homedir(), '.plumb', 'memory.db');
-
 /**
  * Export command handler.
  * Two modes:
  *   1. plumb export          → creates ./plumb-export-<timestamp>/ directory with JSON + Markdown files
  *   2. plumb export --json   → prints facts.json to stdout only (for piping)
  */
-export function exportCommand(options: ExportOptions): void {
-  const dbPath = options.db ?? DEFAULT_DB_PATH;
+export async function exportCommand(options: ExportOptions): Promise<void> {
+  const dbPath = options.db ?? getDefaultDbPath();
   const userId = options.userId ?? 'default';
 
   // Check if database exists.
@@ -33,7 +31,7 @@ export function exportCommand(options: ExportOptions): void {
   }
 
   // Open LocalStore and export data.
-  const store = new LocalStore({ dbPath, userId });
+  const store = await LocalStore.create({ dbPath, userId });
   const exportData = store.exportAll(userId);
   store.close();
 
