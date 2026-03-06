@@ -129,6 +129,10 @@ export const plugin: OpenClawPluginDefinition = {
     store.extractionQueue.start();
     api.logger.debug?.('[plumb] Extraction queue started');
 
+    // Start the backlog processor (T-087)
+    store.startBacklogProcessor();
+    api.logger.debug?.('[plumb] Backlog processor started');
+
     // Pre-warm the embedding pipeline in the background so the first
     // before_prompt_build hook doesn't time out waiting for model load.
     embedQuery('warm').catch(() => {
@@ -150,6 +154,8 @@ export const plugin: OpenClawPluginDefinition = {
       try {
         await store.extractionQueue.stop();
         api.logger.debug?.('[plumb] Extraction queue stopped and flushed on session_end');
+        await store.stopBacklogProcessor();
+        api.logger.debug?.('[plumb] Backlog processor stopped on session_end');
         store.close();
         api.logger.debug?.('[plumb] Store closed on session_end');
       } catch (e) {
@@ -162,6 +168,8 @@ export const plugin: OpenClawPluginDefinition = {
       try {
         await store.extractionQueue.stop();
         api.logger.debug?.('[plumb] Extraction queue stopped on process exit');
+        await store.stopBacklogProcessor();
+        api.logger.debug?.('[plumb] Backlog processor stopped on process exit');
       } catch (e) {
         api.logger.debug?.(`[plumb] Error stopping queue on exit: ${e}`);
       }
