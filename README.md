@@ -6,37 +6,90 @@ Plumb gives your AI agents a two-layer memory system: a raw conversation log and
 
 ---
 
+## Why Plumb?
+
+- **Zero-config for OpenClaw users:** Install the plugin, memory just works. No MCP config required.
+- **Two-layer architecture:** Raw logs (full fidelity) + fact graph (structured knowledge). Both layers queried on every turn.
+- **Automatic ingestion:** Every exchange is logged and extracted. No manual commands, no "please remember this."
+
+---
+
 ## How it works
 
 Every exchange gets ingested automatically. Plumb runs two layers in parallel:
 
-- **Layer 1 — Raw log:** Full conversation history with hybrid semantic + keyword search
-- **Layer 2 — Fact graph:** Structured facts extracted from conversations, confidence-scored and time-decayed
+**Layer 1 — Raw log:** Full conversation history stored with hybrid semantic + keyword search. Preserves exact wording, context, and nuance.
 
-At retrieval time, both layers are queried and merged into a concise `[MEMORY CONTEXT]` block that gets injected into the agent's system prompt before each response.
+**Layer 2 — Fact graph:** Structured facts extracted via LLM from conversations. Each fact is confidence-scored, timestamped, and time-decayed. Facts include topics, preferences, decisions, and entity relationships.
 
-```json
-// .cursor/mcp.json or claude_desktop_config.json
-{
-  "mcpServers": {
-    "plumb": {
-      "command": "npx",
-      "args": ["-y", "@plumb/mcp-server"]
-    }
-  }
-}
+At retrieval time, both layers are queried (semantic search on raw logs, topic + recency ranking on facts) and merged into a concise `[MEMORY CONTEXT]` block that gets injected into the agent's system prompt before each response.
+
+```
+┌─────────────┐
+│   Agent     │
+│  Exchange   │
+└──────┬──────┘
+       │
+       ├───────────────────┬──────────────────┐
+       │                   │                  │
+       ▼                   ▼                  ▼
+ ┌──────────┐      ┌──────────────┐   ┌──────────┐
+ │ Raw Log  │      │  Extraction  │   │ Fact     │
+ │ (hybrid  │      │  (LLM-based) │──▶│ Graph    │
+ │  search) │      └──────────────┘   │ (scored) │
+ └────┬─────┘                         └────┬─────┘
+      │                                    │
+      └──────────┬─────────────────────────┘
+                 ▼
+          ┌─────────────┐
+          │   Retrieval │
+          │   (merged)  │
+          └──────┬──────┘
+                 │
+                 ▼
+       [MEMORY CONTEXT] block
+       injected into system prompt
 ```
 
 ---
 
 ## Quickstart
 
+### For OpenClaw users
+
+Install the Plumb plugin — memory ingestion and retrieval happen automatically:
+
 ```bash
-npm install -g @plumb/mcp-server
-plumb init
+openclaw plugins install openclaw-plugin-plumb
 ```
 
-Then add Plumb to your MCP config (see above) and restart your agent. That's it.
+That's it. No MCP config required. Plumb hooks into OpenClaw's exchange lifecycle and injects memory into every turn.
+
+### For other tools (Claude Desktop, Cursor, etc.)
+
+Install the MCP server globally:
+
+```bash
+npm install -g @getplumb/mcp-server
+```
+
+Add Plumb to your MCP config:
+
+```json
+// ~/.config/Claude/claude_desktop_config.json (macOS)
+// %APPDATA%\Claude\claude_desktop_config.json (Windows)
+// .cursor/mcp.json (Cursor)
+{
+  "mcpServers": {
+    "plumb": {
+      "command": "npx",
+      "args": ["-y", "@getplumb/mcp-server"]
+    }
+  }
+}
+```
+
+Restart your tool. Plumb will start ingesting conversations and providing memory context automatically.
 
 ---
 
@@ -44,27 +97,49 @@ Then add Plumb to your MCP config (see above) and restart your agent. That's it.
 
 This is a monorepo. All packages under `packages/` are MIT licensed. Hosted infrastructure under `hosted/` is BSL 1.1.
 
-| Package | Description |
-|---|---|
-| [`@plumb/core`](./packages/core) | MemoryStore interface, types, fact extraction, confidence scoring |
-| [`@plumb/mcp-server`](./packages/mcp-server) | Self-hostable MCP server (stdio) |
-| [`@plumb/openclaw-plugin`](./packages/openclaw-plugin) | OpenClaw agent plugin — auto-ingest + memory injection |
-| [`@plumb/cli`](./packages/cli) | `plumb` CLI — init, status, export |
+| Package | Description | License |
+|---|---|---|
+| [`@getplumb/core`](./packages/core) | MemoryStore interface, types, LocalStore, fact extraction, search | MIT |
+| [`@getplumb/mcp-server`](./packages/mcp-server) | Self-hostable MCP server (stdio) | MIT |
+| [`@getplumb/openclaw-plugin`](./packages/openclaw-plugin) | OpenClaw agent plugin — auto-ingest + memory injection | MIT |
+| [`plumb-memory`](./packages/cli) | CLI tool — init, status, export, reprocess | MIT |
+| `@getplumb/cloud-store` (hosted) | Postgres/pgvector CloudStore driver | BSL 1.1 |
+| `@getplumb/api-server` (hosted) | Hosted MCP endpoint | BSL 1.1 |
 
 ---
 
-## Hosted
+## Self-hosting
 
-The hosted tier (`$9/mo`) runs on Postgres + pgvector via Supabase and Fly.io, with cross-device sync and automatic backups.
+All packages under `packages/` are MIT licensed — use them however you want. The default LocalStore uses SQLite and lives in `~/.plumb/` on your machine. No network calls, no telemetry.
 
-→ [getplumb.dev](https://getplumb.dev)
+To run the hosted MCP endpoint yourself:
+1. Clone this repo
+2. Deploy `hosted/api-server` to Fly.io or any Node.js host
+3. Set up Postgres with pgvector (Supabase works well)
+4. Point your MCP config to your deployed endpoint
+
+See [`hosted/api-server/README.md`](./hosted/api-server/README.md) for deployment instructions.
 
 ---
 
 ## License
 
-- `packages/*` — [MIT](./packages/core/LICENSE)
-- `hosted/*` — [BSL 1.1](./hosted/LICENSE) (converts to MIT after 4 years)
+**packages/\*** is MIT — use it however you want.
+
+**hosted/\*** (the cloud driver and API server) is BSL 1.1 — free for non-production use, commercial use requires a license. The OSS core never depends on the BSL code.
+
+BSL 1.1 converts to MIT after 4 years.
+
+- [`packages/core/LICENSE`](./packages/core/LICENSE) — MIT
+- [`hosted/LICENSE`](./hosted/LICENSE) — BSL 1.1
+
+---
+
+## Links
+
+- **Docs:** [docs.getplumb.dev](https://docs.getplumb.dev)
+- **Hosted tier:** [getplumb.dev](https://getplumb.dev) ($9/mo — Postgres + pgvector, cross-device sync, backups)
+- **Roadmap:** See [`ROADMAP.md`](./ROADMAP.md)
 
 ---
 
