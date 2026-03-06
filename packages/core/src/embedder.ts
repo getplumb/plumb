@@ -13,24 +13,30 @@
  * use the local cache at ~/.cache/huggingface/hub/.
  */
 
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-ignore — @xenova/transformers has incomplete typings
-import { pipeline, env } from '@xenova/transformers';
-
 /** Embedding dimension for BAAI/bge-small-en-v1.5. */
 export const EMBED_DIM = 384;
-
-// Disable the remote model check in test/offline environments to use cache.
-// env.allowRemoteModels is already true by default; this line is a no-op but documents intent.
-(env as { allowLocalModels: boolean }).allowLocalModels = true;
 
 type Pipeline = (input: string | string[], opts?: Record<string, unknown>) => Promise<{ data: Float32Array }>;
 
 let _embedPipeline: Pipeline | null = null;
+let _embedLoadFailed = false;
 
-async function getEmbedPipeline(): Promise<Pipeline> {
+async function getEmbedPipeline(): Promise<Pipeline | null> {
+  if (_embedLoadFailed) return null;
   if (_embedPipeline === null) {
-    _embedPipeline = (await pipeline('feature-extraction', 'Xenova/bge-small-en-v1.5')) as Pipeline;
+    try {
+      // Dynamic import so the module is optional — if @xenova/transformers is not
+      // installed (e.g. on Windows via openclaw plugins install --ignore-scripts),
+      // we fall back to zero-vectors and skip embedding entirely.
+      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+      // @ts-ignore — @xenova/transformers has incomplete typings
+      const { pipeline, env } = await import('@xenova/transformers');
+      (env as { allowLocalModels: boolean }).allowLocalModels = true;
+      _embedPipeline = (await pipeline('feature-extraction', 'Xenova/bge-small-en-v1.5')) as Pipeline;
+    } catch {
+      _embedLoadFailed = true;
+      return null;
+    }
   }
   return _embedPipeline;
 }
@@ -38,19 +44,25 @@ async function getEmbedPipeline(): Promise<Pipeline> {
 /**
  * Embed a passage for indexing (no query prefix).
  * Returns a normalized Float32Array of length EMBED_DIM.
+ * Throws if @xenova/transformers is not available or embedding fails.
  */
 export async function embed(text: string): Promise<Float32Array> {
   const pipe = await getEmbedPipeline();
+  if (pipe === null) {
+    throw new Error('Embedder not available: @xenova/transformers failed to load');
+  }
   const output = await pipe(text, { pooling: 'mean', normalize: true });
   return new Float32Array(output.data);
 }
 
 /**
  * Embed a search query with BGE "query: " prefix.
- * Returns a normalized Float32Array of length EMBED_DIM.
+ * Returns a normalized Float32Array of length EMBED_DIM, or a zero vector
+ * if @xenova/transformers is not available (graceful degradation).
  */
 export async function embedQuery(query: string): Promise<Float32Array> {
   const pipe = await getEmbedPipeline();
+  if (pipe === null) return new Float32Array(EMBED_DIM);
   const output = await pipe(`query: ${query}`, { pooling: 'mean', normalize: true });
   return new Float32Array(output.data);
 }
@@ -69,6 +81,9 @@ async function getRerankPipeline(): Promise<RerankPipeline | null> {
   if (_rerankLoadFailed) return null;
   if (_rerankPipeline === null) {
     try {
+      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+      // @ts-ignore — @xenova/transformers has incomplete typings
+      const { pipeline } = await import('@xenova/transformers');
       _rerankPipeline = (await pipeline(
         'text-classification',
         'Xenova/ms-marco-MiniLM-L-6-v2',

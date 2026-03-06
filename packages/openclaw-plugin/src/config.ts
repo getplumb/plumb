@@ -13,6 +13,15 @@ export interface PlumbPluginConfig {
 
   /** If true: retrieve but don't inject (for validation). Default: false. */
   shadowMode: boolean;
+
+  /** LLM provider for fact extraction: 'openai', 'anthropic', 'ollama', 'openai-compatible'. */
+  llmProvider?: string;
+
+  /** LLM model ID for fact extraction. Defaults vary by provider. */
+  llmModel?: string;
+
+  /** API key for LLM provider. Overrides env vars when set. */
+  llmApiKey?: string;
 }
 
 export const DEFAULT_CONFIG: PlumbPluginConfig = {

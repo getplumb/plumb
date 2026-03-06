@@ -3,11 +3,11 @@
   "version": "0.1.0",
   "description": "Plumb MCP stdio server — exposes memory tools to Claude and other MCP clients",
   "license": "MIT",
-  "author": "Plumb Team",
-  "homepage": "https://docs.getplumb.dev",
+  "author": "Clay Waters <hello@plumb.run>",
+  "homepage": "https://plumb.run",
   "repository": {
     "type": "git",
-    "url": "https://github.com/plumb-labs/plumb",
+    "url": "https://github.com/getplumb/plumb",
     "directory": "packages/mcp-server"
   },
   "keywords": [
@@ -26,6 +26,7 @@
   },
   "files": [
     "dist",
+    "LICENSE",
     "README.md"
   ],
   "exports": {

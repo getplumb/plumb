@@ -8,7 +8,7 @@ async function main(): Promise<void> {
   const config = resolveConfig();
   console.error(`[plumb] Starting with userId=${config.userId}, dbPath=${config.dbPath}`);
 
-  const store = new LocalStore({ dbPath: config.dbPath, userId: config.userId });
+  const store = await LocalStore.create({ dbPath: config.dbPath, userId: config.userId });
   const server = createPlumbServer(store);
   const transport = new StdioServerTransport();
 
