@@ -1,17 +1,19 @@
-import Database from 'better-sqlite3';
-import * as sqliteVec from 'sqlite-vec';
 import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
+import { openDb, type WasmDb } from './wasm-db.js';
 import { applySchema } from './schema.js';
 import type { MemoryStore } from './store.js';
 import type { Fact, IngestResult, MessageExchange, SearchResult, StoreStatus } from './types.js';
 import { extractFacts } from './extractor.js';
+import { callLLMWithConfig, type LLMConfig } from './llm-client.js';
 import { embed } from './embedder.js';
 import { formatExchange } from './chunker.js';
 import { searchRawLog, type RawLogSearchResult } from './raw-log-search.js';
 import { searchFacts } from './fact-search.js';
+import { ExtractionQueue, type ExtractFn } from './extraction-queue.js';
+import { serializeEmbedding } from './vector-search.js';
 
 export type { RawLogSearchResult };
 
@@ -43,6 +45,11 @@ export interface RawLogEntry {
   readonly chunkText: string;
   readonly chunkIndex: number;
   readonly contentHash: string | null;
+  readonly embedStatus: string;
+  readonly embedError: string | null;
+  readonly embedModel: string | null;
+  readonly extractStatus: string;
+  readonly extractError: string | null;
 }
 
 export interface ExportData {
@@ -55,15 +62,28 @@ export interface LocalStoreOptions {
   dbPath?: string;
   /** User ID for scoping all data. Defaults to 'default' (single-user local install). */
   userId?: string;
+  /**
+   * LLM configuration for fact extraction. When provided, these values are used directly
+   * instead of reading from environment variables, avoiding process.env mutation.
+   */
+  llmConfig?: LLMConfig;
+  /**
+   * Extraction queue for batched fact extraction. When provided, ingest() enqueues exchanges
+   * instead of immediately calling extractFacts(). Defaults to a new ExtractionQueue instance.
+   */
+  extractionQueue?: ExtractionQueue;
 }
 
+export type { LLMConfig };
+
 export class LocalStore implements MemoryStore {
-  readonly #db: Database.Database;
+  readonly #db: WasmDb;
   readonly #userId: string;
-  readonly #inFlightExtractions: Set<Promise<Fact[]>> = new Set();
+  readonly #llmConfig: LLMConfig | undefined;
+  readonly #extractionQueue: ExtractionQueue;
 
   /** Expose database for plugin use (e.g., NudgeManager) */
-  get db(): Database.Database {
+  get db(): WasmDb {
     return this.#db;
   }
 
@@ -72,42 +92,107 @@ export class LocalStore implements MemoryStore {
     return this.#userId;
   }
 
-  constructor(options: LocalStoreOptions = {}) {
+  /** Expose extraction queue for lifecycle management (start/stop) */
+  get extractionQueue(): ExtractionQueue {
+    return this.#extractionQueue;
+  }
+
+  private constructor(
+    db: WasmDb,
+    userId: string,
+    llmConfig: LLMConfig | undefined,
+    extractionQueue: ExtractionQueue
+  ) {
+    this.#db = db;
+    this.#userId = userId;
+    this.#llmConfig = llmConfig;
+    this.#extractionQueue = extractionQueue;
+  }
+
+  /**
+   * Create a new LocalStore instance (async factory).
+   * Required because WASM initialization is async.
+   */
+  static async create(options: LocalStoreOptions = {}): Promise<LocalStore> {
     const dbPath = options.dbPath ?? join(homedir(), '.plumb', 'memory.db');
-    this.#userId = options.userId ?? 'default';
+    const userId = options.userId ?? 'default';
+    const llmConfig = options.llmConfig;
 
     mkdirSync(dirname(dbPath), { recursive: true });
 
-    this.#db = new Database(dbPath);
-    this.#db.pragma('journal_mode = WAL');
-    this.#db.pragma('foreign_keys = ON');
+    const db = await openDb(dbPath);
 
-    // Load sqlite-vec extension — vector operations implemented in T-004.
-    sqliteVec.load(this.#db);
+    // Enable WAL mode and foreign keys
+    db.exec('PRAGMA journal_mode = WAL');
+    db.exec('PRAGMA foreign_keys = ON');
 
-    applySchema(this.#db);
+    applySchema(db);
+
+    // Use a mutable cell to hold the store reference (needed for circular dependency)
+    let storeRef: LocalStore | null = null;
+
+    // Initialize extraction queue with deferred store lookup
+    // T-079: Wrapper handles extract_status updates on success/failure.
+    const extractFn: ExtractFn = async (exchange, userId, sourceChunkId) => {
+      if (!storeRef) throw new Error('Store not initialized');
+      const llmFn = llmConfig
+        ? (prompt: string) => callLLMWithConfig(prompt, llmConfig!)
+        : undefined;
+
+      try {
+        const facts = await extractFacts(exchange, userId, storeRef, llmFn, sourceChunkId);
+        // T-079: Update extract_status='done' on success.
+        const updateStmt = db.prepare(`
+          UPDATE raw_log SET extract_status = 'done' WHERE id = ?
+        `);
+        updateStmt.bind([sourceChunkId]);
+        updateStmt.step();
+        updateStmt.finalize();
+        return facts;
+      } catch (err: unknown) {
+        // T-079: Update extract_status='failed' with error message.
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        const updateStmt = db.prepare(`
+          UPDATE raw_log SET extract_status = 'failed', extract_error = ? WHERE id = ?
+        `);
+        updateStmt.bind([errorMsg, sourceChunkId]);
+        updateStmt.step();
+        updateStmt.finalize();
+        // Re-throw so Promise.allSettled() in flush() sees the rejection.
+        throw err;
+      }
+    };
+
+    const extractionQueue = options.extractionQueue ?? new ExtractionQueue(extractFn);
+
+    // Create store and assign to ref
+    const store = new LocalStore(db, userId, llmConfig, extractionQueue);
+    storeRef = store;
+
+    return store;
   }
 
-  async store(fact: Omit<Fact, 'id'>): Promise<string> {
+  async store(fact: Omit<Fact, 'id'>, sourceChunkId?: string): Promise<string> {
     const id = crypto.randomUUID();
 
     // Embed concatenated fact text for vector search.
     const text = `${fact.subject} ${fact.predicate} ${fact.object} ${fact.context ?? ''}`.trim();
     const embedding = await embed(text);
-    const vecBlob = Buffer.from(embedding.buffer);
+    const embeddingJson = serializeEmbedding(embedding);
 
-    const doInsert = this.#db.transaction(() => {
-      this.#db.prepare<[
-        string, string, string, string, string,
-        number, string, string, string,
-        string | null, string | null
-      ]>(`
+    // Begin transaction
+    this.#db.exec('BEGIN');
+
+    try {
+      // Insert fact (T-079: include source_chunk_id)
+      const factStmt = this.#db.prepare(`
         INSERT INTO facts
           (id, user_id, subject, predicate, object,
            confidence, decay_rate, timestamp, source_session_id,
-           source_session_label, context)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
+           source_session_label, context, source_chunk_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      factStmt.bind([
         id,
         this.#userId,
         fact.subject,
@@ -119,20 +204,30 @@ export class LocalStore implements MemoryStore {
         fact.sourceSessionId,
         fact.sourceSessionLabel ?? null,
         fact.context ?? null,
-      );
+        sourceChunkId ?? null,
+      ]);
+      factStmt.step();
+      factStmt.finalize();
 
-      // Insert embedding into vec_facts (auto-assigned rowid).
-      const vecInfo = this.#db.prepare<[Buffer]>(
-        `INSERT INTO vec_facts(embedding) VALUES (?)`,
-      ).run(vecBlob);
+      // Insert embedding into vec_facts (auto-assigned id).
+      const vecStmt = this.#db.prepare(`INSERT INTO vec_facts(embedding) VALUES (?)`);
+      vecStmt.bind([embeddingJson]);
+      vecStmt.step();
+      vecStmt.finalize();
+
+      const vecRowid = this.#db.selectValue('SELECT last_insert_rowid()') as number;
 
       // Back-fill vec_rowid so fact-search can join without a mapping table.
-      this.#db.prepare<[number | bigint, string]>(
-        `UPDATE facts SET vec_rowid = ? WHERE id = ?`,
-      ).run(vecInfo.lastInsertRowid, id);
-    });
+      const updateStmt = this.#db.prepare(`UPDATE facts SET vec_rowid = ? WHERE id = ?`);
+      updateStmt.bind([vecRowid, id]);
+      updateStmt.step();
+      updateStmt.finalize();
 
-    doInsert();
+      this.#db.exec('COMMIT');
+    } catch (err) {
+      this.#db.exec('ROLLBACK');
+      throw err;
+    }
 
     return id;
   }
@@ -143,31 +238,46 @@ export class LocalStore implements MemoryStore {
 
   async delete(id: string): Promise<void> {
     // Soft delete only — never hard delete.
-    this.#db.prepare<[string, string, string]>(`
+    const stmt = this.#db.prepare(`
       UPDATE facts SET deleted_at = ? WHERE id = ? AND user_id = ?
-    `).run(new Date().toISOString(), id, this.#userId);
+    `);
+    stmt.bind([new Date().toISOString(), id, this.#userId]);
+    stmt.step();
+    stmt.finalize();
   }
 
   async status(): Promise<StoreStatus> {
-    const factCount = (this.#db.prepare<[string], { c: number }>(
+    const factStmt = this.#db.prepare(
       `SELECT COUNT(*) AS c FROM facts WHERE user_id = ? AND deleted_at IS NULL`
-    ).get(this.#userId) as { c: number }).c;
+    );
+    factStmt.bind([this.#userId]);
+    factStmt.step();
+    const factCount = factStmt.get(0) as number;
+    factStmt.finalize();
 
-    const rawLogCount = (this.#db.prepare<[string], { c: number }>(
+    const rawLogStmt = this.#db.prepare(
       `SELECT COUNT(*) AS c FROM raw_log WHERE user_id = ?`
-    ).get(this.#userId) as { c: number }).c;
+    );
+    rawLogStmt.bind([this.#userId]);
+    rawLogStmt.step();
+    const rawLogCount = rawLogStmt.get(0) as number;
+    rawLogStmt.finalize();
 
-    const lastIngestionRow = this.#db.prepare<[string], { ts: string | null }>(
+    const lastIngestionStmt = this.#db.prepare(
       `SELECT MAX(timestamp) AS ts FROM raw_log WHERE user_id = ?`
-    ).get(this.#userId) as { ts: string | null };
+    );
+    lastIngestionStmt.bind([this.#userId]);
+    lastIngestionStmt.step();
+    const lastIngestionTs = lastIngestionStmt.get(0);
+    lastIngestionStmt.finalize();
 
-    const pageCount = this.#db.pragma('page_count', { simple: true }) as number;
-    const pageSize = this.#db.pragma('page_size', { simple: true }) as number;
+    const pageCount = this.#db.selectValue('PRAGMA page_count') as number;
+    const pageSize = this.#db.selectValue('PRAGMA page_size') as number;
 
     return {
       factCount,
       rawLogCount,
-      lastIngestion: lastIngestionRow.ts !== null ? new Date(lastIngestionRow.ts) : null,
+      lastIngestion: lastIngestionTs !== null ? new Date(lastIngestionTs as string) : null,
       storageBytes: pageCount * pageSize,
     };
   }
@@ -179,23 +289,40 @@ export class LocalStore implements MemoryStore {
     // Compute content hash for deduplication (scoped per userId).
     const contentHash = createHash('sha256').update(chunkText).digest('hex');
 
-    // Embed before opening the synchronous DB transaction.
-    const embedding = await embed(chunkText);
-    const vecBlob = Buffer.from(embedding.buffer);
+    // T-079: Try to embed before opening the DB transaction.
+    let embedding: Float32Array | null = null;
+    let embeddingJson: string | null = null;
+    let embedStatus = 'pending';
+    let embedError: string | null = null;
+    let embedModel: string | null = null;
 
-    // Layer 1: write raw exchange to raw_log and store vector in vec_raw_log.
-    // vec_raw_log auto-assigns its own rowid; we store it back in raw_log.vec_rowid
-    // so raw-log-search can join the two tables without a separate mapping table.
-    const doInsert = this.#db.transaction(() => {
-      this.#db.prepare<[
-        string, string, string, string | null,
-        string, string, string, string, string, number, string
-      ]>(`
+    try {
+      embedding = await embed(chunkText);
+      embeddingJson = serializeEmbedding(embedding);
+      embedStatus = 'done';
+      embedModel = 'Xenova/bge-small-en-v1.5';
+    } catch (err: unknown) {
+      // Embedding failed — store the chunk anyway, but mark embed_status='failed'.
+      embedStatus = 'failed';
+      embedError = err instanceof Error ? err.message : String(err);
+    }
+
+    // T-079: Determine extract_status upfront: 'no_llm' if no config, otherwise 'pending'.
+    const extractStatus = this.#llmConfig ? 'pending' : 'no_llm';
+
+    // Attempt insert — catch UNIQUE constraint violations (duplicate content_hash).
+    try {
+      this.#db.exec('BEGIN');
+
+      // Insert into raw_log with processing state columns (T-079).
+      const rawLogStmt = this.#db.prepare(`
         INSERT INTO raw_log
           (id, user_id, session_id, session_label,
-           user_message, agent_response, timestamp, source, chunk_text, chunk_index, content_hash)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
+           user_message, agent_response, timestamp, source, chunk_text, chunk_index, content_hash,
+           embed_status, embed_error, embed_model, extract_status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      rawLogStmt.bind([
         rawLogId,
         this.#userId,
         exchange.sessionId,
@@ -207,25 +334,36 @@ export class LocalStore implements MemoryStore {
         chunkText,
         0,
         contentHash,
-      );
+        embedStatus,
+        embedError,
+        embedModel,
+        extractStatus,
+      ]);
+      rawLogStmt.step();
+      rawLogStmt.finalize();
 
-      // Insert embedding into sqlite-vec (auto-assigned rowid).
-      const vecInfo = this.#db.prepare<[Buffer]>(
-        `INSERT INTO vec_raw_log(embedding) VALUES (?)`,
-      ).run(vecBlob);
+      // Insert embedding into vec_raw_log only if embedding succeeded.
+      if (embeddingJson !== null) {
+        const vecStmt = this.#db.prepare(`INSERT INTO vec_raw_log(embedding) VALUES (?)`);
+        vecStmt.bind([embeddingJson]);
+        vecStmt.step();
+        vecStmt.finalize();
 
-      // Back-fill vec_rowid so raw-log-search can join without a mapping table.
-      this.#db.prepare<[number | bigint, string]>(
-        `UPDATE raw_log SET vec_rowid = ? WHERE id = ?`,
-      ).run(vecInfo.lastInsertRowid, rawLogId);
-    });
+        const vecRowid = this.#db.selectValue('SELECT last_insert_rowid()') as number;
 
-    // Attempt insert — catch UNIQUE constraint violations (duplicate content_hash).
-    try {
-      doInsert();
+        // Back-fill vec_rowid so raw-log-search can join without a mapping table.
+        const updateStmt = this.#db.prepare(`UPDATE raw_log SET vec_rowid = ? WHERE id = ?`);
+        updateStmt.bind([vecRowid, rawLogId]);
+        updateStmt.step();
+        updateStmt.finalize();
+      }
+
+      this.#db.exec('COMMIT');
     } catch (err: unknown) {
+      this.#db.exec('ROLLBACK');
+
       // Check for SQLite UNIQUE constraint error on content_hash.
-      if (err instanceof Error && 'code' in err && err.code === 'SQLITE_CONSTRAINT_UNIQUE') {
+      if (err instanceof Error && err.message.includes('UNIQUE constraint')) {
         // Duplicate content — skip ingestion and fact extraction.
         return {
           rawLogId: '',
@@ -238,18 +376,11 @@ export class LocalStore implements MemoryStore {
       throw err;
     }
 
-    // Layer 2: fire-and-forget fact extraction — never blocks ingest().
-    // Track the promise so drain() can wait for completion before close().
-    const extractionPromise = extractFacts(exchange, this.#userId, this)
-      .catch((err: unknown) => {
-        console.error('[plumb/local-store] Fact extraction failed:', err);
-        return [] as Fact[]; // Return empty array on error
-      })
-      .finally(() => {
-        this.#inFlightExtractions.delete(extractionPromise);
-      });
-
-    this.#inFlightExtractions.add(extractionPromise);
+    // Layer 2: enqueue exchange for batched fact extraction (T-071) only if LLM config is present.
+    // If no LLM config, extract_status is already set to 'no_llm', so skip enqueue.
+    if (this.#llmConfig) {
+      this.#extractionQueue.enqueue(exchange, this.#userId, rawLogId);
+    }
 
     return {
       rawLogId,
@@ -267,12 +398,12 @@ export class LocalStore implements MemoryStore {
   }
 
   /**
-   * Wait for all in-flight fact extractions to complete.
+   * Wait for all queued fact extractions to complete.
    * Call this before close() to ensure all async work is done.
+   * Delegates to ExtractionQueue.flush().
    */
   async drain(): Promise<void> {
-    if (this.#inFlightExtractions.size === 0) return;
-    await Promise.allSettled(Array.from(this.#inFlightExtractions));
+    await this.#extractionQueue.flush();
   }
 
   /**
@@ -289,10 +420,7 @@ export class LocalStore implements MemoryStore {
    */
   async reextractOrphans(throttleMs = 1000): Promise<{ orphansFound: number; factsCreated: number }> {
     // Query for raw_log entries with no corresponding facts.
-    // A session_id may have multiple raw_log chunks, but if ANY chunk has facts,
-    // we skip the entire session. This is conservative but prevents re-extracting
-    // sessions that already have partial facts.
-    const orphanRows = this.#db.prepare<[string]>(`
+    const stmt = this.#db.prepare(`
       SELECT
         id,
         user_id AS userId,
@@ -309,7 +437,10 @@ export class LocalStore implements MemoryStore {
           WHERE facts.source_session_id = raw_log.session_id
         )
       ORDER BY timestamp ASC
-    `).all(this.#userId) as Array<{
+    `);
+    stmt.bind([this.#userId]);
+
+    const orphanRows: Array<{
       id: string;
       userId: string;
       sessionId: string;
@@ -318,7 +449,13 @@ export class LocalStore implements MemoryStore {
       agentResponse: string;
       timestamp: string;
       source: string;
-    }>;
+    }> = [];
+
+    while (stmt.step()) {
+      const row = stmt.get({}) as any;
+      orphanRows.push(row);
+    }
+    stmt.finalize();
 
     const orphansFound = orphanRows.length;
 
@@ -330,7 +467,7 @@ export class LocalStore implements MemoryStore {
 
     for (let i = 0; i < orphanRows.length; i++) {
       const row = orphanRows[i];
-      if (!row) continue; // Type guard: skip if row is undefined (shouldn't happen)
+      if (!row) continue;
 
       // Reconstruct MessageExchange from raw_log data
       const exchange: MessageExchange = {
@@ -339,13 +476,15 @@ export class LocalStore implements MemoryStore {
         timestamp: new Date(row.timestamp),
         source: row.source as 'openclaw' | 'claude-code' | 'claude-desktop',
         sessionId: row.sessionId,
-        // Conditionally include sessionLabel only if it's not null (exactOptionalPropertyTypes)
         ...(row.sessionLabel !== null ? { sessionLabel: row.sessionLabel } : {}),
       };
 
       // Extract facts directly (bypasses ingest dedup gate)
       try {
-        const facts = await extractFacts(exchange, this.#userId, this);
+        const llmFn = this.#llmConfig
+          ? (prompt: string) => callLLMWithConfig(prompt, this.#llmConfig!)
+          : undefined;
+        const facts = await extractFacts(exchange, this.#userId, this, llmFn);
         factsCreated += facts.length;
 
         console.log(`  ✅ [${i + 1}/${orphansFound}] Re-extracted ${facts.length} fact(s) from session ${row.sessionId}`);
@@ -367,14 +506,23 @@ export class LocalStore implements MemoryStore {
    * Returns subjects ordered by number of facts (non-deleted only).
    */
   topSubjects(userId: string, limit = 5): Array<{ subject: string; count: number }> {
-    return this.#db.prepare<[string, number]>(`
+    const stmt = this.#db.prepare(`
       SELECT subject, COUNT(*) as count
       FROM facts
       WHERE user_id = ? AND deleted_at IS NULL
       GROUP BY subject
       ORDER BY count DESC
       LIMIT ?
-    `).all(userId, limit) as Array<{ subject: string; count: number }>;
+    `);
+    stmt.bind([userId, limit]);
+
+    const results: Array<{ subject: string; count: number }> = [];
+    while (stmt.step()) {
+      results.push(stmt.get({}) as { subject: string; count: number });
+    }
+    stmt.finalize();
+
+    return results;
   }
 
   /**
@@ -384,7 +532,7 @@ export class LocalStore implements MemoryStore {
    */
   exportAll(userId: string): ExportData {
     // Export all non-deleted facts only (soft-deleted facts are excluded).
-    const factRows = this.#db.prepare<[string]>(`
+    const factStmt = this.#db.prepare(`
       SELECT
         id,
         user_id AS userId,
@@ -401,7 +549,10 @@ export class LocalStore implements MemoryStore {
       FROM facts
       WHERE user_id = ? AND deleted_at IS NULL
       ORDER BY timestamp DESC
-    `).all(userId) as Array<{
+    `);
+    factStmt.bind([userId]);
+
+    const factRows: Array<{
       id: string;
       userId: string;
       subject: string;
@@ -414,7 +565,12 @@ export class LocalStore implements MemoryStore {
       sourceSessionLabel: string | null;
       context: string | null;
       deletedAt: string | null;
-    }>;
+    }> = [];
+
+    while (factStmt.step()) {
+      factRows.push(factStmt.get({}) as any);
+    }
+    factStmt.finalize();
 
     const facts: RawFact[] = factRows.map((row) => ({
       ...row,
@@ -422,7 +578,7 @@ export class LocalStore implements MemoryStore {
     }));
 
     // Export all raw_log entries (no vector data).
-    const rawLog = this.#db.prepare<[string]>(`
+    const rawLogStmt = this.#db.prepare(`
       SELECT
         id,
         user_id AS userId,
@@ -434,11 +590,23 @@ export class LocalStore implements MemoryStore {
         source,
         chunk_text AS chunkText,
         chunk_index AS chunkIndex,
-        content_hash AS contentHash
+        content_hash AS contentHash,
+        embed_status AS embedStatus,
+        embed_error AS embedError,
+        embed_model AS embedModel,
+        extract_status AS extractStatus,
+        extract_error AS extractError
       FROM raw_log
       WHERE user_id = ?
       ORDER BY timestamp DESC
-    `).all(userId) as RawLogEntry[];
+    `);
+    rawLogStmt.bind([userId]);
+
+    const rawLog: RawLogEntry[] = [];
+    while (rawLogStmt.step()) {
+      rawLog.push(rawLogStmt.get({}) as any);
+    }
+    rawLogStmt.finalize();
 
     return { facts, rawLog };
   }

@@ -35,7 +35,7 @@ describe('error-logger', () => {
       context: { sessionId: 'test-session', userId: 'clay' },
     };
 
-    appendError(entry);
+    appendError(entry, process.env.PLUMB_DB_PATH);
 
     expect(existsSync(testLogPath)).toBe(true);
 
@@ -61,7 +61,7 @@ describe('error-logger', () => {
       message: 'Database write failed',
     };
 
-    appendError(entry);
+    appendError(entry, process.env.PLUMB_DB_PATH);
 
     expect(existsSync(testDir)).toBe(true);
     expect(existsSync(testLogPath)).toBe(true);
@@ -84,8 +84,8 @@ describe('error-logger', () => {
       message: 'Second error',
     };
 
-    appendError(entry1);
-    appendError(entry2);
+    appendError(entry1, process.env.PLUMB_DB_PATH);
+    appendError(entry2, process.env.PLUMB_DB_PATH);
 
     const content = readFileSync(testLogPath, 'utf-8');
     const lines = content.trim().split('\n');
@@ -129,7 +129,7 @@ describe('error-logger', () => {
       message: 'Minimal error',
     };
 
-    appendError(minimalEntry);
+    appendError(minimalEntry, process.env.PLUMB_DB_PATH);
 
     const content = readFileSync(testLogPath, 'utf-8');
     const parsed = JSON.parse(content.trim()) as ErrorLogEntry;

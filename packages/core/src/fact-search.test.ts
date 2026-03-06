@@ -9,7 +9,7 @@
  * local ~/.cache/huggingface/ cache.
  */
 
-import { test, after } from 'node:test';
+import { test, after, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -18,7 +18,11 @@ import { LocalStore } from './local-store.js';
 import { DecayRate } from './types.js';
 
 const dbPath = join(tmpdir(), `plumb-fact-search-test-${Date.now()}.db`);
-const store = new LocalStore({ dbPath, userId: 'fact-search-test-user' });
+let store: LocalStore;
+
+before(async () => {
+  store = await LocalStore.create({ dbPath, userId: 'fact-search-test-user' });
+});
 
 after(() => {
   store.close();
@@ -117,7 +121,7 @@ test('search returns cooking fact in results for recipe query', { timeout: 120_0
 });
 
 test('search returns empty array when no facts exist', { timeout: 30_000 }, async () => {
-  const emptyStore = new LocalStore({
+  const emptyStore = await LocalStore.create({
     dbPath: join(tmpdir(), `plumb-fact-empty-${Date.now()}.db`),
     userId: 'empty-user',
   });

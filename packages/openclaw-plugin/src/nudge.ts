@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 export type NudgeTriggerType = 'second_integration' | 'mcp_downtime';
 
 // Type alias for better-sqlite3 Database to avoid direct import
@@ -42,7 +44,7 @@ export class NudgeManager {
    * This ensures the trigger will never fire again.
    */
   recordNudge(db: Database, triggerType: NudgeTriggerType): void {
-    const id = crypto.randomUUID();
+    const id = randomUUID();
     db.prepare(
       `INSERT INTO nudge_log (id, trigger_type, fired_at) VALUES (?, ?, ?)`
     ).run(id, triggerType, new Date().toISOString());

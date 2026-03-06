@@ -9,7 +9,7 @@
  * local ~/.cache/huggingface/ cache.  Tests are marked with a generous timeout.
  */
 
-import { test, after } from 'node:test';
+import { test, after, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -17,7 +17,11 @@ import { rmSync } from 'node:fs';
 import { LocalStore } from './local-store.js';
 
 const dbPath = join(tmpdir(), `plumb-search-test-${Date.now()}.db`);
-const store = new LocalStore({ dbPath, userId: 'search-test-user' });
+let store: LocalStore;
+
+before(async () => {
+  store = await LocalStore.create({ dbPath, userId: 'search-test-user' });
+});
 
 after(() => {
   store.close();
@@ -137,7 +141,7 @@ test('searchRawLog is cross-session (no session filter applied)', { timeout: 120
 });
 
 test('searchRawLog returns empty array when no rows exist', { timeout: 30_000 }, async () => {
-  const emptyStore = new LocalStore({
+  const emptyStore = await LocalStore.create({
     dbPath: join(tmpdir(), `plumb-empty-${Date.now()}.db`),
     userId: 'empty-user',
   });

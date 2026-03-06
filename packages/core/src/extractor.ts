@@ -67,12 +67,14 @@ function toDecayRate(raw: string): DecayRate {
  *                   but the store itself enforces the scope.
  * @param store    - The MemoryStore instance to persist facts into.
  * @param llmFn    - Optional LLM function to use (injectable for testing).
+ * @param sourceChunkId - Optional raw_log chunk ID (T-079 processing state machine).
  */
 export async function extractFacts(
   exchange: MessageExchange,
   _userId: string,
   store: MemoryStore,
   llmFn: (prompt: string) => Promise<string> = callLLM,
+  sourceChunkId?: string,
 ): Promise<Fact[]> {
   const prompt = buildExtractionPrompt(exchange);
   const response = await llmFn(prompt);
@@ -102,7 +104,8 @@ export async function extractFacts(
 
     // Dedup: always insert as a new entry (do not update existing same subject+predicate).
     // The store always inserts; decay scoring handles which entry wins at retrieval time.
-    const id = await store.store(factInput);
+    // T-079: Pass sourceChunkId to link fact back to raw_log chunk.
+    const id = await store.store(factInput, sourceChunkId);
     facts.push({ id, ...factInput });
   }
 

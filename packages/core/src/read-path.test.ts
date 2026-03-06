@@ -12,7 +12,7 @@
  * be returned when querying in session B context — no session filter applied.
  */
 
-import { test, describe, after } from 'node:test';
+import { test, describe, after, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -393,7 +393,11 @@ describe('formatContextBlock', () => {
 
 describe('Cross-session integration', () => {
   const dbPath = join(tmpdir(), `plumb-readpath-integration-${Date.now()}.db`);
-  const store = new LocalStore({ dbPath, userId: 'readpath-test-user' });
+  let store: LocalStore;
+
+  before(async () => {
+    store = await LocalStore.create({ dbPath, userId: 'readpath-test-user' });
+  });
 
   after(() => {
     store.close();

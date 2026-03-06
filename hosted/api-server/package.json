@@ -1,5 +1,6 @@
 {
   "name": "@getplumb/api-server",
+  "private": true,
   "version": "0.1.0",
   "description": "Plumb hosted HTTP API server — MCP over HTTP+SSE, deployed to Fly.io (BSL 1.1)",
   "license": "BSL-1.1",
