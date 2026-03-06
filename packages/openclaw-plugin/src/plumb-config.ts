@@ -7,8 +7,8 @@ import { join } from 'node:path';
  * Read from ~/.plumb/config.json at plugin activation time.
  */
 export interface PlumbLLMConfig {
-  /** LLM provider: 'openai', 'anthropic', 'ollama', 'openai-compatible' */
-  llmProvider: 'openai' | 'anthropic' | 'ollama' | 'openai-compatible';
+  /** LLM provider: 'openai', 'anthropic', 'ollama', 'openai-compatible', 'google' */
+  llmProvider: 'openai' | 'anthropic' | 'ollama' | 'openai-compatible' | 'google';
   /** LLM model ID. Optional — defaults vary by provider. */
   llmModel?: string;
   /** API key for the LLM provider. Required. Never logged. */
@@ -26,6 +26,7 @@ const DEFAULT_MODELS: Record<string, string> = {
   anthropic: 'claude-haiku-4-5-20251001',
   ollama: 'llama3.1',
   'openai-compatible': 'gpt-4o-mini',
+  google: 'gemini-2.0-flash',
 };
 
 const CONFIG_PATH = join(homedir(), '.plumb', 'config.json');
@@ -59,7 +60,7 @@ export async function readPlumbConfig(): Promise<PlumbLLMConfig | null> {
     }
 
     // Validate provider is one of the supported values
-    const validProviders = ['openai', 'anthropic', 'ollama', 'openai-compatible'];
+    const validProviders = ['openai', 'anthropic', 'ollama', 'openai-compatible', 'google'];
     if (!validProviders.includes(obj.llmProvider)) {
       console.warn(
         `[plumb] Invalid config: llmProvider must be one of ${validProviders.join(', ')}`
