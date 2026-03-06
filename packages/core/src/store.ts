@@ -3,8 +3,10 @@ import type { Fact, IngestResult, MessageExchange, SearchResult, StoreStatus } f
 export interface MemoryStore {
   /**
    * Write a fact to the store. The store generates and returns the id.
+   * @param fact - The fact to store (id will be generated).
+   * @param sourceChunkId - Optional raw_log chunk ID (T-079 processing state machine).
    */
-  store(fact: Omit<Fact, 'id'>): Promise<string>;
+  store(fact: Omit<Fact, 'id'>, sourceChunkId?: string): Promise<string>;
 
   /**
    * Search for facts matching the query. Returns ranked results with score and age.

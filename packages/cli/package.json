@@ -1,13 +1,13 @@
 {
-  "name": "@getplumb/cli",
+  "name": "plumb-memory",
   "version": "0.1.0",
   "description": "Plumb CLI — memory management and AI context tools",
   "license": "MIT",
-  "author": "Plumb Team",
-  "homepage": "https://docs.getplumb.dev",
+  "author": "Clay Waters <hello@plumb.run>",
+  "homepage": "https://plumb.run",
   "repository": {
     "type": "git",
-    "url": "https://github.com/plumb-labs/plumb",
+    "url": "https://github.com/getplumb/plumb",
     "directory": "packages/cli"
   },
   "keywords": [
@@ -26,6 +26,7 @@
   },
   "files": [
     "dist",
+    "LICENSE",
     "README.md"
   ],
   "exports": {
@@ -39,7 +40,8 @@
     "test": "node --import tsx/esm --test 'src/**/*.test.ts'",
     "lint": "echo \"No lint yet\" && exit 0",
     "clean": "rm -rf dist *.tsbuildinfo",
-    "prepublishOnly": "pnpm build"
+    "prepublishOnly": "pnpm build",
+    "postinstall": "node -e \"console.log('\\n  🪣  Plumb installed!\\n  Run: plumb setup\\n')\""
   },
   "publishConfig": {
     "access": "public"
@@ -51,7 +53,8 @@
     "@getplumb/core": "workspace:*",
     "@inquirer/prompts": "^8.3.0",
     "commander": "^12.1.0",
-    "openai": "^4.104.0"
+    "openai": "^4.104.0",
+    "ora": "^8.2.0"
   },
   "devDependencies": {
     "@types/node": "^25.3.3",

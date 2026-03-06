@@ -1,5 +1,6 @@
 {
   "name": "@getplumb/cloud-store",
+  "private": true,
   "version": "0.1.0",
   "description": "Plumb cloud storage driver — Postgres + pgvector via Supabase (BSL 1.1)",
   "license": "BSL-1.1",

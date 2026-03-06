@@ -23,14 +23,14 @@ function ChatWindow() {
 
   useEffect(() => {
     // Show user message first
-    const t1 = setTimeout(() => setVisible((v) => [...v, 0]), CHAT_MESSAGES[0].delay);
+    const t1 = setTimeout(() => setVisible((v) => [...v, 0]), CHAT_MESSAGES[0]!.delay);
     // Show typing indicator before agent reply
-    const t2 = setTimeout(() => setTyping(true), CHAT_MESSAGES[1].delay - 600);
+    const t2 = setTimeout(() => setTyping(true), CHAT_MESSAGES[1]!.delay - 600);
     // Show agent reply, hide typing
     const t3 = setTimeout(() => {
       setTyping(false);
       setVisible((v) => [...v, 1]);
-    }, CHAT_MESSAGES[1].delay);
+    }, CHAT_MESSAGES[1]!.delay);
     return () => { clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); };
   }, []);
 

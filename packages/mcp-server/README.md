@@ -1,11 +1,11 @@
-# @plumb/mcp-server
+# @getplumb/mcp-server
 
 Local MCP server that provides memory tools to Claude Desktop and other MCP clients.
 
 ## Installation
 
 ```bash
-npm install -g @plumb/mcp-server
+npm install -g @getplumb/mcp-server
 ```
 
 ## Quick Start
@@ -29,7 +29,7 @@ Restart Claude Desktop. You'll now have access to memory tools:
 
 ## Documentation
 
-Full docs at [docs.getplumb.dev](https://docs.getplumb.dev)
+Full docs at [plumb.run](https://plumb.run)
 
 ## License
 
