@@ -82,6 +82,16 @@ export class LocalStore implements MemoryStore {
   readonly #llmConfig: LLMConfig | undefined;
   readonly #extractionQueue: ExtractionQueue;
 
+  // Backlog processor state (T-087)
+  #embedBacklogTimer: ReturnType<typeof setInterval> | null = null;
+  #extractBacklogTimer: ReturnType<typeof setInterval> | null = null;
+  #embedBacklogRunning = false;
+  #extractBacklogRunning = false;
+  readonly #embedBacklogIntervalMs: number;
+  readonly #embedBacklogBatchSize: number;
+  readonly #extractBacklogIntervalMs: number;
+  readonly #extractBacklogBatchSize: number;
+
   /** Expose database for plugin use (e.g., NudgeManager) */
   get db(): WasmDb {
     return this.#db;
@@ -107,6 +117,12 @@ export class LocalStore implements MemoryStore {
     this.#userId = userId;
     this.#llmConfig = llmConfig;
     this.#extractionQueue = extractionQueue;
+
+    // Initialize backlog processor config from env vars (T-087)
+    this.#embedBacklogIntervalMs = Number(process.env.PLUMB_EMBED_BACKLOG_INTERVAL_MS ?? 60_000);
+    this.#embedBacklogBatchSize = Number(process.env.PLUMB_EMBED_BACKLOG_BATCH_SIZE ?? 5);
+    this.#extractBacklogIntervalMs = Number(process.env.PLUMB_EXTRACT_BACKLOG_INTERVAL_MS ?? 120_000);
+    this.#extractBacklogBatchSize = Number(process.env.PLUMB_EXTRACT_BACKLOG_BATCH_SIZE ?? 3);
   }
 
   /**
@@ -609,6 +625,172 @@ export class LocalStore implements MemoryStore {
     rawLogStmt.finalize();
 
     return { facts, rawLog };
+  }
+
+  /**
+   * Start background backlog processor loops (T-087).
+   * Processes rows with embed_status='pending' and extract_status='pending'.
+   * Call this after store.extractionQueue.start() in plugin-module.ts.
+   */
+  startBacklogProcessor(): void {
+    // Start embed backlog loop
+    if (this.#embedBacklogTimer === null) {
+      this.#embedBacklogTimer = setInterval(() => void this.#processEmbedBacklog(), this.#embedBacklogIntervalMs);
+    }
+
+    // Start extract backlog loop (only if LLM config is present)
+    if (this.#llmConfig && this.#extractBacklogTimer === null) {
+      this.#extractBacklogTimer = setInterval(() => void this.#processExtractBacklog(), this.#extractBacklogIntervalMs);
+    }
+  }
+
+  /**
+   * Stop background backlog processor loops (T-087).
+   * Waits for any in-flight batch to complete before returning.
+   * Call this alongside store.extractionQueue.stop() in session_end and process exit handlers.
+   */
+  async stopBacklogProcessor(): Promise<void> {
+    // Clear intervals
+    if (this.#embedBacklogTimer !== null) {
+      clearInterval(this.#embedBacklogTimer);
+      this.#embedBacklogTimer = null;
+    }
+    if (this.#extractBacklogTimer !== null) {
+      clearInterval(this.#extractBacklogTimer);
+      this.#extractBacklogTimer = null;
+    }
+
+    // Wait for any in-flight batches to complete
+    while (this.#embedBacklogRunning || this.#extractBacklogRunning) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+  }
+
+  /**
+   * Process embed backlog: fetch pending rows, call embed(), update DB.
+   * T-087: Sequential processing (one row at a time) to keep CPU load predictable.
+   */
+  async #processEmbedBacklog(): Promise<void> {
+    // Concurrent guard — skip if previous batch is still running
+    if (this.#embedBacklogRunning) return;
+    this.#embedBacklogRunning = true;
+
+    try {
+      // Fetch pending rows
+      const stmt = this.#db.prepare(`
+        SELECT id, chunk_text FROM raw_log
+        WHERE user_id = ? AND embed_status = 'pending'
+        ORDER BY rowid ASC
+        LIMIT ?
+      `);
+      stmt.bind([this.#userId, this.#embedBacklogBatchSize]);
+
+      const pendingRows: Array<{ id: string; chunk_text: string }> = [];
+      while (stmt.step()) {
+        pendingRows.push(stmt.get({}) as any);
+      }
+      stmt.finalize();
+
+      if (pendingRows.length === 0) return;
+
+      // Process rows sequentially
+      for (const row of pendingRows) {
+        try {
+          const embedding = await embed(row.chunk_text);
+          const embeddingJson = serializeEmbedding(embedding);
+          const embedModel = 'Xenova/bge-small-en-v1.5';
+
+          // Insert into vec_raw_log
+          this.#db.exec('BEGIN');
+          const vecStmt = this.#db.prepare(`INSERT INTO vec_raw_log(embedding) VALUES (?)`);
+          vecStmt.bind([embeddingJson]);
+          vecStmt.step();
+          vecStmt.finalize();
+
+          const vecRowid = this.#db.selectValue('SELECT last_insert_rowid()') as number;
+
+          // Update raw_log: embed_status='done', vec_rowid, embed_model
+          const updateStmt = this.#db.prepare(`
+            UPDATE raw_log
+            SET embed_status = 'done', embed_error = NULL, embed_model = ?, vec_rowid = ?
+            WHERE id = ?
+          `);
+          updateStmt.bind([embedModel, vecRowid, row.id]);
+          updateStmt.step();
+          updateStmt.finalize();
+
+          this.#db.exec('COMMIT');
+        } catch (err: unknown) {
+          // Embedding failed — update embed_status='failed' with error
+          const errorMsg = err instanceof Error ? err.message : String(err);
+          const updateStmt = this.#db.prepare(`
+            UPDATE raw_log
+            SET embed_status = 'failed', embed_error = ?
+            WHERE id = ?
+          `);
+          updateStmt.bind([errorMsg, row.id]);
+          updateStmt.step();
+          updateStmt.finalize();
+        }
+      }
+    } finally {
+      this.#embedBacklogRunning = false;
+    }
+  }
+
+  /**
+   * Process extract backlog: fetch pending rows, enqueue to ExtractionQueue.
+   * T-087: Smaller batch size than embed (LLM calls cost money).
+   */
+  async #processExtractBacklog(): Promise<void> {
+    // Concurrent guard — skip if previous batch is still running
+    if (this.#extractBacklogRunning) return;
+    this.#extractBacklogRunning = true;
+
+    try {
+      // Fetch pending rows
+      const stmt = this.#db.prepare(`
+        SELECT id, user_message, agent_response, timestamp, session_id, session_label, source
+        FROM raw_log
+        WHERE user_id = ? AND extract_status = 'pending'
+        ORDER BY rowid ASC
+        LIMIT ?
+      `);
+      stmt.bind([this.#userId, this.#extractBacklogBatchSize]);
+
+      const pendingRows: Array<{
+        id: string;
+        user_message: string;
+        agent_response: string;
+        timestamp: string;
+        session_id: string;
+        session_label: string | null;
+        source: string;
+      }> = [];
+
+      while (stmt.step()) {
+        pendingRows.push(stmt.get({}) as any);
+      }
+      stmt.finalize();
+
+      if (pendingRows.length === 0) return;
+
+      // Enqueue each row to ExtractionQueue (the drain loop handles the actual LLM call)
+      for (const row of pendingRows) {
+        const exchange: MessageExchange = {
+          userMessage: row.user_message,
+          agentResponse: row.agent_response,
+          timestamp: new Date(row.timestamp),
+          source: row.source as 'openclaw' | 'claude-code' | 'claude-desktop',
+          sessionId: row.session_id,
+          ...(row.session_label !== null ? { sessionLabel: row.session_label } : {}),
+        };
+
+        this.#extractionQueue.enqueue(exchange, this.#userId, row.id);
+      }
+    } finally {
+      this.#extractBacklogRunning = false;
+    }
   }
 
   /** Close the database connection. Call when done (e.g. in tests). */
