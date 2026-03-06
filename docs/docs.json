@@ -26,7 +26,7 @@
       "pages": [
         "introduction",
         "quickstart",
-        "self-hosting"
+        "openclaw-plugin"
       ]
     },
     {
@@ -38,7 +38,14 @@
     {
       "group": "Reference",
       "pages": [
-        "mcp-tools"
+        "mcp-tools",
+        "cli"
+      ]
+    },
+    {
+      "group": "Advanced",
+      "pages": [
+        "self-hosting"
       ]
     }
   ],

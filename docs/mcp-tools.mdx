@@ -1,118 +1,304 @@
 ---
-title: MCP Tools
-description: Available MCP tools reference
+title: 'MCP Tools'
+description: 'Model Context Protocol tools reference'
 ---
 
 # MCP Tools Reference
 
-Plumb exposes three primary tools via the Model Context Protocol.
+Plumb exposes 4 tools via the Model Context Protocol. These tools are available in any MCP-compatible client (Claude Desktop, Claude Code, Cursor, OpenClaw).
 
-## search_memory
+## memory_search
 
-Search stored conversations and facts using semantic search.
-
-**Use case**: Retrieve relevant context from past interactions.
+Search long-term memory for relevant facts and conversations. Queries both Layer 1 (raw log) and Layer 2 (extracted facts) in parallel.
 
 ### Parameters
 
-- `query` (string, required): Search query text
-- `limit` (number, optional): Maximum results to return (default: 10)
-- `min_confidence` (number, optional): Minimum confidence score for facts (default: 0.5)
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `query` | string | Yes | Natural language search query |
+| `limit` | number | No | Maximum results to return (default: 20, max: 100) |
 
 ### Returns
 
-Array of search results, each containing:
+Array of search results. Each result has:
 
-- `type`: "conversation" or "fact"
-- `content`: The conversation text or fact data
-- `score`: Relevance score (0.0-1.0)
-- `timestamp`: When this was stored
-- `source`: Reference to the original conversation
+| Field | Type | Description |
+|-------|------|-------------|
+| `fact` | string | The fact text or conversation snippet |
+| `confidence` | number | Score 0.0-1.0 (search relevance × fact confidence) |
+| `age_in_days` | number | Days since this was learned |
+| `source_session_label` | string | Human-readable session name |
+| `layer` | string | `"facts"` or `"raw_log"` |
 
 ### Example
 
+**Input**:
+
 ```json
 {
-  "query": "user's preferred programming language",
-  "limit": 5,
-  "min_confidence": 0.7
+  "query": "What package manager does the user prefer?",
+  "limit": 5
 }
 ```
 
-## ingest
+**Output**:
 
-Store a new conversation exchange in both Layer 1 (raw log) and trigger Layer 2 (fact extraction).
+```json
+[
+  {
+    "fact": "user prefers_package_manager pnpm",
+    "confidence": 0.92,
+    "age_in_days": 3.2,
+    "source_session_label": "Node.js setup discussion",
+    "layer": "facts"
+  },
+  {
+    "fact": "I always use pnpm for Node projects because it's faster and saves disk space",
+    "confidence": 0.85,
+    "age_in_days": 3.2,
+    "source_session_label": "Node.js setup discussion",
+    "layer": "raw_log"
+  }
+]
+```
 
-**Use case**: Add new context to memory after each conversation turn.
+### Usage in Conversation
+
+> User: "Set up a new Node.js project for me"
+>
+> AI: *(internally calls memory_search with query "Node.js project setup preferences")*
+>
+> AI: "I'll create a Node.js project with pnpm since that's your preferred package manager. Should I use Vite for bundling as well?"
+
+### Search Behavior
+
+- **Hybrid search**: Combines BM25 keyword matching + vector semantic search
+- **Layer fusion**: Results from both layers ranked together
+- **Confidence weighting**: Facts with higher confidence rank higher
+- **Recency bias**: Recent facts preferred over old ones
+- **Default limit**: 20 results (configurable up to 100)
+
+---
+
+## memory_store
+
+Explicitly store a fact or piece of information in long-term memory. Use this when the user asks you to remember something specific.
 
 ### Parameters
 
-- `user_message` (string, required): User's message text
-- `assistant_message` (string, required): AI's response text
-- `metadata` (object, optional): Additional context (session_id, user_id, tags, etc.)
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `content` | string | Yes | The fact or information to store |
+| `source` | string | Yes | Session ID or label for the source |
+| `metadata` | object | No | Structured metadata (see below) |
+
+**Metadata fields** (all optional):
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `subject` | string | What the fact is about (default: "user") |
+| `predicate` | string | The relationship (default: "stated") |
+| `object` | string | The value (default: content) |
+| `confidence` | number | Initial confidence 0.0-1.0 (default: 1.0) |
+| `decayRate` | string | `"slow"`, `"medium"`, or `"fast"` (default: "medium") |
+| `context` | string | Original text for context (default: content) |
 
 ### Returns
 
-- `ingested`: Boolean indicating success
-- `conversation_id`: ID of the stored conversation exchange
-- `facts_extracted`: Number of new facts extracted
+```json
+{
+  "fact_id": "550e8400-e29b-41d4-a716-446655440000"
+}
+```
+
+The `fact_id` is a UUID that can be used with `memory_delete`.
 
 ### Example
 
+**Input**:
+
 ```json
 {
-  "user_message": "I always use vim for editing code",
-  "assistant_message": "Got it, I'll remember you prefer vim as your editor.",
+  "content": "User prefers dark mode for all editors",
+  "source": "session_2026-03-06",
   "metadata": {
-    "session_id": "sess_abc123",
-    "user_id": "user_xyz"
+    "subject": "user",
+    "predicate": "prefers_theme",
+    "object": "dark",
+    "confidence": 0.95,
+    "decayRate": "slow"
   }
 }
 ```
 
-## get_facts
-
-Retrieve all stored facts matching a subject or predicate filter.
-
-**Use case**: Query structured knowledge directly without semantic search.
-
-### Parameters
-
-- `subject` (string, optional): Filter facts by subject
-- `predicate` (string, optional): Filter facts by predicate
-- `min_confidence` (number, optional): Minimum confidence threshold (default: 0.5)
-- `limit` (number, optional): Maximum facts to return (default: 50)
-
-### Returns
-
-Array of facts, each containing:
-
-- `subject`: What the fact is about
-- `predicate`: The relationship or attribute
-- `object`: The value
-- `confidence`: Current confidence score (0.0-1.0)
-- `source`: Reference to the conversation where this was learned
-- `created_at`: When the fact was first extracted
-- `updated_at`: When the fact was last reinforced or modified
-
-### Example
+**Output**:
 
 ```json
 {
-  "subject": "user",
-  "min_confidence": 0.8
+  "fact_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
 }
 ```
 
-Returns all high-confidence facts about the user.
+### Usage in Conversation
 
-## Future Tools (Planned)
+> User: "Remember that I prefer dark mode for all my editors"
+>
+> AI: *(calls memory_store with content="user prefers dark mode for editors")*
+>
+> AI: "Got it, I've stored that you prefer dark mode. I'll keep that in mind for future editor configurations."
 
-- `forget`: Explicitly delete specific facts or conversations
-- `update_fact`: Manually adjust fact confidence or content
-- `export_memory`: Export all data to JSON for backup
-- `import_memory`: Import previously exported memory data
+### When to Use
+
+Use `memory_store` when:
+- User explicitly asks you to remember something
+- You learn a clear preference or fact
+- Information should be available in future sessions
+
+Don't use it for:
+- Temporary session state
+- Speculative information
+- Already-stored facts (search first)
 
 ---
 
-For implementation details, see the [source code](https://github.com/getplumb/plumb/tree/main/packages/mcp-server).
+## memory_delete
+
+Remove a fact from memory by its ID. Performs a soft delete (fact marked as deleted but not physically removed).
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `id` | string | Yes | UUID of the fact to delete |
+
+### Returns
+
+```json
+{
+  "ok": true
+}
+```
+
+### Example
+
+**Input**:
+
+```json
+{
+  "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+}
+```
+
+**Output**:
+
+```json
+{
+  "ok": true
+}
+```
+
+### Usage in Conversation
+
+> User: "Actually, I don't use dark mode anymore. Forget that."
+>
+> AI: *(calls memory_search to find the dark mode fact, gets fact_id)*
+>
+> AI: *(calls memory_delete with the fact_id)*
+>
+> AI: "Done, I've removed that preference from memory."
+
+### Notes
+
+- Soft delete: Fact marked `deleted_at` but not removed from DB
+- Deleted facts excluded from search results
+- Raw log (Layer 1) is append-only and never deleted
+- Only Layer 2 facts can be deleted
+
+---
+
+## memory_status
+
+Get current memory store statistics. No parameters required.
+
+### Parameters
+
+None.
+
+### Returns
+
+```json
+{
+  "factCount": 247,
+  "rawLogCount": 1523,
+  "lastIngestion": "2026-03-06T15:42:10.123Z",
+  "storageBytes": 3145728
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `factCount` | number | Total facts in Layer 2 |
+| `rawLogCount` | number | Total exchanges in Layer 1 |
+| `lastIngestion` | string | ISO timestamp of last memory write |
+| `storageBytes` | number | Total database size in bytes |
+
+### Example
+
+**Input**:
+
+```json
+{}
+```
+
+**Output**:
+
+```json
+{
+  "factCount": 247,
+  "rawLogCount": 1523,
+  "lastIngestion": "2026-03-06T15:42:10.123Z",
+  "storageBytes": 3145728
+}
+```
+
+### Usage in Conversation
+
+> User: "How much do you remember about me?"
+>
+> AI: *(calls memory_status)*
+>
+> AI: "I have 247 facts stored about you from 1523 conversation exchanges. The last time I learned something new was 2 minutes ago. Total storage: 3.1 MB."
+
+---
+
+## Error Handling
+
+All tools return errors in this format:
+
+```json
+{
+  "error": "Error message here"
+}
+```
+
+With `isError: true` flag set.
+
+Common errors:
+- **memory_search**: "Invalid query" (empty string), "Limit exceeds max" (> 100)
+- **memory_store**: "Missing required field: content", "Invalid confidence" (not 0-1)
+- **memory_delete**: "Invalid UUID format", "Fact not found"
+- **memory_status**: (rarely errors, DB access only)
+
+## Tool Discovery
+
+To see available tools in your MCP client, ask the AI:
+
+> "What memory tools do you have?"
+
+Or manually inspect the MCP server registration (depends on client).
+
+## Next Steps
+
+- [CLI Reference](/cli) — Command-line tools for export, status, reprocess
+- [How It Works](/how-it-works) — Deep dive into search and ranking
+- [OpenClaw Plugin](/openclaw-plugin) — Auto-injection of memory context

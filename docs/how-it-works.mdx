@@ -1,100 +1,290 @@
 ---
-title: How It Works
-description: Two-layer memory architecture
+title: 'How It Works'
+description: 'Two-layer memory architecture explained'
 ---
 
 # How Plumb Works
 
-Plumb uses a two-layer architecture: raw conversation storage and extracted fact storage.
+Plumb uses a two-layer architecture to balance verbatim accuracy with structured intelligence. Layer 1 stores raw conversation history. Layer 2 extracts and scores facts.
 
-## Layer 1: Conversation Log
+## Architecture Overview
 
-Every message exchange between user and AI gets stored verbatim. Full context, full history. No summarization, no compression.
+```
+┌─────────────────────────────────────────────────────────────┐
+│  User ↔ AI Conversation                                      │
+└───────────────────────────┬─────────────────────────────────┘
+                            │
+                            ▼
+                    ┌───────────────┐
+                    │  Plumb Core   │
+                    └───────┬───────┘
+                            │
+              ┌─────────────┴─────────────┐
+              ▼                           ▼
+    ┌─────────────────┐         ┌─────────────────┐
+    │   Layer 1       │         │   Layer 2       │
+    │   Raw Log       │         │   Facts         │
+    ├─────────────────┤         ├─────────────────┤
+    │ - Full exchanges│         │ - SPO triples   │
+    │ - BM25 index    │         │ - Confidence    │
+    │ - Vector embed  │         │ - Decay rate    │
+    │ - Append-only   │         │ - Source ref    │
+    └─────────────────┘         └─────────────────┘
+              │                           │
+              └─────────────┬─────────────┘
+                            ▼
+                    ┌───────────────┐
+                    │  Search Query │
+                    └───────┬───────┘
+                            │
+              ┌─────────────┴─────────────┐
+              ▼                           ▼
+    ┌─────────────────┐         ┌─────────────────┐
+    │ BM25 + Vector   │         │ Fact Search     │
+    │ KNN             │         │ (confidence ≥   │
+    │                 │         │  threshold)     │
+    └─────────────────┘         └─────────────────┘
+              │                           │
+              └─────────────┬─────────────┘
+                            ▼
+                    ┌───────────────┐
+                    │  RRF Fusion   │
+                    │  + Rerank     │
+                    └───────┬───────┘
+                            ▼
+              ┌─────────────────────────┐
+              │  [PLUMB MEMORY] Block   │
+              │  Injected in Prompt     │
+              └─────────────────────────┘
+```
 
-This layer answers: "What was said?"
+## Layer 1: Raw Log
 
-### Storage
+Every conversation exchange is stored verbatim in the raw log. Nothing is summarized, compressed, or discarded.
 
-- Raw text messages with timestamps
-- User ID, session ID, context metadata
-- Vector embeddings for semantic search
-- Never deleted, append-only log
+### What Gets Stored
+
+Each exchange contains:
+- User message text
+- AI response text (if available)
+- Timestamp
+- Session ID (groups related exchanges)
+- Source label (human-readable session name)
+- User ID (for multi-user setups)
+
+### Indexing
+
+Two search indexes are built:
+
+1. **BM25 (keyword search)**: SQLite FTS5 full-text index
+   - Fast lexical matching
+   - Handles exact phrase searches
+   - Works well for rare or technical terms
+
+2. **Vector embeddings**: sqlite-vec with sentence embeddings
+   - Semantic similarity search
+   - Captures meaning beyond keywords
+   - Uses OpenAI `text-embedding-3-small` by default
+
+### Search Process
+
+When you query Layer 1:
+
+1. Text split into chunks (~500 tokens)
+2. BM25 scores computed for each chunk
+3. Vector KNN search finds semantically similar chunks
+4. Results fused using Reciprocal Rank Fusion (RRF)
+5. Top results returned with final scores
+
+**Use case**: "Show me the conversation where we discussed the deployment bug"
 
 ## Layer 2: Fact Extraction
 
-The AI analyzes conversation history and extracts structured facts. These facts have confidence scores and source references.
-
-This layer answers: "What did we learn?"
+The AI analyzes raw log entries and extracts structured facts. Facts are subject-predicate-object (SPO) triples with metadata.
 
 ### Fact Structure
 
-- **Subject**: What the fact is about (e.g., "user preference")
-- **Predicate**: The relationship or attribute (e.g., "uses")
-- **Object**: The value (e.g., "TypeScript")
-- **Confidence**: 0.0-1.0 score based on clarity and evidence
-- **Source**: Reference to the conversation exchange where this was learned
-
-### Example
-
-From this exchange:
-> User: "I prefer using pnpm for all my Node.js projects"
-
-Extracted fact:
-```json
+```typescript
 {
-  "subject": "user",
-  "predicate": "prefers_package_manager",
-  "object": "pnpm",
-  "confidence": 0.95,
-  "source": "conversation_id:abc123"
+  subject: "user",              // What the fact is about
+  predicate: "prefers_editor",  // The relationship
+  object: "vim",                // The value
+  confidence: 0.95,             // 0.0-1.0 score
+  decayRate: "medium",          // slow | medium | fast
+  timestamp: "2026-03-06T...",  // When extracted
+  sourceSessionId: "sess_abc",  // Where it came from
+  context: "I always use vim"   // Original text
 }
 ```
 
-## Confidence Scoring
+### Confidence Scoring
 
-Facts are scored based on:
+Confidence is computed based on:
 
-- **Explicitness**: Direct statements score higher than inferred context
-- **Repetition**: Facts mentioned multiple times gain confidence
-- **Recency**: Recent facts score higher (recency decay applied)
-- **Contradiction**: New facts can lower confidence of old, conflicting facts
+**Explicitness**: Direct statements score higher than inferred context
+- "I prefer pnpm" → 0.95
+- "Let's use pnpm for this" → 0.7
 
-Confidence decays over time unless reinforced. Old facts fade, making room for updated context.
+**Repetition**: Facts mentioned multiple times gain confidence
+- First mention: base score
+- Second mention: +0.1
+- Third mention: +0.05
 
-## Recency Decay
+**Recency**: Recent facts start with higher confidence
+- Last 7 days: full confidence
+- 7-30 days: -0.1
+- 30+ days: -0.2 (then decay continues)
 
-All facts experience time-based confidence decay:
+**Contradiction**: New facts can lower confidence of conflicting facts
+- "I prefer npm now" → reduces confidence of "user prefers_package_manager pnpm"
 
-- **Half-life**: 30 days (configurable)
-- **Minimum**: Facts never drop below 0.1 confidence
-- **Reinforcement**: Mentioning a fact resets decay
+### Recency Decay
 
-This keeps memory fresh and prevents stale information from dominating search results.
+All facts decay over time unless reinforced. The decay function:
 
-## Search and Retrieval
+```
+confidence(t) = confidence₀ × 0.5^(t / half_life)
+```
 
-When the AI searches memory:
+**Default half-life**: 30 days
 
-1. **Vector search** on Layer 1 finds relevant conversation exchanges
-2. **Fact retrieval** from Layer 2 surfaces high-confidence facts matching the query
-3. **Ranking** combines vector similarity + confidence score + recency
+**Decay rates**:
+- `slow`: half-life = 60 days (long-term preferences)
+- `medium`: half-life = 30 days (project context)
+- `fast`: half-life = 7 days (temporary context)
 
-Results provide both conversational context (Layer 1) and structured knowledge (Layer 2).
+**Minimum confidence**: Facts never drop below 0.1
 
-## Why Two Layers?
+**Reinforcement**: Mentioning a fact again resets decay timer and boosts confidence
 
-**Layer 1** provides full conversational context when needed. Great for "what did we discuss last week?"
+### Extraction Process
 
-**Layer 2** provides distilled knowledge without noise. Great for "what do I know about this user?"
+Facts are extracted asynchronously:
 
-Together, they balance verbatim accuracy with structured intelligence.
+1. Raw log entry stored (Layer 1)
+2. Extraction job queued
+3. LLM analyzes the exchange and extracts 0-N facts
+4. Each fact scored for confidence
+5. Facts written to Layer 2 with source reference
 
-## Implementation
+**LLM prompt**: The extractor uses a system prompt that defines SPO structure and confidence guidelines. Facts must be:
+- Explicit or strongly implied
+- Not speculative
+- Referencing stable attributes, not transient state
 
-Plumb uses:
+### Search Process
 
-- **SQLite** for relational storage (facts, metadata)
-- **sqlite-vec** for vector embeddings and semantic search
-- **JSON-RPC** via MCP for client communication
+When you query Layer 2:
 
-Everything runs locally. No API calls required.
+1. Vector embedding of query computed
+2. KNN search in fact embeddings
+3. Filter by minimum confidence threshold (default: 0.5)
+4. Apply recency decay to scores
+5. Sort by final score (embedding similarity × confidence)
+6. Return top N facts
+
+**Use case**: "What package manager does the user prefer?"
+
+## Hybrid Search (Layer 1 + Layer 2)
+
+The `memory_search` MCP tool queries both layers in parallel and fuses results:
+
+1. Layer 1 search: BM25 + vector hybrid
+2. Layer 2 search: fact vector search with confidence weighting
+3. Results tagged with `layer: "raw_log"` or `layer: "facts"`
+4. Ranked by final score
+5. Top N returned (default: 20 total)
+
+### Ranking
+
+Final ranking considers:
+- **Vector similarity**: How semantically close is this result?
+- **BM25 score**: Does it match query keywords?
+- **Confidence**: How certain are we about this fact?
+- **Recency**: When was this learned?
+- **Layer preference**: Facts slightly weighted higher (less noise)
+
+## Context Injection
+
+In OpenClaw (plugin mode), Plumb automatically injects memory into every AI prompt:
+
+1. User sends a message
+2. Before AI sees it, Plumb runs `memory_search` with the message as query
+3. Top results formatted as a `[PLUMB MEMORY]` block
+4. Block prepended to the AI's system prompt
+5. AI responds with memory context available
+
+**Example injection**:
+
+```
+[PLUMB MEMORY]
+Relevant facts from past conversations:
+- user prefers_package_manager pnpm (confidence: 0.92, 3 days ago)
+- project uses_bundler vite (confidence: 0.85, 1 week ago)
+- user stated "always use strict TypeScript" (2 days ago)
+
+[END PLUMB MEMORY]
+```
+
+In MCP mode (Claude Desktop, etc.), the AI decides when to call `memory_search` explicitly.
+
+## Storage
+
+All data stored in SQLite:
+
+**Database path**: `~/.plumb/memory.db` (default)
+
+**Tables**:
+- `facts`: Layer 2 (SPO triples, confidence, decay rate)
+- `raw_log_chunks`: Layer 1 (chunked exchanges with session refs)
+- `sessions`: Session metadata (labels, timestamps)
+- `vec_facts`: Virtual table for fact vector search
+- `vec_raw_log`: Virtual table for raw log vector search
+
+**Extensions**:
+- `sqlite-vec`: Vector similarity search
+- `fts5`: Full-text search
+
+**Performance**:
+- 10K facts: ~5 MB
+- 100K facts: ~50 MB
+- Search latency: 10-50ms (depends on index size)
+
+## Fact Extraction Cost
+
+Layer 2 requires LLM calls for extraction:
+
+**Cost per exchange** (using GPT-4o-mini):
+- Input tokens: ~200 (prompt + exchange text)
+- Output tokens: ~50 (extracted facts)
+- Cost: ~$0.0001 per exchange
+
+**Cost per exchange** (using Claude Haiku 4.5):
+- Input tokens: ~200
+- Output tokens: ~50
+- Cost: ~$0.00005 per exchange
+
+For 1000 exchanges/month:
+- GPT-4o-mini: ~$0.10/month
+- Claude Haiku: ~$0.05/month
+
+You can disable fact extraction and use Layer 1 only if cost is a concern (set `PLUMB_DISABLE_EXTRACTION=true`).
+
+## Privacy
+
+All memory stored locally. No cloud APIs required except:
+- LLM for fact extraction (you control the provider)
+- Embedding model (defaults to OpenAI, can use local with Ollama)
+
+You can run Plumb 100% offline by:
+1. Using Ollama for fact extraction
+2. Using a local embedding model
+3. Self-hosting the MCP server
+
+See [Self-Hosting](/self-hosting) for details.
+
+## Next Steps
+
+- [MCP Tools](/mcp-tools) — Reference for all 4 tools
+- [CLI Reference](/cli) — Export, status, reprocess commands
+- [OpenClaw Plugin](/openclaw-plugin) — Auto-injection setup

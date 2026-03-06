@@ -1,17 +1,18 @@
 ---
-title: Self-Hosting
-description: Run Plumb from source locally
+title: 'Self-Hosting'
+description: 'Run Plumb from source locally'
 ---
 
 # Self-Hosting
 
-Run Plumb directly from the GitHub repository. MIT licensed, fully local, no cloud dependencies.
+Run Plumb directly from the GitHub repository. MIT licensed, fully local, no cloud dependencies required (with local LLM setup).
 
 ## Prerequisites
 
 - Node.js 18+ (20+ recommended)
 - pnpm 9+
 - Git
+- LLM provider (OpenAI, Anthropic, or Ollama for local inference)
 
 ## Clone and Install
 
@@ -21,6 +22,8 @@ cd plumb
 pnpm install
 ```
 
+This installs all dependencies for the monorepo (core, MCP server, CLI, OpenClaw plugin).
+
 ## Build the MCP Server
 
 ```bash
@@ -29,43 +32,99 @@ pnpm --filter @plumb/mcp-server build
 
 This compiles TypeScript to JavaScript and prepares the MCP server for execution.
 
-## Run Locally
+## Configure LLM Provider
 
-### Initialize the database
+Plumb needs an LLM for fact extraction (Layer 2). Set environment variables:
 
-```bash
-node packages/mcp-server/dist/index.js init
-```
-
-Creates `~/.plumb/memory.db` with the required schema.
-
-### Start the MCP server
+### OpenAI
 
 ```bash
-node packages/mcp-server/dist/index.js serve
+export PLUMB_LLM_PROVIDER=openai
+export OPENAI_API_KEY=sk-...
 ```
 
-The server runs on stdio, communicating via JSON-RPC as per the MCP specification.
+### Anthropic
+
+```bash
+export PLUMB_LLM_PROVIDER=anthropic
+export ANTHROPIC_API_KEY=sk-ant-...
+```
+
+### Ollama (Local)
+
+```bash
+export PLUMB_LLM_PROVIDER=ollama
+export OLLAMA_HOST=http://localhost:11434/v1  # optional, defaults to this
+```
+
+Requires Ollama running locally with a model pulled (e.g., `ollama pull llama3.1`).
+
+### OpenAI-Compatible
+
+```bash
+export PLUMB_LLM_PROVIDER=openai-compatible
+export OPENAI_BASE_URL=https://your-provider.com/v1
+export OPENAI_API_KEY=your-key
+```
+
+## Run the MCP Server
+
+```bash
+node packages/mcp-server/dist/index.js
+```
+
+The server runs on stdio, communicating via JSON-RPC as per the MCP specification. It listens for tool calls from MCP clients.
 
 ## Configure Your MCP Client
 
 Point your MCP client to the local build:
+
+### Claude Desktop
+
+Edit `claude_desktop_config.json`:
 
 ```json
 {
   "mcpServers": {
     "plumb": {
       "command": "node",
-      "args": [
-        "/path/to/plumb/packages/mcp-server/dist/index.js",
-        "serve"
-      ]
+      "args": ["/absolute/path/to/plumb/packages/mcp-server/dist/index.js"]
     }
   }
 }
 ```
 
-Replace `/path/to/plumb` with your actual clone path.
+Replace `/absolute/path/to/plumb` with your actual clone path.
+
+### Claude Code
+
+Add to `~/.claude.json`:
+
+```json
+{
+  "mcpServers": {
+    "plumb": {
+      "command": "node",
+      "args": ["/absolute/path/to/plumb/packages/mcp-server/dist/index.js"]
+    }
+  }
+}
+```
+
+### Cursor
+
+Add to settings.json:
+
+```json
+{
+  "mcp.servers": {
+    "plumb": {
+      "command": "node",
+      "args": ["/absolute/path/to/plumb/packages/mcp-server/dist/index.js"]
+    }
+  }
+}
+```
 
 ## Development Mode
 
@@ -77,15 +136,187 @@ pnpm --filter @plumb/mcp-server dev
 
 This runs TypeScript in watch mode. Changes to source files trigger recompilation.
 
+For full monorepo development (core + MCP server + CLI):
+
+```bash
+pnpm dev
+```
+
+Runs all packages in watch mode simultaneously.
+
+## Configuration Options
+
+The MCP server respects these environment variables:
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `PLUMB_DB_PATH` | Database file path | `~/.plumb/memory.db` |
+| `PLUMB_USER_ID` | User ID for memory isolation | `default` |
+| `PLUMB_LLM_PROVIDER` | LLM provider (openai, anthropic, ollama, openai-compatible) | (required) |
+| `OPENAI_API_KEY` | OpenAI API key | — |
+| `ANTHROPIC_API_KEY` | Anthropic API key | — |
+| `OPENAI_BASE_URL` | OpenAI-compatible base URL | — |
+| `OLLAMA_HOST` | Ollama server URL | `http://localhost:11434/v1` |
+| `PLUMB_DISABLE_EXTRACTION` | Disable Layer 2 fact extraction | `false` |
+
+### Custom Database Path
+
+```bash
+export PLUMB_DB_PATH=/custom/path/memory.db
+node packages/mcp-server/dist/index.js
+```
+
+### Multi-User Setup
+
+```bash
+export PLUMB_USER_ID=alice
+node packages/mcp-server/dist/index.js
+```
+
+Each user has isolated facts in the same database.
+
+### Layer 1 Only (No Fact Extraction)
+
+```bash
+export PLUMB_DISABLE_EXTRACTION=true
+node packages/mcp-server/dist/index.js
+```
+
+Skips LLM-based fact extraction. Only raw log (Layer 1) is stored and searched. Saves LLM cost but loses structured facts.
+
+## 100% Offline Setup
+
+To run Plumb without any cloud API calls:
+
+1. **Use Ollama for fact extraction**:
+
+```bash
+ollama pull llama3.1
+export PLUMB_LLM_PROVIDER=ollama
+```
+
+2. **Use local embeddings** (requires code change):
+
+Edit `packages/core/src/embedder.ts` to use a local embedding model instead of OpenAI. Example with HuggingFace:
+
+```typescript
+import { pipeline } from '@xenova/transformers';
+
+const embedder = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2');
+const output = await embedder(text, { pooling: 'mean', normalize: true });
+```
+
+This is a code modification, not currently configurable via environment variables.
+
 ## Data Location
 
-- **Database**: `~/.plumb/memory.db` (SQLite)
-- **Logs**: `~/.plumb/logs/` (if configured)
+- **Database**: `~/.plumb/memory.db` (default)
+- **Logs**: None by default (can enable in code)
+- **Embeddings**: Stored in database (no external cache)
 
-All data stays local. No external services required.
+All data stays local. No telemetry, no external services (except LLM for extraction).
+
+## Testing
+
+Run the test suite:
+
+```bash
+# Unit tests only
+pnpm test
+
+# Unit + integration tests
+pnpm test:all
+```
+
+Core tests:
+- `packages/core/src/*.test.ts` — Layer 1 + Layer 2 logic
+- `packages/cli/src/commands/*.test.ts` — CLI command tests
+- `packages/openclaw-plugin/src/*.test.ts` — Plugin hook tests
+
+## Package Structure
+
+```
+plumb/
+├── packages/
+│   ├── core/               # Layer 1 + Layer 2 logic
+│   ├── mcp-server/         # MCP server (exposes 4 tools)
+│   ├── cli/                # CLI (status, export, etc.)
+│   ├── openclaw-plugin/    # OpenClaw plugin (auto-injection)
+├── hosted/                 # (not for OSS — cloud-hosted version)
+├── docs/                   # Mintlify docs site
+├── website/                # Landing page
+```
+
+**Core packages** (MIT licensed):
+- `@getplumb/core` — Memory storage, search, extraction
+- `@getplumb/mcp-server` — MCP server binary
+- `@getplumb/cli` — CLI tools
+- `@getplumb/openclaw-plugin` — OpenClaw plugin
+
+## Contributing
+
+See [CONTRIBUTING.md](https://github.com/getplumb/plumb/blob/main/CONTRIBUTING.md) for guidelines.
+
+**Areas to contribute**:
+- Alternative embedding models (HuggingFace, local Ollama embeddings)
+- Cross-encoder reranking (replace RRF fusion)
+- Fact contradiction detection (lower confidence on conflicts)
+- UI for memory browsing (web interface for ~/.plumb/memory.db)
+- Export formats (CSV, Markdown, Obsidian vault)
+
+## Troubleshooting
+
+### MCP Server Won't Start
+
+Check logs:
+
+```bash
+node packages/mcp-server/dist/index.js 2>&1 | tee plumb-error.log
+```
+
+Common issues:
+- Missing environment variables (PLUMB_LLM_PROVIDER, API keys)
+- Database locked (another process using it)
+- Node.js version < 18
+
+### Facts Not Extracting
+
+Check that:
+1. `PLUMB_DISABLE_EXTRACTION` is not set to `true`
+2. LLM provider is configured and reachable
+3. API key is valid (test with `plumb setup`)
+
+Enable extraction logs (requires code change):
+
+```typescript
+// packages/core/src/extractor.ts
+console.log('Extracting facts from:', text);
+```
+
+### Search Returning No Results
+
+1. Check database has data: `plumb status`
+2. Export data: `plumb export --json | jq 'length'`
+3. Test raw log search: `plumb ingest --text "test query" && plumb status`
+
+### Database Corruption
+
+Repair:
+
+```bash
+plumb fix
+```
+
+Or rebuild from scratch (loses data):
+
+```bash
+rm ~/.plumb/memory.db
+node packages/mcp-server/dist/index.js  # Creates new DB on first run
+```
 
 ## Next Steps
 
-- [Understand the architecture](/how-it-works)
-- [Explore available MCP tools](/mcp-tools)
+- [How It Works](/how-it-works) — Deep dive into architecture
+- [MCP Tools](/mcp-tools) — Tool reference
+- [CLI Reference](/cli) — Command documentation
 - [Contribute on GitHub](https://github.com/getplumb/plumb)
