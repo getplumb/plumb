@@ -40,7 +40,7 @@ Link your local Plumb instance to the cloud sync service.
 
 ## Documentation
 
-Full docs at [docs.getplumb.dev](https://docs.getplumb.dev)
+Full docs at [plumb.run](https://plumb.run)
 
 ## License
 
