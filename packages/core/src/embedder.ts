@@ -120,3 +120,12 @@ export async function rerankScores(query: string, passages: string[]): Promise<n
   }
   return scores;
 }
+
+/**
+ * Warm the embedder pipeline at initialization time.
+ * Loads and JIT-compiles the Xenova model to eliminate first-query cold-start latency.
+ * No-op if @xenova/transformers is unavailable.
+ */
+export async function warmEmbedder(): Promise<void> {
+  await getEmbedPipeline();
+}

@@ -8,12 +8,12 @@ import type { MemoryStore } from './store.js';
 import type { Fact, IngestResult, MessageExchange, SearchResult, StoreStatus } from './types.js';
 import { extractFacts } from './extractor.js';
 import { callLLMWithConfig, type LLMConfig } from './llm-client.js';
-import { embed } from './embedder.js';
+import { embed, warmEmbedder } from './embedder.js';
 import { formatExchange } from './chunker.js';
 import { searchRawLog, type RawLogSearchResult } from './raw-log-search.js';
 import { searchFacts } from './fact-search.js';
 import { ExtractionQueue, type ExtractFn } from './extraction-queue.js';
-import { serializeEmbedding } from './vector-search.js';
+import { serializeEmbedding, deserializeEmbedding } from './vector-search.js';
 
 export type { RawLogSearchResult };
 
@@ -106,6 +106,9 @@ export class LocalStore implements MemoryStore {
   readonly #extractConcurrency: number;
   readonly #retryBackoffMs: number;
   readonly #extractFn: ExtractFn;
+
+  // T-096: In-memory embedding cache for vec_facts (eliminates 292ms SQLite load on each query)
+  #embeddingCache: Array<{ rowid: number; embedding: Float32Array }> = [];
 
   /** Expose database for plugin use (e.g., NudgeManager) */
   get db(): WasmDb {
@@ -203,6 +206,20 @@ export class LocalStore implements MemoryStore {
     const store = new LocalStore(db, userId, llmConfig, extractionQueue, extractFn, options.backlog);
     storeRef = store;
 
+    // T-096: Warm embedder pipeline to eliminate 365ms cold-start on first query
+    await warmEmbedder();
+
+    // T-096: Load all vec_facts embeddings into in-memory cache (eliminates 292ms SQLite load per query)
+    const vecStmt = db.prepare(`SELECT rowid, embedding FROM vec_facts`);
+    while (vecStmt.step()) {
+      const row = vecStmt.get({}) as { rowid: number; embedding: string };
+      store.#embeddingCache.push({
+        rowid: row.rowid,
+        embedding: deserializeEmbedding(row.embedding),
+      });
+    }
+    vecStmt.finalize();
+
     return store;
   }
 
@@ -258,6 +275,9 @@ export class LocalStore implements MemoryStore {
       updateStmt.finalize();
 
       this.#db.exec('COMMIT');
+
+      // T-096: Append new embedding to in-memory cache
+      this.#embeddingCache.push({ rowid: vecRowid, embedding });
     } catch (err) {
       this.#db.exec('ROLLBACK');
       throw err;
@@ -267,10 +287,20 @@ export class LocalStore implements MemoryStore {
   }
 
   async search(query: string, limit = 20): Promise<readonly SearchResult[]> {
-    return searchFacts(this.#db, this.#userId, query, limit);
+    // T-096: Pass in-memory embedding cache to searchFacts (eliminates 292ms SQLite load per query)
+    return searchFacts(this.#db, this.#userId, query, limit, this.#embeddingCache);
   }
 
   async delete(id: string): Promise<void> {
+    // T-096: Get vec_rowid before soft-deleting so we can remove from cache
+    const vecRowidStmt = this.#db.prepare(`
+      SELECT vec_rowid FROM facts WHERE id = ? AND user_id = ?
+    `);
+    vecRowidStmt.bind([id, this.#userId]);
+    vecRowidStmt.step();
+    const vecRowid = vecRowidStmt.get(0) as number | null;
+    vecRowidStmt.finalize();
+
     // Soft delete only — never hard delete.
     const stmt = this.#db.prepare(`
       UPDATE facts SET deleted_at = ? WHERE id = ? AND user_id = ?
@@ -278,6 +308,14 @@ export class LocalStore implements MemoryStore {
     stmt.bind([new Date().toISOString(), id, this.#userId]);
     stmt.step();
     stmt.finalize();
+
+    // T-096: Remove from in-memory embedding cache
+    if (vecRowid !== null) {
+      const cacheIdx = this.#embeddingCache.findIndex(entry => entry.rowid === vecRowid);
+      if (cacheIdx !== -1) {
+        this.#embeddingCache.splice(cacheIdx, 1);
+      }
+    }
   }
 
   async status(): Promise<StoreStatus> {
