@@ -121,11 +121,7 @@ export function createPreResponseHook(
       }
     }
 
-    // Skip injection if no content
-    if (!block || !block.trim()) {
-      return;
-    }
-
+    // formatContextBlock now always returns content, so no need to check for empty block
     // Wrap in [PLUMB MEMORY] delimiters
     const finalBlock = `[PLUMB MEMORY]\n${block}\n[/PLUMB MEMORY]`;
 

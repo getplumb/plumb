@@ -47,19 +47,29 @@ function formatChunkLine(chunk: RawChunk): string {
 /**
  * Formats a MemoryContext into a [MEMORY CONTEXT] prompt block.
  *
- * Returns an empty string if the context has no raw chunks,
- * so callers can skip injection without additional checks.
+ * Always returns a non-empty string with a tool hint section,
+ * even when there are no related conversations.
  */
 export function formatContextBlock(context: MemoryContext): string {
   const { relatedConversations } = context;
 
-  if (relatedConversations.length === 0) return '';
-
   const lines: string[] = ['[MEMORY CONTEXT]'];
 
-  lines.push('');
-  lines.push('## Related conversations');
-  for (const chunk of relatedConversations) lines.push(formatChunkLine(chunk));
+  if (relatedConversations.length > 0) {
+    // Show related conversations section
+    lines.push('');
+    lines.push('## Related conversations');
+    for (const chunk of relatedConversations) lines.push(formatChunkLine(chunk));
+
+    // Append tool hint
+    lines.push('');
+    lines.push('## Memory search available');
+    lines.push('Use the `plumb_search` tool to look up specific subtopics not covered above.');
+  } else {
+    // No related conversations - show only tool hint with alternate text
+    lines.push('## Memory search available');
+    lines.push('Use the `plumb_search` tool to look up relevant context from memory.');
+  }
 
   return lines.join('\n');
 }
