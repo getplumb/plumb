@@ -46,6 +46,7 @@ interface RawLogRow {
   session_label: string | null;
   timestamp: string;
   chunk_text: string;
+  parent_id: string | null;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -101,20 +102,41 @@ export async function searchRawLog(
   limit = 10,
   preloadedCorpus?: Array<{ rowid: number; embedding: Float32Array }>,
 ): Promise<readonly RawLogSearchResult[]> {
-  // ── 1. Fetch all raw_log rows for this user ──────────────────────────────
-  const stmt = db.prepare(
-    `SELECT id, session_id, session_label, timestamp, chunk_text, vec_rowid
+  // ── 1. Fetch searchable rows: children + parent-only fallback (T-108) ───
+  // Child rows: parent_id IS NOT NULL (small chunks for fast reranking)
+  // Parent-only rows: parent_id IS NULL AND not a parent of any children (old data from pre-T-108)
+  const childStmt = db.prepare(
+    `SELECT id, session_id, session_label, timestamp, chunk_text, vec_rowid, parent_id
      FROM raw_log
-     WHERE user_id = ?
+     WHERE user_id = ? AND parent_id IS NOT NULL
      ORDER BY timestamp DESC`
   );
-  stmt.bind([userId]);
+  childStmt.bind([userId]);
 
-  const allRows: Array<RawLogRow & { vec_rowid: number | null }> = [];
-  while (stmt.step()) {
-    allRows.push(stmt.get({}) as any);
+  const childRows: Array<RawLogRow & { vec_rowid: number | null }> = [];
+  while (childStmt.step()) {
+    childRows.push(childStmt.get({}) as any);
   }
-  stmt.finalize();
+  childStmt.finalize();
+
+  // Fetch parent-only rows (old data) — rows that are parents (parent_id IS NULL) but have no children.
+  const parentOnlyStmt = db.prepare(
+    `SELECT id, session_id, session_label, timestamp, chunk_text, vec_rowid, parent_id
+     FROM raw_log
+     WHERE user_id = ? AND parent_id IS NULL
+       AND id NOT IN (SELECT DISTINCT parent_id FROM raw_log WHERE parent_id IS NOT NULL)
+     ORDER BY timestamp DESC`
+  );
+  parentOnlyStmt.bind([userId]);
+
+  const parentOnlyRows: Array<RawLogRow & { vec_rowid: number | null }> = [];
+  while (parentOnlyStmt.step()) {
+    parentOnlyRows.push(parentOnlyStmt.get({}) as any);
+  }
+  parentOnlyStmt.finalize();
+
+  // Combine both sets for search
+  const allRows = [...childRows, ...parentOnlyRows];
 
   if (allRows.length === 0) return [];
 
@@ -196,14 +218,74 @@ export async function searchRawLog(
 
   ranked.sort((a, b) => b.finalScore - a.finalScore);
 
-  // ── 8. Build output ─────────────────────────────────────────────────────
-  return ranked.slice(0, limit).map(({ id, finalScore }) => {
+  // ── 8. Deduplicate by parent_id (T-108) ────────────────────────────────
+  // For child rows (parent_id IS NOT NULL), keep the highest-scoring child per parent.
+  // For parent-only rows (parent_id IS NULL), keep them as-is.
+  const seenParents = new Set<string>();
+  const deduplicated: Array<{ id: string; finalScore: number }> = [];
+
+  for (const item of ranked) {
+    const row = idToRow.get(item.id);
+    if (!row) continue;
+
+    if (row.parent_id !== null) {
+      // Child row — deduplicate by parent_id
+      if (seenParents.has(row.parent_id)) {
+        continue; // Skip: already saw a higher-scoring child from this parent
+      }
+      seenParents.add(row.parent_id);
+      deduplicated.push(item);
+    } else {
+      // Parent-only row — keep as-is (no dedup needed)
+      deduplicated.push(item);
+    }
+  }
+
+  // ── 9. Fetch parent chunk_text for child rows ──────────────────────────
+  // For child rows, return parent chunk_text. For parent-only rows, return their own chunk_text.
+  const parentIds = new Set<string>();
+  for (const item of deduplicated.slice(0, limit)) {
+    const row = idToRow.get(item.id);
+    if (row && row.parent_id !== null) {
+      parentIds.add(row.parent_id);
+    }
+  }
+
+  // Fetch parent rows in one query
+  const parentMap = new Map<string, RawLogRow>();
+  if (parentIds.size > 0) {
+    const placeholders = Array.from(parentIds).map(() => '?').join(',');
+    const parentStmt = db.prepare(
+      `SELECT id, session_id, session_label, timestamp, chunk_text, parent_id
+       FROM raw_log
+       WHERE id IN (${placeholders})`
+    );
+    parentStmt.bind(Array.from(parentIds));
+    while (parentStmt.step()) {
+      const parent = parentStmt.get({}) as RawLogRow;
+      parentMap.set(parent.id, parent);
+    }
+    parentStmt.finalize();
+  }
+
+  // ── 10. Build output ────────────────────────────────────────────────────
+  return deduplicated.slice(0, limit).map(({ id, finalScore }) => {
     const row = idToRow.get(id)!;
+
+    // If this is a child row, return parent chunk_text. Otherwise, return own chunk_text.
+    let displayRow = row;
+    if (row.parent_id !== null) {
+      const parent = parentMap.get(row.parent_id);
+      if (parent) {
+        displayRow = parent; // Use parent's chunk_text, session_id, etc.
+      }
+    }
+
     return {
-      chunk_text: row.chunk_text,
-      session_id: row.session_id,
-      session_label: row.session_label,
-      timestamp: row.timestamp,
+      chunk_text: displayRow.chunk_text,
+      session_id: displayRow.session_id,
+      session_label: displayRow.session_label,
+      timestamp: displayRow.timestamp,
       final_score: finalScore,
     };
   });
