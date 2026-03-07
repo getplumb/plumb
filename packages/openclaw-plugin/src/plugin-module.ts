@@ -79,8 +79,8 @@ export const plugin: OpenClawPluginDefinition = {
     let extractionQueue: ExtractionQueue;
     let store: LocalStore;
 
-    if (plumbConfig) {
-      // Config found — enable fact extraction with real LLM calls
+    if (plumbConfig && plumbConfig.extractionEnabled !== false) {
+      // Config found and extraction not explicitly disabled — enable fact extraction with real LLM calls
       const llmConfig: LLMConfig = {
         provider: plumbConfig.llmProvider,
         apiKey: plumbConfig.llmApiKey,
@@ -111,6 +111,12 @@ export const plugin: OpenClawPluginDefinition = {
       api.logger.info(
         '[plumb] Security note: Ensure ~/.plumb/config.json is chmod 0600 to protect your API key'
       );
+    } else if (plumbConfig && plumbConfig.extractionEnabled === false) {
+      // Config present but extraction explicitly disabled — embed-only mode
+      extractionQueue = new ExtractionQueue(async (_exchange, _userId) => []);
+      api.logger.info(
+        '[plumb] Fact extraction disabled via config (extractionEnabled: false) — running in embed-only mode'
+      );
     } else {
       // No config found — use no-op queue (zero network calls, zero env var reads)
       extractionQueue = new ExtractionQueue(async (_exchange, _userId) => []);
@@ -124,7 +130,7 @@ export const plugin: OpenClawPluginDefinition = {
       userId,
       extractionQueue,
     };
-    if (plumbConfig) {
+    if (plumbConfig && plumbConfig.extractionEnabled !== false) {
       storeOptions.llmConfig = {
         provider: plumbConfig.llmProvider,
         apiKey: plumbConfig.llmApiKey,
