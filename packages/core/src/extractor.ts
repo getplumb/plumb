@@ -15,17 +15,38 @@ interface RawExtractedFact {
 /** Build the extraction prompt from a conversation exchange. */
 function buildExtractionPrompt(exchange: MessageExchange): string {
   return (
-    `Extract facts from this conversation exchange worth remembering in future conversations.\n\n` +
+    `Extract facts from this conversation exchange worth recalling in a future session.\n\n` +
+    `Apply the 30-day recall test: "If I had no memory of this conversation and someone asked me about this user in 30 days, would knowing this fact help me serve them better?"\n\n` +
     `User: ${exchange.userMessage}\n` +
     `Agent: ${exchange.agentResponse}\n\n` +
+    `Extraction tiers (prioritize stable, durable facts):\n` +
+    `Tier 1 (always extract): identity, bio, stable preferences, permanent decisions, named relationships, skills/knowledge\n` +
+    `Tier 2 (extract if confident): project architecture decisions, tool choices, recurring workflows\n` +
+    `Tier 3 (skip unless explicitly significant): events, status updates, transient state, anything already tracked in a task or code\n\n` +
+    `Concrete examples:\n` +
+    `BAD (skip): "There are 2,162 pending raw_log chunks" — transient state, stale immediately\n` +
+    `BAD (skip): "Claude Code ran T-018 independently" — event, already in git history\n` +
+    `BAD (skip): "User registered plumb.run" — event, now complete\n` +
+    `GOOD (keep): "Clay prefers bullet lists over markdown tables" — stable preference\n` +
+    `GOOD (keep): "Plumb uses SQLite + WASM for local storage" — durable decision\n` +
+    `GOOD (keep): "Clay's address is 332 Casper Drive, Lafayette, CO 80026" — identity/bio\n\n` +
     `Rules:\n` +
     `- Output ONLY a valid JSON array. No prose, no explanation, no markdown fences.\n` +
     `- Each item: {"subject": string, "predicate": string, "object": string, "context": string, "confidence": number 0-1, "decay_rate": "slow"|"medium"|"fast"}\n` +
     `- decay_rate: slow=identity/stable prefs/decisions, medium=project context/tool choices, fast=transient state\n` +
-    `- confidence: 0.95 for explicit statements, 0.7-0.85 for inferred\n` +
-    `- Output [] if nothing is worth remembering\n` +
-    `- Skip: pleasantries, small talk, transient questions, tool outputs, error messages\n` +
-    `- Extract: decisions, preferences, facts about people/projects/systems, deadlines, named entities\n\n` +
+    `- confidence (calibrated — 0.95 is RARE, reserved for permanent facts):\n` +
+    `  * 0.95: Stable biographical/identity facts, verified permanent data\n` +
+    `    Example: "Clay lives at 332 Casper Drive, Lafayette, CO 80026" (permanent address)\n` +
+    `  * 0.85-0.90: Strong stated preferences, confirmed architectural decisions, recurring behavioral patterns\n` +
+    `    Example: "Clay prefers bullet lists over markdown tables" (stated preference, stable)\n` +
+    `  * 0.70-0.84: Inferred preferences, situational context, likely-but-not-certain facts\n` +
+    `    Example: "Clay seems to prefer morning standup calls" (inferred from behavior)\n` +
+    `  * 0.50-0.69: Speculative observations, one-time mentions, might-be-outdated\n` +
+    `    Example: "Clay might be considering switching to a new job" (speculative)\n` +
+    `  * Below 0.50: Do NOT extract — output [] instead (not worth storing)\n` +
+    `- Output [] liberally — it is better to extract nothing than to extract low-value facts that will pollute future retrieval.\n` +
+    `- Skip: pleasantries, small talk, transient questions, tool outputs, error messages, current date/time statements, agent operating instructions (what the agent should do/read/reply), session identifiers, heartbeat/cron state, facts about the agent itself (unless the agent has a permanent attribute like a name or email), events already recorded elsewhere (git commits, kanban tasks, emails), transient project state\n` +
+    `- Extract: identity/bio, stable preferences, permanent decisions, named relationships, skills/knowledge, project architecture (if durable), tool choices (if durable), recurring workflows\n\n` +
     `JSON array:`
   );
 }
@@ -49,6 +70,88 @@ function toDecayRate(raw: string): DecayRate {
   if (raw === 'slow') return DecayRate.slow;
   if (raw === 'fast') return DecayRate.fast;
   return DecayRate.medium;
+}
+
+/**
+ * Filter out ephemeral and agent-instruction facts that should not be stored.
+ *
+ * Blocks noise patterns:
+ * - Current time/date statements (e.g., 'Current time is Friday...')
+ * - Session identifiers (e.g., 'Current session is identified by...')
+ * - Agent operating instructions (e.g., 'Agent should reply HEARTBEAT_OK')
+ * - Heartbeat/cron state facts
+ *
+ * Does NOT block valid facts like:
+ * - 'Agent is named Terra' (permanent attribute)
+ * - 'Clay prefers agent to draft emails' (user preference)
+ */
+function isNoiseFact(fact: RawExtractedFact): boolean {
+  const subjectLower = fact.subject.toLowerCase();
+  const predicateLower = fact.predicate.toLowerCase();
+  const objectLower = fact.object.toLowerCase();
+
+  // Block ephemeral timestamp subjects
+  const blockedSubjects = [
+    'current time',
+    'current date',
+    'current session',
+    'today',
+    "today's date",
+  ];
+  if (blockedSubjects.some(blocked => subjectLower.includes(blocked))) {
+    return true;
+  }
+
+  // Block agent imperative predicates (instructions to the agent)
+  const blockedPredicates = [
+    'should reply',
+    'must reply',
+    'should read',
+    'must read',
+    'should not infer',
+    'must not repeat',
+    'should not repeat',
+    'must not',
+    'should not',
+  ];
+  if (blockedPredicates.some(blocked => predicateLower.includes(blocked))) {
+    return true;
+  }
+
+  // Block Agent + imperative (should/must) combinations
+  // BUT allow 'Agent is named X' or 'Agent has email X' (permanent attributes)
+  if (subjectLower === 'agent') {
+    // If predicate is a permanent attribute verb, allow it
+    const permanentPredicates = ['is named', 'has email', 'is called', 'name is', 'email is'];
+    const isPermanentAttribute = permanentPredicates.some(perm =>
+      predicateLower.includes(perm)
+    );
+    if (!isPermanentAttribute) {
+      // Block agent operating instructions
+      if (predicateLower.includes('should') || predicateLower.includes('must') ||
+          predicateLower.includes('needs to') || predicateLower.includes('will')) {
+        return true;
+      }
+    }
+  }
+
+  // Block date/time patterns in object field (e.g., '2026-03-06', 'Friday, March 6th, 2026')
+  const dateTimePattern = /\d{4}-\d{2}-\d{2}|(monday|tuesday|wednesday|thursday|friday|saturday|sunday).*\d{4}|\d{1,2}:\d{2}\s*(am|pm)/i;
+  if (predicateLower === 'is' && dateTimePattern.test(objectLower)) {
+    return true;
+  }
+
+  // Block session identifier patterns
+  if (objectLower.includes('openclaw session') || objectLower.includes('session 0x')) {
+    return true;
+  }
+
+  // Block heartbeat-related facts
+  if (subjectLower.includes('heartbeat') || objectLower.includes('heartbeat')) {
+    return true;
+  }
+
+  return false;
 }
 
 /**
@@ -90,6 +193,11 @@ export async function extractFacts(
   const facts: Fact[] = [];
 
   for (const raw of rawFacts) {
+    // Post-extraction noise filter: discard ephemeral facts before storing
+    if (isNoiseFact(raw)) {
+      continue;
+    }
+
     const factInput: Omit<Fact, 'id'> = {
       subject: String(raw.subject),
       predicate: String(raw.predicate),
