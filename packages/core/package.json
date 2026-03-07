@@ -38,13 +38,11 @@
     "prepublishOnly": "pnpm build"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.13",
     "tsx": "^4.0.0",
     "typescript": "^5.4.0"
   },
   "dependencies": {
     "@sqlite.org/sqlite-wasm": "3.47.2-build1",
-    "better-sqlite3": "^12.6.2",
     "openai": "^4.80.0"
   },
   "optionalDependencies": {
