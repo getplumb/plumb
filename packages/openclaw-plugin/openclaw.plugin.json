@@ -20,6 +20,10 @@
       "shadowMode": {
         "type": "boolean",
         "description": "If true, retrieves memory context but does not inject it into prompts"
+      },
+      "queryPort": {
+        "type": "number",
+        "description": "Port for the query server. Defaults to 18791"
       }
     }
   },
@@ -34,6 +38,10 @@
     },
     "shadowMode": {
       "label": "Shadow Mode (inject disabled)"
+    },
+    "queryPort": {
+      "label": "Query Server Port",
+      "placeholder": "18791"
     }
   }
 }
