@@ -9,7 +9,7 @@
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { CloudStore } from './cloud-store.js';
-import { DecayRate, type MessageExchange } from '@getplumb/core';
+import type { MessageExchange } from '@getplumb/core';
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -35,7 +35,6 @@ describe('CloudStore', () => {
 
   afterAll(async () => {
     if (!skipIfNoSupabase && store) {
-      await store.drain();
       await store.close();
     }
   });
@@ -44,70 +43,8 @@ describe('CloudStore', () => {
     expect(store.userId).toBe(testUserId);
   });
 
-  it('should store a fact and return an id', { skip: skipIfNoSupabase }, async () => {
-    const factId = await store.store({
-      subject: 'test-subject',
-      predicate: 'likes',
-      object: 'test-object',
-      confidence: 0.9,
-      decayRate: DecayRate.medium,
-      timestamp: new Date(),
-      sourceSessionId: 'test-session-1',
-    });
-
-    expect(factId).toBeTruthy();
-    expect(typeof factId).toBe('string');
-  });
-
-  it('should search for facts', { skip: skipIfNoSupabase }, async () => {
-    // Store a fact first
-    await store.store({
-      subject: 'Alice',
-      predicate: 'works on',
-      object: 'Plumb project',
-      confidence: 0.95,
-      decayRate: DecayRate.slow,
-      timestamp: new Date(),
-      sourceSessionId: 'test-session-2',
-    });
-
-    // Search for it
-    const results = await store.search('Alice works on Plumb', 10);
-    expect(results.length).toBeGreaterThan(0);
-    const topResult = results[0];
-    expect(topResult).toBeDefined();
-    expect(topResult!.fact.subject).toBe('Alice');
-    expect(topResult!.fact.predicate).toBe('works on');
-    expect(topResult!.fact.object).toBe('Plumb project');
-  });
-
-  it('should soft-delete a fact', { skip: skipIfNoSupabase }, async () => {
-    const factId = await store.store({
-      subject: 'Bob',
-      predicate: 'likes',
-      object: 'coffee',
-      confidence: 0.8,
-      decayRate: DecayRate.fast,
-      timestamp: new Date(),
-      sourceSessionId: 'test-session-3',
-    });
-
-    // Verify it exists
-    const beforeDelete = await store.search('Bob likes coffee', 10);
-    expect(beforeDelete.length).toBeGreaterThan(0);
-
-    // Delete it
-    await store.delete(factId);
-
-    // Verify it's gone from search results
-    const afterDelete = await store.search('Bob likes coffee', 10);
-    const bobFact = afterDelete.find((r) => r.fact.id === factId);
-    expect(bobFact).toBeUndefined();
-  });
-
   it('should return status', { skip: skipIfNoSupabase }, async () => {
     const status = await store.status();
-    expect(status.factCount).toBeGreaterThanOrEqual(0);
     expect(status.rawLogCount).toBeGreaterThanOrEqual(0);
     expect(status.storageBytes).toBeGreaterThanOrEqual(0);
   });
@@ -123,7 +60,6 @@ describe('CloudStore', () => {
 
     const result = await store.ingest(exchange);
     expect(result.rawLogId).toBeTruthy();
-    expect(result.factsExtracted).toBe(0); // Fire-and-forget, so initially 0
   });
 
   it('should skip duplicate ingestions', { skip: skipIfNoSupabase }, async () => {
@@ -162,21 +98,5 @@ describe('CloudStore', () => {
     const topResult = results[0];
     expect(topResult).toBeDefined();
     expect(topResult!.chunk_text).toContain('Supabase');
-  });
-
-  it('should drain in-flight extractions', { skip: skipIfNoSupabase }, async () => {
-    // Ingest an exchange (triggers async fact extraction)
-    const exchange: MessageExchange = {
-      userMessage: 'My favorite color is blue',
-      agentResponse: 'Great! Blue is a nice color.',
-      timestamp: new Date(),
-      source: 'openclaw',
-      sessionId: 'test-session-7',
-    };
-
-    await store.ingest(exchange);
-
-    // Drain should wait for extraction to complete
-    await expect(store.drain()).resolves.toBeUndefined();
   });
 });

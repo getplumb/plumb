@@ -10,8 +10,6 @@ export interface StatusOptions {
   json?: boolean;
   /** User ID to show status for. Defaults to 'default' */
   userId?: string;
-  /** Print full fact list */
-  verbose?: boolean;
 }
 
 /**
@@ -86,7 +84,6 @@ export async function statusCommand(options: StatusOptions): Promise<void> {
   // Open LocalStore and gather status data.
   const store = await LocalStore.create({ dbPath, userId });
   const status = await store.status();
-  const topSubjects = store.topSubjects(userId, 5);
   store.close();
 
   // Check MCP server installation.
@@ -95,11 +92,9 @@ export async function statusCommand(options: StatusOptions): Promise<void> {
   // Mode 1: --json flag → print JSON to stdout.
   if (options.json) {
     const jsonOutput = {
-      factCount: status.factCount,
       rawLogCount: status.rawLogCount,
       lastIngestion: status.lastIngestion?.toISOString() ?? null,
       storageBytes: status.storageBytes,
-      topSubjects,
       mcpServer: {
         installed: mcpServerPath !== null,
         path: mcpServerPath,
@@ -112,49 +107,14 @@ export async function statusCommand(options: StatusOptions): Promise<void> {
   // Mode 2: default → print human-readable summary.
   console.log('Plumb Memory — Local Store');
   console.log('──────────────────────────');
-  console.log(`Facts:          ${formatNumber(status.factCount)}`);
   console.log(`Raw log:        ${formatNumber(status.rawLogCount)} exchange${status.rawLogCount !== 1 ? 's' : ''}`);
   console.log(`Last ingestion: ${status.lastIngestion ? formatAge(status.lastIngestion) : 'never'}`);
   console.log(`Storage:        ${formatBytes(status.storageBytes)}`);
   console.log();
 
-  if (topSubjects.length > 0) {
-    console.log('Top subjects:');
-    for (const { subject, count } of topSubjects) {
-      // Pad subject name to align counts (max 20 chars)
-      const paddedSubject = subject.padEnd(20);
-      console.log(`  ${paddedSubject} (${formatNumber(count)} fact${count !== 1 ? 's' : ''})`);
-    }
-    console.log();
-  }
-
   if (mcpServerPath) {
     console.log(`MCP server:     installed (${mcpServerPath})`);
   } else {
     console.log('MCP server:     not found (run npm install -g @plumb/mcp-server)');
-  }
-
-  // --verbose: print all facts from the DB
-  if (options.verbose && status.factCount > 0) {
-    console.log();
-    console.log('Facts:');
-    console.log('──────────────────────────');
-    const verboseStore = await LocalStore.create({ dbPath, userId });
-    const results = await verboseStore.search('', status.factCount);
-    verboseStore.close();
-
-    // Sort by timestamp descending (most recent first)
-    const sorted = [...results].sort(
-      (a, b) => b.fact.timestamp.getTime() - a.fact.timestamp.getTime()
-    );
-
-    for (const { fact } of sorted) {
-      const conf = (fact.confidence * 100).toFixed(0);
-      const age = formatAge(fact.timestamp);
-      console.log(`  ${fact.subject} ${fact.predicate} ${fact.object}`);
-      console.log(`    confidence: ${conf}% | decay: ${fact.decayRate} | ${age}`);
-      if (fact.context) console.log(`    context: ${fact.context}`);
-      console.log();
-    }
   }
 }

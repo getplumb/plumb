@@ -7,7 +7,6 @@ import { existsSync, appendFileSync, readFileSync, writeFileSync } from 'node:fs
 import OpenAI from 'openai';
 import ora from 'ora';
 import { LocalStore } from '@getplumb/core';
-import { extractFacts } from '@getplumb/core';
 import { getConfigPath, getMcpSnippet, type SupportedTool } from './connect.js';
 import { getDefaultDbPath } from '../utils/db-path.js';
 
@@ -182,20 +181,21 @@ async function persistEnv(result: SetupResult): Promise<void> {
     console.log('\n⚠️  Important: Run `source ~/.zshrc` or open a new terminal.');
   }
 
-  // Bootstrap: create the DB immediately with a seed fact so `plumb status` works right away
+  // Bootstrap: create the DB immediately so `plumb status` works right away
   const dbSpinner = ora('Initializing memory database...').start();
   try {
     const dbPath = getDefaultDbPath();
     const store = await LocalStore.create({ dbPath, userId: 'default' });
     const seedExchange = {
       userMessage: `I just set up Plumb on ${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}.`,
-      agentResponse: `Setup complete. You configured Plumb with the ${result.provider} provider. Your memory database is now active and will start capturing facts from your AI conversations.`,
+      agentResponse: `Setup complete. You configured Plumb with the ${result.provider} provider. Your memory database is now active and will start capturing conversations from your AI interactions.`,
       timestamp: new Date(),
       source: 'openclaw' as const,
       sessionId: 'setup',
       sessionLabel: 'plumb-setup',
     };
-    await extractFacts(seedExchange, 'default', store);
+    await store.ingest(seedExchange);
+    store.close();
     dbSpinner.succeed('Memory database ready');
   } catch (err: unknown) {
     // Non-fatal: DB will be created on first ingest
@@ -242,7 +242,7 @@ async function seedUserContext(): Promise<void> {
     return;
   }
 
-  // Extract facts
+  // Store seed context
   try {
     const dbPath = getDefaultDbPath();
     const store = await LocalStore.create({ dbPath, userId: 'default' });
@@ -254,10 +254,11 @@ async function seedUserContext(): Promise<void> {
       sessionId: 'setup',
       sessionLabel: 'plumb-setup',
     };
-    await extractFacts(seedExchange, 'default', store);
+    await store.ingest(seedExchange);
+    store.close();
   } catch (err: unknown) {
-    // Non-fatal: facts will be extracted on first real conversation
-    console.log('\n⚠️  Could not store personalization facts — they will be captured on first use.');
+    // Non-fatal: context will be captured on first real conversation
+    console.log('\n⚠️  Could not store personalization context — it will be captured on first use.');
   }
 }
 

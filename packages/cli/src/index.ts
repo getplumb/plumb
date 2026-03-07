@@ -39,7 +39,6 @@ program
   .command('status')
   .description('Show memory graph health and statistics')
   .option('--json', 'Print status as JSON to stdout')
-  .option('--verbose', 'Print all stored facts')
   .option('--db <path>', 'Path to database file (defaults to ~/.plumb/memory.db)')
   .option('--user-id <id>', 'User ID to show status for (defaults to "default")')
   .action(async (options) => {
@@ -47,7 +46,6 @@ program
       db: options.db,
       json: options.json,
       userId: options.userId,
-      verbose: options.verbose,
     });
   });
 
@@ -88,8 +86,8 @@ program
 // Export command
 program
   .command('export')
-  .description('Export all facts and raw log to JSON + Markdown')
-  .option('--json', 'Print facts.json to stdout only (for piping)')
+  .description('Export all raw log entries to JSON + Markdown')
+  .option('--json', 'Print raw-log.json to stdout only (for piping)')
   .option('--db <path>', 'Path to database file (defaults to ~/.plumb/memory.db)')
   .option('--user-id <id>', 'User ID to export data for (defaults to "default")')
   .action(async (options) => {
