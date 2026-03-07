@@ -6,16 +6,17 @@
  *
  *   [MEMORY CONTEXT]
  *
- *   ## High confidence
- *   - user is building Plumb (0.98, tech-planning, today)
+ *   ## Memories
+ *   - [tech-planning] today: "User prefers TypeScript for all new code"
  *
  *   ## Related conversations
  *   - [tech-planning] today: "Let me help you design the memory system..."
  *
- * Empty MemoryContext returns an empty string — no block is injected.
+ * Always includes a tool hint section. Returns empty string only when both
+ * relatedMemories and relatedConversations are empty.
  */
 
-import type { MemoryContext, ScoredFact, RawChunk } from './read-path.js';
+import type { MemoryContext, MemoryFactChunk, RawChunk } from './read-path.js';
 
 // ─── Age formatting ───────────────────────────────────────────────────────────
 
@@ -26,24 +27,23 @@ import type { MemoryContext, ScoredFact, RawChunk } from './read-path.js';
 export function formatAge(ageInDays: number): string {
   if (ageInDays < 1) return 'today';
   if (ageInDays < 2) return 'yesterday';
-  if (ageInDays < 7) return `${Math.floor(ageInDays)} days ago`;
+  if (ageInDays < 7) return \`\${Math.floor(ageInDays)} days ago\`;
   if (ageInDays < 14) return '1 week ago';
-  if (ageInDays < 30) return `${Math.floor(ageInDays / 7)} weeks ago`;
+  if (ageInDays < 30) return \`\${Math.floor(ageInDays / 7)} weeks ago\`;
   if (ageInDays < 60) return '1 month ago';
-  if (ageInDays < 365) return `${Math.floor(ageInDays / 30)} months ago`;
+  if (ageInDays < 365) return \`\${Math.floor(ageInDays / 30)} months ago\`;
   if (ageInDays < 730) return '1 year ago';
-  return `${Math.floor(ageInDays / 365)} years ago`;
+  return \`\${Math.floor(ageInDays / 365)} years ago\`;
 }
 
 // ─── Line formatters ──────────────────────────────────────────────────────────
 
-function formatFactLine(sf: ScoredFact): string {
-  const { fact, score, ageInDays } = sf;
-  const description = `${fact.subject} ${fact.predicate} ${fact.object}`;
-  const scoreStr = score.toFixed(2);
-  const sessionLabel = fact.sourceSessionLabel ?? fact.sourceSessionId;
+function formatMemoryLine(memory: MemoryFactChunk): string {
+  const excerpt = memory.content.slice(0, 200);
+  const sessionLabel = memory.sourceSessionLabel ?? memory.sourceSessionId;
+  const ageInDays = (Date.now() - memory.timestamp.getTime()) / (1_000 * 60 * 60 * 24);
   const age = formatAge(ageInDays);
-  return `- ${description} (${scoreStr}, ${sessionLabel}, ${age})`;
+  return \`- [\${sessionLabel}] \${age}: "\${excerpt}"\`;
 }
 
 function formatChunkLine(chunk: RawChunk): string {
@@ -51,7 +51,7 @@ function formatChunkLine(chunk: RawChunk): string {
   const sessionLabel = chunk.sessionLabel ?? chunk.sessionId;
   const ageInDays = (Date.now() - chunk.timestamp.getTime()) / (1_000 * 60 * 60 * 24);
   const age = formatAge(ageInDays);
-  return `- [${sessionLabel}] ${age}: "${excerpt}"`;
+  return \`- [\${sessionLabel}] \${age}: "\${excerpt}"\`;
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
@@ -59,44 +59,38 @@ function formatChunkLine(chunk: RawChunk): string {
 /**
  * Formats a MemoryContext into a [MEMORY CONTEXT] prompt block.
  *
- * Returns an empty string when all tiers and relatedConversations are empty.
+ * Always returns a non-empty string with a tool hint section,
+ * even when there are no related memories or conversations.
  */
 export function formatContextBlock(context: MemoryContext): string {
-  const { highConfidence, mediumConfidence, lowConfidence, relatedConversations } = context;
-
-  const hasAny =
-    highConfidence.length > 0 ||
-    mediumConfidence.length > 0 ||
-    lowConfidence.length > 0 ||
-    relatedConversations.length > 0;
-
-  if (!hasAny) return '';
+  const { relatedMemories, relatedConversations } = context;
 
   const lines: string[] = ['[MEMORY CONTEXT]'];
 
-  if (highConfidence.length > 0) {
+  // ── Render ## Memories section (above ## Related conversations) ──────────
+  if (relatedMemories.length > 0) {
     lines.push('');
-    lines.push('## High confidence');
-    for (const sf of highConfidence) lines.push(formatFactLine(sf));
+    lines.push('## Memories');
+    for (const memory of relatedMemories) lines.push(formatMemoryLine(memory));
   }
 
-  if (mediumConfidence.length > 0) {
-    lines.push('');
-    lines.push('## Medium confidence');
-    for (const sf of mediumConfidence) lines.push(formatFactLine(sf));
-  }
-
-  if (lowConfidence.length > 0) {
-    lines.push('');
-    lines.push('## Low confidence');
-    for (const sf of lowConfidence) lines.push(formatFactLine(sf));
-  }
-
+  // ── Render ## Related conversations section ──────────────────────────────
   if (relatedConversations.length > 0) {
     lines.push('');
     lines.push('## Related conversations');
     for (const chunk of relatedConversations) lines.push(formatChunkLine(chunk));
   }
 
-  return lines.join('\n');
+  // ── Append tool hint ──────────────────────────────────────────────────────
+  if (relatedMemories.length > 0 || relatedConversations.length > 0) {
+    lines.push('');
+    lines.push('## Memory search available');
+    lines.push('Use the \`plumb_search\` tool to look up specific subtopics not covered above.');
+  } else {
+    // No memories or conversations — show only tool hint with alternate text
+    lines.push('## Memory search available');
+    lines.push('Use the \`plumb_search\` tool to look up relevant context from memory.');
+  }
+
+  return lines.join('\\n');
 }
