@@ -130,7 +130,7 @@ export async function searchFacts(
             decay_rate, timestamp, source_session_id, source_session_label,
             context, deleted_at, vec_rowid
      FROM facts
-     WHERE user_id = ? AND deleted_at IS NULL
+     WHERE user_id = ? AND deleted_at IS NULL AND confidence >= 0.65
      ORDER BY timestamp DESC`
   );
   stmt.bind([userId]);
