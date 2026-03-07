@@ -64,10 +64,51 @@ export const plugin: OpenClawPluginDefinition = {
   kind: 'memory',
 
   activate(api: OpenClawPluginApi) {
-    void (async () => {
+    // FIX 1: Shared cleanup state - accessible before async setup completes
+    let store: LocalStore;
+    let queryServer: any;
     const dbPath = (api.pluginConfig?.dbPath as string | undefined) ?? DEFAULT_DB_PATH;
     const userId = (api.pluginConfig?.userId as string | undefined) ?? 'default';
     const shadowMode = (api.pluginConfig?.shadowMode as boolean | undefined) ?? false;
+
+    // FIX 1: Register cleanup handlers IMMEDIATELY (synchronously) before async work
+    let storeInitialized = false;
+    const cleanup = async () => {
+      if (!storeInitialized) {
+        api.logger.debug?.('[plumb] Cleanup called but store not initialized');
+        return;
+      }
+      try {
+        if (queryServer) {
+          await stopQueryServer(queryServer);
+          api.logger.debug?.('[plumb] Query server stopped');
+        }
+        await store.extractionQueue.stop();
+        api.logger.debug?.('[plumb] Extraction queue stopped');
+        await store.stopBacklogProcessor();
+        api.logger.debug?.('[plumb] Backlog processor stopped');
+        store.close();
+        api.logger.debug?.('[plumb] Store closed');
+      } catch (e) {
+        api.logger.error(`[plumb] Cleanup error: ${e}`);
+      }
+    };
+
+    // Register session_end handler BEFORE async work starts (critical for graceful shutdown)
+    api.on('session_end', cleanup);
+
+    // Process-level signal handlers (critical for SIGTERM/SIGINT when systemd stops service)
+    const signalHandler = () => {
+      api.logger.info('[plumb] Received shutdown signal, cleaning up...');
+      void cleanup();
+    };
+    process.on('SIGTERM', signalHandler);
+    process.on('SIGINT', signalHandler);
+    process.on('beforeExit', () => void cleanup());
+
+    // Now start async setup
+    void (async () => {
+    try {
     api.logger.info(
       `[plumb] Activating with dbPath=${dbPath}, userId=${userId}, shadowMode=${shadowMode}`
     );
@@ -78,7 +119,6 @@ export const plugin: OpenClawPluginDefinition = {
     await checkConfigPermissions();
 
     let extractionQueue: ExtractionQueue;
-    let store: LocalStore;
 
     if (plumbConfig && plumbConfig.extractionEnabled === true) {
       // Config found and extraction not explicitly disabled — enable fact extraction with real LLM calls
@@ -140,6 +180,7 @@ export const plugin: OpenClawPluginDefinition = {
       };
     }
     store = await LocalStore.create(storeOptions);
+    storeInitialized = true;
     const nudgeManager = new NudgeManager();
 
     // Start the extraction queue background drain loop (T-071)
@@ -159,7 +200,7 @@ export const plugin: OpenClawPluginDefinition = {
     // Start the query server (T-110)
     const queryPort = (api.pluginConfig?.queryPort as number | undefined) ??
                       Number(process.env.PLUMB_QUERY_PORT || '18791');
-    const queryServer = startQueryServer(store, queryPort, api.logger);
+    queryServer = startQueryServer(store, queryPort, api.logger);
 
     // Shared state map for threading user prompts from before_prompt_build to llm_output
     // Key: sessionId, Value: user message prompt
@@ -171,43 +212,12 @@ export const plugin: OpenClawPluginDefinition = {
     // Register the before_prompt_build hook for memory injection
     api.on('before_prompt_build', createPreResponseHook(store, nudgeManager, shadowMode, pendingPrompts));
 
-    // Clean up on session end — stop queue and flush before closing store
-    api.on('session_end', async () => {
-      try {
-        await stopQueryServer(queryServer);
-        api.logger.debug?.('[plumb] Query server stopped on session_end');
-        await store.extractionQueue.stop();
-        api.logger.debug?.('[plumb] Extraction queue stopped and flushed on session_end');
-        await store.stopBacklogProcessor();
-        api.logger.debug?.('[plumb] Backlog processor stopped on session_end');
-        store.close();
-        api.logger.debug?.('[plumb] Store closed on session_end');
-      } catch (e) {
-        api.logger.debug?.(`[plumb] Error during session_end cleanup: ${e}`);
-      }
-    });
-
-    // Safety net: flush queue on process exit
-    const exitHandler = async () => {
-      try {
-        await stopQueryServer(queryServer);
-        api.logger.debug?.('[plumb] Query server stopped on process exit');
-        await store.extractionQueue.stop();
-        api.logger.debug?.('[plumb] Extraction queue stopped on process exit');
-        await store.stopBacklogProcessor();
-        api.logger.debug?.('[plumb] Backlog processor stopped on process exit');
-      } catch (e) {
-        api.logger.debug?.(`[plumb] Error stopping queue on exit: ${e}`);
-      }
-    };
-
-    process.on('exit', () => {
-      // Note: process 'exit' is synchronous and cannot await promises.
-      // This is a best-effort attempt. The session_end hook is the primary cleanup path.
-      void exitHandler();
-    });
-
     api.logger.info('[plumb] Plugin activated');
+    } catch (error) {
+      api.logger.error(`[plumb] Activation failed: ${error}`);
+      // Ensure cleanup runs even if activation fails
+      await cleanup();
+    }
     })();
   },
 };
