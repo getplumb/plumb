@@ -23,6 +23,12 @@ export interface ExtractionQueueOptions {
   intervalMs?: number;
   /** Max queue size before early flush. Defaults to PLUMB_EXTRACT_BATCH_SIZE env var or 10. */
   batchSize?: number;
+  /**
+   * Delay between individual extraction calls within a flush batch (ms).
+   * Defaults to PLUMB_EXTRACT_ITEM_DELAY_MS env var or 6500ms.
+   * Set to pace requests within LLM provider rate limits (e.g. Gemini free tier: 10 RPM = 1 req/6s).
+   */
+  itemDelayMs?: number;
 }
 
 /**
@@ -48,6 +54,7 @@ export class ExtractionQueue {
   private timer: ReturnType<typeof setInterval> | null = null;
   private readonly intervalMs: number;
   private readonly batchSize: number;
+  private readonly itemDelayMs: number;
   private flushing = false; // Prevent concurrent flush() calls
 
   constructor(
@@ -56,6 +63,7 @@ export class ExtractionQueue {
   ) {
     this.intervalMs = opts?.intervalMs ?? Number(process.env.PLUMB_EXTRACT_INTERVAL_MS ?? 300_000);
     this.batchSize = opts?.batchSize ?? Number(process.env.PLUMB_EXTRACT_BATCH_SIZE ?? 10);
+    this.itemDelayMs = opts?.itemDelayMs ?? Number(process.env.PLUMB_EXTRACT_ITEM_DELAY_MS ?? 6_500);
   }
 
   /**
@@ -107,10 +115,20 @@ export class ExtractionQueue {
       const batch = this.queue.splice(0);
       if (batch.length === 0) return;
 
-      // Extract facts for each item in parallel (T-079: pass sourceChunkId)
-      await Promise.allSettled(
-        batch.map(item => this.extractFn(item.exchange, item.userId, item.sourceChunkId)),
-      );
+      // Extract facts sequentially with per-item delay to respect LLM provider rate limits.
+      // (Gemini free tier: 10 RPM → 1 req/6s; default itemDelayMs=6500 gives safe headroom.)
+      // T-095: Previously used Promise.allSettled() (parallel); switched to sequential to avoid 429s.
+      for (const item of batch) {
+        try {
+          await this.extractFn(item.exchange, item.userId, item.sourceChunkId);
+        } catch (err) {
+          // Log but don't abort the batch — match original Promise.allSettled() behavior
+          console.error('[plumb/extraction-queue] extractFn error:', err);
+        }
+        if (this.itemDelayMs > 0) {
+          await new Promise(r => setTimeout(r, this.itemDelayMs));
+        }
+      }
     } finally {
       this.flushing = false;
     }
