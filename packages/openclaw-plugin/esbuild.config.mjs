@@ -32,8 +32,8 @@ async function main() {
     // Only keep true Node built-ins external (they're always available)
     external: [
       'node:*',
-      // Native addon — cannot be bundled, must be present in node_modules at runtime.
-      'better-sqlite3',
+      // WASM SQLite — cannot be bundled, must be present in node_modules at runtime.
+      '@sqlite.org/sqlite-wasm',
       // LLM SDKs — externalized to keep them out of the bundle.
       // The plugin does not call any LLM APIs in this version (MVP).
       'openai',
