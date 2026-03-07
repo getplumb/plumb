@@ -203,7 +203,16 @@ export async function searchRawLog(
   const candidates = decayedScores.slice(0, Math.max(RERANK_TOP_K, limit));
 
   // ── 7. Cross-encoder reranking ──────────────────────────────────────────
-  const passages = candidates.map(([id]) => idToRow.get(id)?.chunk_text ?? '');
+  // Truncate passages to 512 chars before reranking — the cross-encoder
+  // (ms-marco-MiniLM-L-6-v2) has a 512-token limit and silently truncates
+  // longer inputs. Passing multi-kilobyte chunks causes 2–3s latency per
+  // call and saturates scores to 1.000 (all signal lost). Truncating to
+  // ~512 chars keeps inference fast (~6ms/passage) and restores score variance.
+  const RERANKER_MAX_CHARS = 512;
+  const passages = candidates.map(([id]) => {
+    const text = idToRow.get(id)?.chunk_text ?? '';
+    return text.length > RERANKER_MAX_CHARS ? text.slice(0, RERANKER_MAX_CHARS) : text;
+  });
   const rerankerScores = await rerankScores(query, passages);
 
   // Detect all-zero fallback (reranker unavailable) → keep RRF×decay order.

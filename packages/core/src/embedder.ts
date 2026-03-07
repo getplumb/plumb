@@ -101,24 +101,19 @@ async function getRerankPipeline(): Promise<RerankPipeline | null> {
  * Returns raw logits (higher = more relevant).
  * Falls back to zeros if the reranker model is unavailable — callers
  * should detect all-zero arrays and fall back to RRF order.
+ *
+ * NOTE: Xenova/ms-marco-MiniLM-L-6-v2 via @xenova/transformers has a known
+ * issue where it returns identical score=1 for all inputs regardless of
+ * relevance (the pipeline treats the single relevance logit as a binary
+ * classification and saturates via sigmoid). Until this is resolved with a
+ * different model or library, we return all-zeros to trigger the RRF fallback,
+ * which provides correct ranking via BM25+cosine fusion.
  */
 export async function rerankScores(query: string, passages: string[]): Promise<number[]> {
-  const pipe = await getRerankPipeline();
-  if (pipe === null || passages.length === 0) {
-    return passages.map(() => 0);
-  }
-
-  const scores: number[] = [];
-  for (const passage of passages) {
-    try {
-      const result = await pipe([query, passage], { function_to_apply: 'none' });
-      const raw = (Array.isArray(result) ? result[0] : result) as { score: number } | undefined;
-      scores.push(raw?.score ?? 0);
-    } catch {
-      scores.push(0);
-    }
-  }
-  return scores;
+  // Disabled: reranker produces degenerate scores (all 1.0) due to Xenova
+  // pipeline compatibility issue with ms-marco cross-encoders.
+  // RRF×recency (BM25 + cosine) fallback is used instead.
+  return passages.map(() => 0);
 }
 
 /**
@@ -132,11 +127,9 @@ export async function warmEmbedder(): Promise<void> {
 
 /**
  * Warm the reranker pipeline at initialization time.
- * Loads and JIT-compiles the cross-encoder model (~80MB) to eliminate first-query cold-start latency.
- * Adds ~200ms to startup and increases memory footprint, but ensures consistent <250ms query performance
- * from the first query onward (without warming, first query sees ~360ms, subsequent queries ~210ms).
- * No-op if @xenova/transformers is unavailable.
+ * Currently a no-op: reranker disabled due to Xenova ms-marco compatibility issue.
+ * See rerankScores() comment for details.
  */
 export async function warmReranker(): Promise<void> {
-  await getRerankPipeline();
+  // No-op: reranker disabled
 }
