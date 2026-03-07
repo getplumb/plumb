@@ -20,6 +20,10 @@
       "shadowMode": {
         "type": "boolean",
         "description": "If true, retrieves memory context but does not inject it into prompts"
+      },
+      "queryPort": {
+        "type": "number",
+        "description": "Port for the internal HTTP query server. Defaults to 18791. Change if running multiple instances (e.g. dev + prod)."
       }
     }
   },

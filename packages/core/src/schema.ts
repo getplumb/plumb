@@ -52,19 +52,30 @@ export const CREATE_VEC_RAW_LOG = `
 /**
  * Memory facts table for curated, high-signal facts written by Terra.
  * Each fact is a short, dense piece of information stored as a single chunk.
+ *
+ * subject/predicate/object store the structured fact components.
+ * confidence (0–1) and decay_rate ('slow'|'medium'|'fast') drive scoring.
+ * source_session_label is optional human-readable session name for provenance.
  */
 export const CREATE_MEMORY_FACTS_TABLE = `
   CREATE TABLE IF NOT EXISTS memory_facts (
-    id            TEXT PRIMARY KEY,
-    user_id       TEXT NOT NULL,
-    content       TEXT NOT NULL,
-    source_session_id TEXT NOT NULL,
-    tags          TEXT,
-    created_at    TEXT NOT NULL,
-    embed_status  TEXT NOT NULL DEFAULT 'pending',
-    embed_error   TEXT,
-    embed_model   TEXT,
-    vec_rowid     INTEGER
+    id                   TEXT PRIMARY KEY,
+    user_id              TEXT NOT NULL,
+    content              TEXT NOT NULL,
+    subject              TEXT,
+    predicate            TEXT,
+    object               TEXT,
+    confidence           REAL NOT NULL DEFAULT 0.9,
+    decay_rate           TEXT NOT NULL DEFAULT 'slow',
+    source_session_id    TEXT NOT NULL,
+    source_session_label TEXT,
+    tags                 TEXT,
+    created_at           TEXT NOT NULL,
+    deleted_at           TEXT,
+    embed_status         TEXT NOT NULL DEFAULT 'pending',
+    embed_error          TEXT,
+    embed_model          TEXT,
+    vec_rowid            INTEGER
   )
 `;
 
@@ -165,5 +176,21 @@ export function applySchema(db: import('./wasm-db.js').WasmDb): void {
     for (const idx of CREATE_MEMORY_FACTS_INDEXES) {
       db.exec(idx);
     }
+  } else {
+    // Conditional migration: add structured fact columns to existing memory_facts table.
+    const memFactColumns = db.exec({
+      sql: 'PRAGMA table_info(memory_facts)',
+      rowMode: 'object',
+      returnValue: 'resultRows',
+    }) as Array<{ name: string }>;
+    const memFactColNames = new Set(memFactColumns.map((c) => c.name));
+
+    if (!memFactColNames.has('subject')) db.exec(`ALTER TABLE memory_facts ADD COLUMN subject TEXT`);
+    if (!memFactColNames.has('predicate')) db.exec(`ALTER TABLE memory_facts ADD COLUMN predicate TEXT`);
+    if (!memFactColNames.has('object')) db.exec(`ALTER TABLE memory_facts ADD COLUMN "object" TEXT`);
+    if (!memFactColNames.has('confidence')) db.exec(`ALTER TABLE memory_facts ADD COLUMN confidence REAL NOT NULL DEFAULT 0.9`);
+    if (!memFactColNames.has('decay_rate')) db.exec(`ALTER TABLE memory_facts ADD COLUMN decay_rate TEXT NOT NULL DEFAULT 'slow'`);
+    if (!memFactColNames.has('source_session_label')) db.exec(`ALTER TABLE memory_facts ADD COLUMN source_session_label TEXT`);
+    if (!memFactColNames.has('deleted_at')) db.exec(`ALTER TABLE memory_facts ADD COLUMN deleted_at TEXT`);
   }
 }

@@ -6,13 +6,16 @@
  *
  *   [MEMORY CONTEXT]
  *
+ *   ## High confidence
+ *   - user is building Plumb (0.98, tech-planning, today)
+ *
  *   ## Related conversations
  *   - [tech-planning] today: "Let me help you design the memory system..."
  *
  * Empty MemoryContext returns an empty string — no block is injected.
  */
 
-import type { MemoryContext, RawChunk } from './read-path.js';
+import type { MemoryContext, ScoredFact, RawChunk } from './read-path.js';
 
 // ─── Age formatting ───────────────────────────────────────────────────────────
 
@@ -34,6 +37,15 @@ export function formatAge(ageInDays: number): string {
 
 // ─── Line formatters ──────────────────────────────────────────────────────────
 
+function formatFactLine(sf: ScoredFact): string {
+  const { fact, score, ageInDays } = sf;
+  const description = `${fact.subject} ${fact.predicate} ${fact.object}`;
+  const scoreStr = score.toFixed(2);
+  const sessionLabel = fact.sourceSessionLabel ?? fact.sourceSessionId;
+  const age = formatAge(ageInDays);
+  return `- ${description} (${scoreStr}, ${sessionLabel}, ${age})`;
+}
+
 function formatChunkLine(chunk: RawChunk): string {
   const excerpt = chunk.chunkText.slice(0, 200);
   const sessionLabel = chunk.sessionLabel ?? chunk.sessionId;
@@ -47,28 +59,43 @@ function formatChunkLine(chunk: RawChunk): string {
 /**
  * Formats a MemoryContext into a [MEMORY CONTEXT] prompt block.
  *
- * Always returns a non-empty string with a tool hint section,
- * even when there are no related conversations.
+ * Returns an empty string when all tiers and relatedConversations are empty.
  */
 export function formatContextBlock(context: MemoryContext): string {
-  const { relatedConversations } = context;
+  const { highConfidence, mediumConfidence, lowConfidence, relatedConversations } = context;
+
+  const hasAny =
+    highConfidence.length > 0 ||
+    mediumConfidence.length > 0 ||
+    lowConfidence.length > 0 ||
+    relatedConversations.length > 0;
+
+  if (!hasAny) return '';
 
   const lines: string[] = ['[MEMORY CONTEXT]'];
 
+  if (highConfidence.length > 0) {
+    lines.push('');
+    lines.push('## High confidence');
+    for (const sf of highConfidence) lines.push(formatFactLine(sf));
+  }
+
+  if (mediumConfidence.length > 0) {
+    lines.push('');
+    lines.push('## Medium confidence');
+    for (const sf of mediumConfidence) lines.push(formatFactLine(sf));
+  }
+
+  if (lowConfidence.length > 0) {
+    lines.push('');
+    lines.push('## Low confidence');
+    for (const sf of lowConfidence) lines.push(formatFactLine(sf));
+  }
+
   if (relatedConversations.length > 0) {
-    // Show related conversations section
     lines.push('');
     lines.push('## Related conversations');
     for (const chunk of relatedConversations) lines.push(formatChunkLine(chunk));
-
-    // Append tool hint
-    lines.push('');
-    lines.push('## Memory search available');
-    lines.push('Use the `plumb_search` tool to look up specific subtopics not covered above.');
-  } else {
-    // No related conversations - show only tool hint with alternate text
-    lines.push('## Memory search available');
-    lines.push('Use the `plumb_search` tool to look up relevant context from memory.');
   }
 
   return lines.join('\n');

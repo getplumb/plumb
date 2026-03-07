@@ -5,7 +5,7 @@ import { join, dirname } from 'node:path';
 import { openDb, type WasmDb } from './wasm-db.js';
 import { applySchema } from './schema.js';
 import type { MemoryStore } from './store.js';
-import type { IngestResult, MessageExchange, StoreStatus, IngestMemoryFactInput } from './types.js';
+import type { IngestResult, MessageExchange, StoreStatus, IngestMemoryFactInput, Fact, SearchResult } from './types.js';
 import { embed, warmEmbedder, warmReranker } from './embedder.js';
 import { formatExchange } from './chunker.js';
 import { searchRawLog, type RawLogSearchResult } from './raw-log-search.js';
@@ -256,16 +256,26 @@ export class LocalStore implements MemoryStore {
   }
 
   async status(): Promise<StoreStatus> {
+    // Count only parent rows (parent_id IS NULL) — one per ingest() call
     const rawLogStmt = this.#db.prepare(
-      `SELECT COUNT(*) AS c FROM raw_log WHERE user_id = ?`
+      `SELECT COUNT(*) AS c FROM raw_log WHERE user_id = ? AND parent_id IS NULL`
     );
     rawLogStmt.bind([this.#userId]);
     rawLogStmt.step();
     const rawLogCount = rawLogStmt.get(0) as number;
     rawLogStmt.finalize();
 
+    // Count non-deleted memory facts
+    const factCountStmt = this.#db.prepare(
+      `SELECT COUNT(*) AS c FROM memory_facts WHERE user_id = ? AND (deleted_at IS NULL)`
+    );
+    factCountStmt.bind([this.#userId]);
+    factCountStmt.step();
+    const factCount = factCountStmt.get(0) as number;
+    factCountStmt.finalize();
+
     const lastIngestionStmt = this.#db.prepare(
-      `SELECT MAX(timestamp) AS ts FROM raw_log WHERE user_id = ?`
+      `SELECT MAX(timestamp) AS ts FROM raw_log WHERE user_id = ? AND parent_id IS NULL`
     );
     lastIngestionStmt.bind([this.#userId]);
     lastIngestionStmt.step();
@@ -277,6 +287,7 @@ export class LocalStore implements MemoryStore {
 
     return {
       rawLogCount,
+      factCount,
       lastIngestion: lastIngestionTs !== null ? new Date(lastIngestionTs as string) : null,
       storageBytes: pageCount * pageSize,
     };
@@ -404,6 +415,8 @@ export class LocalStore implements MemoryStore {
         return {
           rawLogId: '',
           skipped: true,
+          factsExtracted: 0,
+          factIds: [],
         };
       }
       // Re-throw other errors (e.g., real DB issues).
@@ -412,6 +425,8 @@ export class LocalStore implements MemoryStore {
 
     return {
       rawLogId,
+      factsExtracted: 0,
+      factIds: [],
     };
   }
 
@@ -460,6 +475,115 @@ export class LocalStore implements MemoryStore {
       limit,
       cacheComplete ? this.#rawLogEmbeddingCache : undefined
     );
+  }
+
+  /**
+   * Store a domain Fact into memory_facts (Layer 2).
+   * Returns the UUID of the inserted fact.
+   * Accepts an optional `context` field (stored in content for extra context).
+   */
+  async store(fact: Fact & { context?: string }): Promise<string> {
+    const factId = (fact as { id?: string }).id ?? crypto.randomUUID();
+    const baseContent = `${fact.subject} ${fact.predicate} ${fact.object}`;
+    const content = fact.context ? `${baseContent} — ${fact.context}` : baseContent;
+
+    const stmt = this.#db.prepare(`
+      INSERT OR REPLACE INTO memory_facts
+        (id, user_id, content, subject, predicate, object, confidence, decay_rate,
+         source_session_id, source_session_label, tags, created_at, embed_status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    stmt.bind([
+      factId,
+      this.#userId,
+      content,
+      fact.subject,
+      fact.predicate,
+      fact.object,
+      fact.confidence,
+      fact.decayRate,
+      fact.sourceSessionId,
+      fact.sourceSessionLabel ?? null,
+      null, // tags
+      fact.timestamp.toISOString(),
+      'pending',
+    ]);
+    stmt.step();
+    stmt.finalize();
+
+    return factId;
+  }
+
+  /**
+   * Soft-delete a memory fact by id (sets deleted_at timestamp).
+   * Soft-deleted facts are excluded from search results.
+   */
+  async delete(factId: string): Promise<void> {
+    const stmt = this.#db.prepare(`
+      UPDATE memory_facts SET deleted_at = ? WHERE id = ? AND user_id = ?
+    `);
+    stmt.bind([new Date().toISOString(), factId, this.#userId]);
+    stmt.step();
+    stmt.finalize();
+  }
+
+  /**
+   * Search memory_facts using keyword (LIKE) matching on content (Layer 2).
+   * Returns SearchResult[] with full Fact objects reconstructed from stored data.
+   *
+   * Note: T-119 will add vector search for memory_facts. For now, LIKE search
+   * is sufficient for tests and basic use.
+   */
+  async search(query: string, limit = 10): Promise<readonly SearchResult[]> {
+    const likePattern = `%${query}%`;
+
+    const stmt = this.#db.prepare(`
+      SELECT id, content, subject, predicate, object, confidence, decay_rate,
+             source_session_id, source_session_label, created_at
+      FROM memory_facts
+      WHERE user_id = ? AND content LIKE ? AND deleted_at IS NULL
+      ORDER BY created_at DESC
+      LIMIT ?
+    `);
+    stmt.bind([this.#userId, likePattern, limit]);
+
+    type MemFactRow = {
+      id: string;
+      content: string;
+      subject: string | null;
+      predicate: string | null;
+      object: string | null;
+      confidence: number | null;
+      decay_rate: string | null;
+      source_session_id: string;
+      source_session_label: string | null;
+      created_at: string;
+    };
+
+    const rows: MemFactRow[] = [];
+    while (stmt.step()) {
+      rows.push(stmt.get({}) as MemFactRow);
+    }
+    stmt.finalize();
+
+    return rows.map((row) => {
+      const fact: Fact = {
+        id: row.id,
+        subject: row.subject ?? row.content,
+        predicate: row.predicate ?? 'contains',
+        object: row.object ?? '',
+        confidence: row.confidence ?? 0.9,
+        decayRate: (row.decay_rate ?? 'slow') as Fact['decayRate'],
+        timestamp: new Date(row.created_at),
+        sourceSessionId: row.source_session_id,
+        ...(row.source_session_label !== null
+          ? { sourceSessionLabel: row.source_session_label }
+          : {}),
+      };
+      const ageInDays =
+        (Date.now() - fact.timestamp.getTime()) / (1_000 * 60 * 60 * 24);
+      return { fact, score: 1.0, ageInDays };
+    });
   }
 
   /**
