@@ -9,9 +9,10 @@ import type { IngestResult, MessageExchange, StoreStatus, IngestMemoryFactInput,
 import { embed, warmEmbedder, warmReranker } from './embedder.js';
 import { formatExchange } from './chunker.js';
 import { searchRawLog, type RawLogSearchResult } from './raw-log-search.js';
+import { searchMemoryFacts, type MemoryFactSearchResult } from './memory-facts-search.js';
 import { serializeEmbedding, deserializeEmbedding } from './vector-search.js';
 
-export type { RawLogSearchResult };
+export type { RawLogSearchResult, MemoryFactSearchResult };
 
 export interface RawLogEntry {
   readonly id: string;
@@ -474,6 +475,19 @@ export class LocalStore implements MemoryStore {
       query,
       limit,
       cacheComplete ? this.#rawLogEmbeddingCache : undefined
+    );
+  }
+
+  /**
+   * Hybrid search over memory_facts (Layer 2 retrieval).
+   * See memory-facts-search.ts for the full pipeline description.
+   */
+  async searchMemoryFacts(query: string, limit = 10): Promise<readonly MemoryFactSearchResult[]> {
+    return searchMemoryFacts(
+      this.#db,
+      this.#userId,
+      query,
+      limit
     );
   }
 

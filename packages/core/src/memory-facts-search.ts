@@ -90,10 +90,10 @@ export async function searchMemoryFacts(
 ): Promise<readonly MemoryFactSearchResult[]> {
   // ── 1. Fetch all memory_facts rows (non-deleted, with embeddings) ────────
   const stmt = db.prepare(
-    \`SELECT id, content, source_session_id, source_session_label, tags, created_at, vec_rowid
+    `SELECT id, content, source_session_id, source_session_label, tags, created_at, vec_rowid
      FROM memory_facts
      WHERE user_id = ? AND deleted_at IS NULL AND embed_status = 'done'
-     ORDER BY created_at DESC\`
+     ORDER BY created_at DESC`
   );
   stmt.bind([userId]);
 
@@ -145,7 +145,7 @@ export async function searchMemoryFacts(
 
   // Fetch embeddings for these vec_rowids
   const placeholders = vecRowids.map(() => '?').join(',');
-  const vecStmt = db.prepare(\`SELECT id, embedding FROM vec_raw_log WHERE id IN (\${placeholders})\`);
+  const vecStmt = db.prepare(`SELECT id, embedding FROM vec_raw_log WHERE id IN (${placeholders})`);
   vecStmt.bind(vecRowids);
 
   const vecCorpus: Array<{ id: number; embedding: Float32Array }> = [];

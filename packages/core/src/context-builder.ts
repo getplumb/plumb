@@ -27,13 +27,13 @@ import type { MemoryContext, MemoryFactChunk, RawChunk } from './read-path.js';
 export function formatAge(ageInDays: number): string {
   if (ageInDays < 1) return 'today';
   if (ageInDays < 2) return 'yesterday';
-  if (ageInDays < 7) return \`\${Math.floor(ageInDays)} days ago\`;
+  if (ageInDays < 7) return `${Math.floor(ageInDays)} days ago`;
   if (ageInDays < 14) return '1 week ago';
-  if (ageInDays < 30) return \`\${Math.floor(ageInDays / 7)} weeks ago\`;
+  if (ageInDays < 30) return `${Math.floor(ageInDays / 7)} weeks ago`;
   if (ageInDays < 60) return '1 month ago';
-  if (ageInDays < 365) return \`\${Math.floor(ageInDays / 30)} months ago\`;
+  if (ageInDays < 365) return `${Math.floor(ageInDays / 30)} months ago`;
   if (ageInDays < 730) return '1 year ago';
-  return \`\${Math.floor(ageInDays / 365)} years ago\`;
+  return `${Math.floor(ageInDays / 365)} years ago`;
 }
 
 // ─── Line formatters ──────────────────────────────────────────────────────────
@@ -43,7 +43,7 @@ function formatMemoryLine(memory: MemoryFactChunk): string {
   const sessionLabel = memory.sourceSessionLabel ?? memory.sourceSessionId;
   const ageInDays = (Date.now() - memory.timestamp.getTime()) / (1_000 * 60 * 60 * 24);
   const age = formatAge(ageInDays);
-  return \`- [\${sessionLabel}] \${age}: "\${excerpt}"\`;
+  return `- [${sessionLabel}] ${age}: "${excerpt}"`;
 }
 
 function formatChunkLine(chunk: RawChunk): string {
@@ -51,7 +51,7 @@ function formatChunkLine(chunk: RawChunk): string {
   const sessionLabel = chunk.sessionLabel ?? chunk.sessionId;
   const ageInDays = (Date.now() - chunk.timestamp.getTime()) / (1_000 * 60 * 60 * 24);
   const age = formatAge(ageInDays);
-  return \`- [\${sessionLabel}] \${age}: "\${excerpt}"\`;
+  return `- [${sessionLabel}] ${age}: "${excerpt}"`;
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
@@ -92,5 +92,5 @@ export function formatContextBlock(context: MemoryContext): string {
     lines.push('Use the \`plumb_search\` tool to look up relevant context from memory.');
   }
 
-  return lines.join('\\n');
+  return lines.join('\n');
 }
