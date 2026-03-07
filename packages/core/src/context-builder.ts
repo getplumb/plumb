@@ -6,19 +6,13 @@
  *
  *   [MEMORY CONTEXT]
  *
- *   ## High confidence facts
- *   - user is building a product called Plumb (0.98, session: tech-planning, today)
- *
- *   ## Medium confidence facts
- *   - user uses TypeScript (0.65, session: dev-chat, 2 days ago)
- *
  *   ## Related conversations
  *   - [tech-planning] today: "Let me help you design the memory system..."
  *
  * Empty MemoryContext returns an empty string — no block is injected.
  */
 
-import type { MemoryContext, ScoredFact, RawChunk } from './read-path.js';
+import type { MemoryContext, RawChunk } from './read-path.js';
 
 // ─── Age formatting ───────────────────────────────────────────────────────────
 
@@ -40,14 +34,6 @@ export function formatAge(ageInDays: number): string {
 
 // ─── Line formatters ──────────────────────────────────────────────────────────
 
-function formatFactLine(sf: ScoredFact): string {
-  const { fact, score, ageInDays } = sf;
-  const description = `${fact.subject} ${fact.predicate} ${fact.object}`;
-  const sessionLabel = fact.sourceSessionLabel ?? fact.sourceSessionId;
-  const age = formatAge(ageInDays);
-  return `- ${description} (${score.toFixed(2)}, session: ${sessionLabel}, ${age})`;
-}
-
 function formatChunkLine(chunk: RawChunk): string {
   const excerpt = chunk.chunkText.slice(0, 200);
   const sessionLabel = chunk.sessionLabel ?? chunk.sessionId;
@@ -61,45 +47,19 @@ function formatChunkLine(chunk: RawChunk): string {
 /**
  * Formats a MemoryContext into a [MEMORY CONTEXT] prompt block.
  *
- * Returns an empty string if the context has no facts and no raw chunks,
+ * Returns an empty string if the context has no raw chunks,
  * so callers can skip injection without additional checks.
  */
 export function formatContextBlock(context: MemoryContext): string {
-  const { highConfidence, mediumConfidence, lowConfidence, relatedConversations } = context;
+  const { relatedConversations } = context;
 
-  const isEmpty =
-    highConfidence.length === 0 &&
-    mediumConfidence.length === 0 &&
-    lowConfidence.length === 0 &&
-    relatedConversations.length === 0;
-
-  if (isEmpty) return '';
+  if (relatedConversations.length === 0) return '';
 
   const lines: string[] = ['[MEMORY CONTEXT]'];
 
-  if (highConfidence.length > 0) {
-    lines.push('');
-    lines.push('## High confidence facts');
-    for (const sf of highConfidence) lines.push(formatFactLine(sf));
-  }
-
-  if (mediumConfidence.length > 0) {
-    lines.push('');
-    lines.push('## Medium confidence facts');
-    for (const sf of mediumConfidence) lines.push(formatFactLine(sf));
-  }
-
-  if (lowConfidence.length > 0) {
-    lines.push('');
-    lines.push('## Low confidence facts');
-    for (const sf of lowConfidence) lines.push(formatFactLine(sf));
-  }
-
-  if (relatedConversations.length > 0) {
-    lines.push('');
-    lines.push('## Related conversations');
-    for (const chunk of relatedConversations) lines.push(formatChunkLine(chunk));
-  }
+  lines.push('');
+  lines.push('## Related conversations');
+  for (const chunk of relatedConversations) lines.push(formatChunkLine(chunk));
 
   return lines.join('\n');
 }

@@ -11,8 +11,6 @@ import { ingestCommand } from './commands/ingest.js';
 import { setupCommand } from './commands/setup.js';
 import { uninstallCommand } from './commands/uninstall.js';
 import { healthCommand } from './commands/health.js';
-import { fixCommand } from './commands/fix.js';
-import { reprocessCommand } from './commands/reprocess.js';
 
 // Read version from package.json
 const __filename = fileURLToPath(import.meta.url);
@@ -117,67 +115,11 @@ program
   .option('--json', 'Print health data as JSON to stdout')
   .option('--db <path>', 'Path to database file (defaults to ~/.plumb/memory.db)')
   .option('--user-id <id>', 'User ID to check health for (defaults to "default")')
-  .option('--skip-api-test', 'Skip LLM API key validation test')
   .action(async (options) => {
     await healthCommand({
       db: options.db,
       json: options.json,
       userId: options.userId,
-      skipApiTest: options.skipApiTest,
-    });
-  });
-
-// Fix command
-program
-  .command('fix')
-  .description('Repair failed or pending rows (re-embed and re-extract)')
-  .option('--embed-only', 'Skip extraction phase (re-embed only)')
-  .option('--extract-only', 'Skip embedding phase (re-extract only)')
-  .option('--limit <n>', 'Process at most N rows per phase', parseInt)
-  .option('--dry-run', 'Show what would be processed without changes')
-  .option('--delay <ms>', 'Delay between LLM calls in ms (default 200ms)', parseInt)
-  .option('--db <path>', 'Path to database file (defaults to ~/.plumb/memory.db)')
-  .option('--user-id <id>', 'User ID to fix data for (defaults to "default")')
-  .action(async (options) => {
-    await fixCommand({
-      db: options.db,
-      userId: options.userId,
-      embedOnly: options.embedOnly,
-      extractOnly: options.extractOnly,
-      limit: options.limit,
-      dryRun: options.dryRun,
-      delay: options.delay,
-    });
-  });
-
-// Reprocess command
-program
-  .command('reprocess')
-  .description('Re-extract from already-processed chunks (for improved extraction prompt)')
-  .option('--since <date>', 'Chunks ingested after this date (ISO date or relative: 7d, 30d, 90d)')
-  .option('--session <id>', 'All chunks from a specific session_id')
-  .option('--source <name>', 'All chunks from a specific source label')
-  .option('--all', 'All chunks (requires --yes)')
-  .option('--embed', 'Also re-embed (default: re-extract only)')
-  .option('--yes', 'Skip confirmation prompt')
-  .option('--dry-run', 'Show what would change without modifying DB')
-  .option('--limit <n>', 'Process at most N chunks', parseInt)
-  .option('--delay <ms>', 'Delay between LLM calls in ms (default 200ms)', parseInt)
-  .option('--db <path>', 'Path to database file (defaults to ~/.plumb/memory.db)')
-  .option('--user-id <id>', 'User ID to reprocess data for (defaults to "default")')
-  .action(async (options) => {
-    await reprocessCommand({
-      db: options.db,
-      userId: options.userId,
-      since: options.since,
-      session: options.session,
-      source: options.source,
-      all: options.all,
-      embed: options.embed,
-      yes: options.yes,
-      dryRun: options.dryRun,
-      limit: options.limit,
-      delay: options.delay,
     });
   });
 

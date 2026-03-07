@@ -8,7 +8,7 @@ const inputSchema: Record<string, z.ZodTypeAny> = {};
 export function registerMemoryStatus(server: McpServer, store: LocalStore): void {
   server.tool(
     'memory_status',
-    'Return current memory store statistics: fact count, raw log count, last ingestion time, and storage size.',
+    'Return current memory store statistics: raw log count, last ingestion time, and storage size.',
     inputSchema,
     async (_args) => {
       try {
@@ -18,7 +18,6 @@ export function registerMemoryStatus(server: McpServer, store: LocalStore): void
             {
               type: 'text' as const,
               text: JSON.stringify({
-                factCount: status.factCount,
                 rawLogCount: status.rawLogCount,
                 lastIngestion: status.lastIngestion?.toISOString() ?? null,
                 storageBytes: status.storageBytes,

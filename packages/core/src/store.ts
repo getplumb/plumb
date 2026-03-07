@@ -1,23 +1,6 @@
-import type { Fact, IngestResult, MessageExchange, SearchResult, StoreStatus } from './types.js';
+import type { IngestResult, MessageExchange, StoreStatus } from './types.js';
 
 export interface MemoryStore {
-  /**
-   * Write a fact to the store. The store generates and returns the id.
-   * @param fact - The fact to store (id will be generated).
-   * @param sourceChunkId - Optional raw_log chunk ID (T-079 processing state machine).
-   */
-  store(fact: Omit<Fact, 'id'>, sourceChunkId?: string): Promise<string>;
-
-  /**
-   * Search for facts matching the query. Returns ranked results with score and age.
-   */
-  search(query: string, limit?: number): Promise<readonly SearchResult[]>;
-
-  /**
-   * Delete a fact by id.
-   */
-  delete(id: string): Promise<void>;
-
   /**
    * Return current store statistics.
    */
@@ -25,7 +8,7 @@ export interface MemoryStore {
 
   /**
    * High-level entry point for ingesting a conversation exchange.
-   * Triggers both Layer 1 (raw log) and Layer 2 (fact extraction) writes.
+   * Writes to raw_log table and enqueues embedding.
    */
   ingest(exchange: MessageExchange): Promise<IngestResult>;
 }

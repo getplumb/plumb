@@ -1,17 +1,9 @@
-import {
-  LocalStore,
-  ExtractionQueue,
-  embedQuery,
-  extractFacts,
-  callLLMWithConfig,
-  type LLMConfig
-} from '@getplumb/core';
+import { LocalStore, embedQuery } from '@getplumb/core';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createPostExchangeHook } from './hooks/post-exchange.js';
 import { createPreResponseHook } from './hooks/pre-response.js';
 import { NudgeManager } from './nudge.js';
-import { readPlumbConfig, checkConfigPermissions } from './plumb-config.js';
 import { startQueryServer, stopQueryServer } from './query-server.js';
 
 // Define types inline since they aren't re-exported from openclaw/plugin-sdk
@@ -83,8 +75,6 @@ export const plugin: OpenClawPluginDefinition = {
           await stopQueryServer(queryServer);
           api.logger.debug?.('[plumb] Query server stopped');
         }
-        await store.extractionQueue.stop();
-        api.logger.debug?.('[plumb] Extraction queue stopped');
         await store.stopBacklogProcessor();
         api.logger.debug?.('[plumb] Backlog processor stopped');
         store.close();
@@ -113,81 +103,15 @@ export const plugin: OpenClawPluginDefinition = {
       `[plumb] Activating with dbPath=${dbPath}, userId=${userId}, shadowMode=${shadowMode}`
     );
 
-    // Fact extraction is opt-in via ~/.plumb/config.json
-    // Read the config to determine if fact extraction should be enabled
-    const plumbConfig = await readPlumbConfig();
-    await checkConfigPermissions();
-
-    let extractionQueue: ExtractionQueue;
-
-    if (plumbConfig && plumbConfig.extractionEnabled === true) {
-      // Config found and extraction not explicitly disabled — enable fact extraction with real LLM calls
-      const llmConfig: LLMConfig = {
-        provider: plumbConfig.llmProvider,
-        apiKey: plumbConfig.llmApiKey,
-      };
-
-      // Only set optional properties if they have values (exactOptionalPropertyTypes requirement)
-      if (plumbConfig.llmModel) {
-        llmConfig.model = plumbConfig.llmModel;
-      }
-
-      if (plumbConfig.llmBaseUrl) {
-        llmConfig.baseUrl = plumbConfig.llmBaseUrl;
-      }
-
-      // Create an extraction function that calls extractFacts with the LLM config
-      // The closure captures 'store' by reference; it will be assigned before the queue starts
-      const extractFn = async (exchange: any, userId: string) => {
-        const llmFn = (prompt: string) => callLLMWithConfig(prompt, llmConfig);
-        return extractFacts(exchange, userId, store, llmFn);
-      };
-
-      extractionQueue = new ExtractionQueue(extractFn);
-
-      const modelDisplay = plumbConfig.llmModel ?? 'default';
-      api.logger.info(
-        `[plumb] Fact extraction enabled (provider: ${plumbConfig.llmProvider}, model: ${modelDisplay})`
-      );
-      api.logger.info(
-        '[plumb] Security note: Ensure ~/.plumb/config.json is chmod 0600 to protect your API key'
-      );
-    } else if (plumbConfig && plumbConfig.extractionEnabled === false) {
-      // Config present but extraction explicitly disabled — embed-only mode
-      extractionQueue = new ExtractionQueue(async (_exchange, _userId) => []);
-      api.logger.info(
-        '[plumb] Fact extraction disabled via config (extractionEnabled: false) — running in embed-only mode'
-      );
-    } else {
-      // No config found — use no-op queue (zero network calls, zero env var reads)
-      extractionQueue = new ExtractionQueue(async (_exchange, _userId) => []);
-      api.logger.info(
-        '[plumb] Fact extraction disabled -- create ~/.plumb/config.json to enable. Example: {"llmProvider":"google","llmModel":"gemini-2.5-flash-lite","llmApiKey":"YOUR_KEY"}'
-      );
-    }
-
     const storeOptions: Parameters<typeof LocalStore.create>[0] = {
       dbPath,
       userId,
-      extractionQueue,
     };
-    if (plumbConfig && plumbConfig.extractionEnabled === true) {
-      storeOptions.llmConfig = {
-        provider: plumbConfig.llmProvider,
-        apiKey: plumbConfig.llmApiKey,
-        ...(plumbConfig.llmModel ? { model: plumbConfig.llmModel } : {}),
-        ...(plumbConfig.llmBaseUrl ? { baseUrl: plumbConfig.llmBaseUrl } : {}),
-      };
-    }
     store = await LocalStore.create(storeOptions);
     storeInitialized = true;
     const nudgeManager = new NudgeManager();
 
-    // Start the extraction queue background drain loop (T-071)
-    store.extractionQueue.start();
-    api.logger.debug?.('[plumb] Extraction queue started');
-
-    // Start the backlog processor (T-087)
+    // Start the backlog processor (T-087: embed drain loop only)
     store.startBacklogProcessor();
     api.logger.debug?.('[plumb] Backlog processor started');
 
