@@ -16,45 +16,30 @@ const inputSchema = {
 export function registerMemorySearch(server: McpServer, store: LocalStore): void {
   server.tool(
     'memory_search',
-    'Search long-term memory for relevant facts. Returns ranked results from Layer 1 (raw log) and Layer 2 (extracted facts) in parallel.',
+    'Search long-term memory for relevant conversations. Returns ranked results from raw conversation log.',
     inputSchema,
     async (args) => {
       try {
         const limit = args.limit ?? 20;
 
-        // TODO T-008: upgrade to the full tiered context builder (semantic re-ranking,
-        // decay-weighted scoring, cross-encoder rerank across both layers).
-        // For now: call Layer 1 (raw log search) and Layer 2 (fact search) in parallel.
-        const [factResults, rawLogResults] = await Promise.all([
-          store.search(args.query, limit),
-          store.searchRawLog(args.query, Math.ceil(limit / 2)),
-        ]);
+        // Search raw conversation log
+        const rawLogResults = await store.searchRawLog(args.query, limit);
 
-        const output = factResults.map((r) => ({
-          fact: `${r.fact.subject} ${r.fact.predicate} ${r.fact.object}`,
-          confidence: r.fact.confidence,
-          age_in_days: Math.round(r.ageInDays * 10) / 10,
-          source_session_label: r.fact.sourceSessionLabel ?? r.fact.sourceSessionId,
-          layer: 'facts',
-        }));
-
-        // Append raw log hits (Layer 1) with a distinct shape so callers can distinguish.
-        const rawOutput = rawLogResults.map((r) => ({
-          fact: r.chunk_text,
-          confidence: r.final_score,
+        const output = rawLogResults.map((r) => ({
+          text: r.chunk_text,
+          score: r.final_score,
           age_in_days:
             Math.round(
               ((Date.now() - new Date(r.timestamp).getTime()) / (1000 * 60 * 60 * 24)) * 10,
             ) / 10,
-          source_session_label: r.session_label ?? r.session_id,
-          layer: 'raw_log',
+          session_label: r.session_label ?? r.session_id,
         }));
 
         return {
           content: [
             {
               type: 'text' as const,
-              text: JSON.stringify([...output, ...rawOutput]),
+              text: JSON.stringify(output),
             },
           ],
         };
