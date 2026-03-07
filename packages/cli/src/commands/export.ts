@@ -1,7 +1,7 @@
 import { LocalStore } from '@getplumb/core';
 import { join } from 'node:path';
 import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
-import { formatFactsMarkdown, formatRawLogMarkdown } from '../formatters/markdown.js';
+import { formatRawLogMarkdown } from '../formatters/markdown.js';
 import { getDefaultDbPath } from '../utils/db-path.js';
 
 export interface ExportOptions {
@@ -17,7 +17,7 @@ export interface ExportOptions {
  * Export command handler.
  * Two modes:
  *   1. plumb export          → creates ./plumb-export-<timestamp>/ directory with JSON + Markdown files
- *   2. plumb export --json   → prints facts.json to stdout only (for piping)
+ *   2. plumb export --json   → prints raw-log.json to stdout only (for piping)
  */
 export async function exportCommand(options: ExportOptions): Promise<void> {
   const dbPath = options.db ?? getDefaultDbPath();
@@ -37,7 +37,7 @@ export async function exportCommand(options: ExportOptions): Promise<void> {
 
   // Mode 1: --json flag → print JSON to stdout and exit.
   if (options.json) {
-    console.log(JSON.stringify(exportData.facts, null, 2));
+    console.log(JSON.stringify(exportData.rawLog, null, 2));
     return;
   }
 
@@ -46,20 +46,6 @@ export async function exportCommand(options: ExportOptions): Promise<void> {
   const exportDir = join(process.cwd(), `plumb-export-${timestamp}`);
 
   mkdirSync(exportDir, { recursive: true });
-
-  // Write facts.json
-  writeFileSync(
-    join(exportDir, 'facts.json'),
-    JSON.stringify(exportData.facts, null, 2),
-    'utf-8',
-  );
-
-  // Write facts.md
-  writeFileSync(
-    join(exportDir, 'facts.md'),
-    formatFactsMarkdown(exportData.facts),
-    'utf-8',
-  );
 
   // Write raw-log.json
   writeFileSync(
@@ -79,7 +65,6 @@ export async function exportCommand(options: ExportOptions): Promise<void> {
   const summary = {
     exportedAt: new Date().toISOString(),
     userId,
-    factCount: exportData.facts.length,
     rawLogCount: exportData.rawLog.length,
     dbPath,
   };
@@ -89,6 +74,6 @@ export async function exportCommand(options: ExportOptions): Promise<void> {
     'utf-8',
   );
 
-  console.log(`✓ Exported ${exportData.facts.length} facts and ${exportData.rawLog.length} log entries`);
+  console.log(`✓ Exported ${exportData.rawLog.length} log entries`);
   console.log(`✓ Export written to: ${exportDir}`);
 }

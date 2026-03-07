@@ -312,8 +312,6 @@ async function ingestSingleText(
   }
 
   const store = await LocalStore.create({ dbPath, userId });
-  const initialStatus = await store.status();
-  const initialFactCount = initialStatus.factCount;
 
   console.log(`Ingesting ${chunks.length} chunk${chunks.length !== 1 ? 's' : ''} from ${sourceLabel}...`);
   console.log();
@@ -357,14 +355,6 @@ async function ingestSingleText(
     }
   }
 
-  console.log();
-  console.log('Waiting for fact extraction to complete...');
-  await store.drain();
-
-  const finalStatus = await store.status();
-  const finalFactCount = finalStatus.factCount;
-  const factsExtracted = finalFactCount - initialFactCount;
-
   store.close();
 
   console.log();
@@ -372,7 +362,6 @@ async function ingestSingleText(
   console.log(`  Chunks ingested:    ${ingested}`);
   console.log(`  Chunks skipped:     ${skipped}`);
   console.log(`  Errors:             ${errors}`);
-  console.log(`  Facts extracted:    ${factsExtracted}`);
   console.log();
 
   if (errors > 0) {
@@ -402,8 +391,6 @@ async function ingestFiles(
   }
 
   const store = await LocalStore.create({ dbPath, userId });
-  const initialStatus = await store.status();
-  const initialFactCount = initialStatus.factCount;
 
   let totalIngested = 0;
   let totalSkipped = 0;
@@ -498,13 +485,6 @@ async function ingestFiles(
     console.log();
   }
 
-  console.log('Waiting for fact extraction to complete...');
-  await store.drain();
-
-  const finalStatus = await store.status();
-  const finalFactCount = finalStatus.factCount;
-  const factsExtracted = finalFactCount - initialFactCount;
-
   store.close();
 
   console.log();
@@ -516,7 +496,6 @@ async function ingestFiles(
   console.log(`  Chunks ingested:    ${totalIngested}`);
   console.log(`  Chunks skipped:     ${totalSkipped} (duplicates)`);
   console.log(`  Errors:             ${totalErrors}`);
-  console.log(`  Facts extracted:    ${factsExtracted}`);
   console.log();
 
   if (totalErrors > 0) {
