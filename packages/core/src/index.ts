@@ -14,3 +14,4 @@ export { buildMemoryContext } from './read-path.js';
 export { formatContextBlock, formatAge } from './context-builder.js';
 export { openDb } from './wasm-db.js';
 export type { WasmDb } from './wasm-db.js';
+export { serializeEmbedding, deserializeEmbedding } from './vector-search.js';
