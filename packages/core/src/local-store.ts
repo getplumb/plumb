@@ -94,19 +94,22 @@ export type { LLMConfig };
  * Split text into overlapping child chunks for parent-child chunking (T-108).
  * Target: ~250 chars per chunk with ~50 char overlap.
  * Prefers sentence boundaries, falls back to word boundaries, hard-cuts at 300 chars max.
+ *
+ * Uses a generator to avoid materializing the full chunk array in memory,
+ * which prevents OOM crashes on large inputs (fix for splitIntoChildren array limit bug).
  */
-function splitIntoChildren(text: string): string[] {
+function* splitIntoChildren(text: string): Generator<string> {
   const TARGET_SIZE = 250;
   const OVERLAP = 50;
   const MAX_SIZE = 300;
   const SENTENCE_ENDINGS = /[.!?]\s+/g;
 
   if (text.length <= TARGET_SIZE) {
-    // Text is already small enough — return as single child
-    return [text];
+    // Text is already small enough — yield as single child
+    if (text.trim().length > 0) yield text;
+    return;
   }
 
-  const chunks: string[] = [];
   let pos = 0;
 
   while (pos < text.length) {
@@ -114,7 +117,8 @@ function splitIntoChildren(text: string): string[] {
 
     // If we're at the end of the text, take the rest
     if (endPos >= text.length) {
-      chunks.push(text.slice(pos));
+      const last = text.slice(pos).trim();
+      if (last.length > 0) yield last;
       break;
     }
 
@@ -144,14 +148,13 @@ function splitIntoChildren(text: string): string[] {
       endPos = findWordBoundary(text, pos, TARGET_SIZE, MAX_SIZE);
     }
 
-    chunks.push(text.slice(pos, endPos).trim());
+    const chunk = text.slice(pos, endPos).trim();
+    if (chunk.length > 0) yield chunk;
 
     // Move position forward, with overlap
     pos = endPos - OVERLAP;
     if (pos < 0) pos = endPos; // Safety: don't go negative
   }
-
-  return chunks.filter(chunk => chunk.length > 0);
 }
 
 /**
@@ -203,6 +206,14 @@ export class LocalStore implements MemoryStore {
 
   // T-103: In-memory embedding cache for vec_raw_log (eliminates ~3,700ms SQLite load on each query)
   #rawLogEmbeddingCache: Array<{ rowid: number; embedding: Float32Array }> = [];
+
+  // FIX 3: WAL checkpoint throttling to prevent unbounded WAL growth
+  #lastCheckpoint = Date.now();
+  #checkpointIntervalMs = 60000; // Checkpoint every minute
+
+  // FIX 4: Health check to detect stuck drain loops
+  #lastActivityTimestamp = Date.now();
+  #healthCheckInterval: ReturnType<typeof setInterval> | null = null;
 
   /** Expose database for plugin use (e.g., NudgeManager) */
   get db(): WasmDb {
@@ -566,11 +577,9 @@ export class LocalStore implements MemoryStore {
       rawLogStmt.finalize();
 
       // T-108: Split parent into child chunks and embed each child.
-      const childChunks = splitIntoChildren(chunkText);
-
-      for (let i = 0; i < childChunks.length; i++) {
-        const childText = childChunks[i];
-        if (!childText) continue;
+      // splitIntoChildren is a generator — iterate lazily to avoid OOM on large inputs.
+      let i = 0;
+      for (const childText of splitIntoChildren(chunkText)) {
 
         const childId = crypto.randomUUID();
         let childEmbedding: Float32Array | null = null;
@@ -637,6 +646,8 @@ export class LocalStore implements MemoryStore {
           // T-103: Append child embedding to in-memory cache
           this.#rawLogEmbeddingCache.push({ rowid: vecRowid, embedding: childEmbedding! });
         }
+
+        i++;
       }
 
       this.#db.exec('COMMIT');
@@ -910,6 +921,20 @@ export class LocalStore implements MemoryStore {
       this.#extractDrainStopped = false;
       this.#extractDrainPromise = this.#extractDrainLoop();
     }
+
+    // FIX 4: Health check - detect runaway loops that aren't processing or stopping
+    if (this.#healthCheckInterval === null) {
+      this.#healthCheckInterval = setInterval(() => {
+        const idleTime = Date.now() - this.#lastActivityTimestamp;
+        const MAX_IDLE_TIME = 300000; // 5 minutes of no activity
+
+        // If loops are running but idle for too long, force stop
+        if (idleTime > MAX_IDLE_TIME && !this.#embedDrainStopped) {
+          console.warn(`[plumb] Drain loops idle for ${Math.round(idleTime/1000)}s, forcing stop`);
+          void this.stopBacklogProcessor();
+        }
+      }, 60000); // Check every minute
+    }
   }
 
   /**
@@ -918,6 +943,12 @@ export class LocalStore implements MemoryStore {
    * Call this alongside store.extractionQueue.stop() in session_end and process exit handlers.
    */
   async stopBacklogProcessor(): Promise<void> {
+    // FIX 4: Clear health check interval
+    if (this.#healthCheckInterval !== null) {
+      clearInterval(this.#healthCheckInterval);
+      this.#healthCheckInterval = null;
+    }
+
     // Signal loops to stop
     this.#embedDrainStopped = true;
     this.#extractDrainStopped = true;
@@ -942,11 +973,29 @@ export class LocalStore implements MemoryStore {
    * Only sleeps when the queue is empty.
    */
   async #embedDrainLoop(): Promise<void> {
+    // FIX 2: Safety counter to detect infinite loops
+    let consecutiveEmptyBatches = 0;
+    const MAX_EMPTY_BATCHES = 1000; // Safety limit: stop after many empty iterations
+
     while (!this.#embedDrainStopped) {
       const processed = await this.#processEmbedBatch();
+
       if (processed === 0) {
+        consecutiveEmptyBatches++;
+
+        // FIX 2: Safety check - if idle too long, verify stop flag
+        if (consecutiveEmptyBatches >= MAX_EMPTY_BATCHES) {
+          console.warn('[plumb] Embed drain loop: hit safety limit, verifying stop flag');
+          if (this.#embedDrainStopped) break;
+          consecutiveEmptyBatches = 0; // Reset and continue
+        }
+
         // Queue is empty — sleep before checking again
         await new Promise(resolve => setTimeout(resolve, this.#embedIdleMs));
+      } else {
+        consecutiveEmptyBatches = 0;
+        // FIX 4: Update activity timestamp
+        this.#lastActivityTimestamp = Date.now();
       }
       // If processed > 0: immediately loop to grab the next batch
     }
@@ -1024,6 +1073,17 @@ export class LocalStore implements MemoryStore {
       })
     );
 
+    // FIX 3: Periodic WAL checkpoint to prevent unbounded growth
+    const now = Date.now();
+    if (now - this.#lastCheckpoint > this.#checkpointIntervalMs) {
+      try {
+        this.#db.exec('PRAGMA wal_checkpoint(PASSIVE)');
+        this.#lastCheckpoint = now;
+      } catch (e) {
+        console.warn('[plumb] WAL checkpoint failed:', e);
+      }
+    }
+
     return pendingRows.length;
   }
 
@@ -1033,6 +1093,10 @@ export class LocalStore implements MemoryStore {
    * Only sleeps when the queue is empty.
    */
   async #extractDrainLoop(): Promise<void> {
+    // FIX 2: Safety counter to detect infinite loops
+    let consecutiveEmptyBatches = 0;
+    const MAX_EMPTY_BATCHES = 1000; // Safety limit: stop after many empty iterations
+
     while (!this.#extractDrainStopped) {
       // Fetch pending rows (up to concurrency limit)
       const stmt = this.#db.prepare(`
@@ -1060,10 +1124,23 @@ export class LocalStore implements MemoryStore {
       stmt.finalize();
 
       if (pendingRows.length === 0) {
+        consecutiveEmptyBatches++;
+
+        // FIX 2: Safety check - if idle too long, verify stop flag
+        if (consecutiveEmptyBatches >= MAX_EMPTY_BATCHES) {
+          console.warn('[plumb] Extract drain loop: hit safety limit, verifying stop flag');
+          if (this.#extractDrainStopped) break;
+          consecutiveEmptyBatches = 0; // Reset and continue
+        }
+
         // Queue is empty — sleep before checking again
         await new Promise(resolve => setTimeout(resolve, this.#extractIdleMs));
         continue;
       }
+
+      consecutiveEmptyBatches = 0;
+      // FIX 4: Update activity timestamp
+      this.#lastActivityTimestamp = Date.now();
 
       // Process rows concurrently with 429 backoff
       await Promise.all(
