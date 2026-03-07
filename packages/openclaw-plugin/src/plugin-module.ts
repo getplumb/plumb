@@ -21,6 +21,27 @@ type PluginHookHandlerMap = {
   [key: string]: any;
 };
 
+type AnyAgentTool = {
+  name: string;
+  description: string;
+  inputSchema: object;
+  execute: (params: any) => Promise<string>;
+};
+
+type OpenClawPluginToolContext = {
+  agentId?: string;
+  sessionId?: string;
+  [key: string]: any;
+};
+
+type OpenClawPluginToolFactory = (
+  ctx: OpenClawPluginToolContext
+) => AnyAgentTool | AnyAgentTool[] | null | undefined;
+
+type OpenClawPluginToolOptions = {
+  [key: string]: any;
+};
+
 type OpenClawPluginApi = {
   id: string;
   name: string;
@@ -30,6 +51,10 @@ type OpenClawPluginApi = {
     hookName: K,
     handler: PluginHookHandlerMap[K],
     opts?: { priority?: number }
+  ) => void;
+  registerTool: (
+    tool: AnyAgentTool | OpenClawPluginToolFactory,
+    opts?: OpenClawPluginToolOptions
   ) => void;
 };
 
@@ -125,6 +150,69 @@ export const plugin: OpenClawPluginDefinition = {
     const queryPort = (api.pluginConfig?.queryPort as number | undefined) ??
                       Number(process.env.PLUMB_QUERY_PORT || '18791');
     queryServer = startQueryServer(store, queryPort, api.logger);
+
+    // Register the plumb_search tool for mid-reasoning RAG lookups (T-116)
+    api.registerTool(() => ({
+      name: 'plumb_search',
+      description: 'Search Plumb memory for relevant context about a specific topic or subtopic. Use this when the initial memory context does not cover something specific you need to reason about.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          query: {
+            type: 'string',
+            description: 'The search query to find relevant memory context'
+          },
+          topK: {
+            type: 'number',
+            description: 'Number of results to return (optional, defaults to 5)'
+          }
+        },
+        required: ['query']
+      },
+      execute: async (params: { query: string; topK?: number }) => {
+        try {
+          const response = await fetch(`http://127.0.0.1:${queryPort}/query`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query: params.query, topK: params.topK ?? 5 })
+          });
+
+          if (!response.ok) {
+            return `Error: Query server returned ${response.status} ${response.statusText}`;
+          }
+
+          const data = await response.json() as {
+            results?: Array<{
+              chunk_text: string;
+              session_id: string;
+              session_label: string | null;
+              timestamp: string;
+              final_score: number;
+            }>;
+            latencyMs?: number;
+          };
+
+          if (!data.results || data.results.length === 0) {
+            return 'No relevant memory found for this query.';
+          }
+
+          // Format results as a readable string
+          const lines = ['Search results from Plumb memory:', ''];
+          for (const result of data.results) {
+            const excerpt = result.chunk_text.slice(0, 200);
+            const sessionLabel = result.session_label ?? result.session_id;
+            const timestamp = new Date(result.timestamp).toLocaleString();
+            lines.push(`- [${sessionLabel}] ${timestamp}:`);
+            lines.push(`  "${excerpt}"`);
+            lines.push('');
+          }
+
+          return lines.join('\n');
+        } catch (err) {
+          return `Error querying Plumb memory: ${err instanceof Error ? err.message : String(err)}`;
+        }
+      }
+    }));
 
     // Shared state map for threading user prompts from before_prompt_build to llm_output
     // Key: sessionId, Value: user message prompt
