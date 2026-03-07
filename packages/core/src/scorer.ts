@@ -1,3 +1,12 @@
+import type { Fact, DecayRate } from './types.js';
+
+/** Lambda map for each DecayRate value. */
+const DECAY_LAMBDA: Record<DecayRate, number> = {
+  slow: 0.003,
+  medium: 0.012,
+  fast: 0.05,
+};
+
 /** Lambda applied to raw log chunks (medium decay). */
 const RAW_LOG_LAMBDA = 0.012;
 
@@ -22,6 +31,26 @@ export interface RawLogChunk {
  */
 export function computeDecay(lambda: number, ageInDays: number): number {
   return Math.exp(-lambda * ageInDays);
+}
+
+/**
+ * Scores a domain Fact using its own decayRate and confidence.
+ *
+ * Formula: score = confidence × e^(-lambda × ageInDays)
+ * isCold is true when score < COLD_THRESHOLD.
+ *
+ * @param fact  The Fact to score.
+ * @param now   Reference time (defaults to current time). Useful for deterministic tests.
+ */
+export function scoreFact(
+  fact: Pick<Fact, 'confidence' | 'decayRate' | 'timestamp'>,
+  now: Date = new Date(),
+): ScoreResult {
+  const ageInDays =
+    (now.getTime() - fact.timestamp.getTime()) / (1_000 * 60 * 60 * 24);
+  const lambda = DECAY_LAMBDA[fact.decayRate];
+  const score = fact.confidence * computeDecay(lambda, ageInDays);
+  return { score, isCold: score < COLD_THRESHOLD };
 }
 
 /**

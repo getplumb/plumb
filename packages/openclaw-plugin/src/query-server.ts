@@ -90,6 +90,14 @@ export function startQueryServer(store: LocalStore, port: number, logger?: { inf
     });
   });
 
+  server.on('error', (err: NodeJS.ErrnoException) => {
+    if (err.code === 'EADDRINUSE') {
+      logger?.info(`[plumb] Query server port ${port} already in use — query server not started. Set a different queryPort in plugin config.`);
+    } else {
+      logger?.info(`[plumb] Query server error: ${err.message}`);
+    }
+  });
+
   server.listen(port, '127.0.0.1', () => {
     logger?.info(`[plumb] Query server listening on http://127.0.0.1:${port}/query`);
   });
