@@ -53,11 +53,11 @@ openclaw gateway restart
 
 Fact extraction requires an LLM provider. Create `~/.plumb/config.json` with your API key:
 
-**Recommended (Gemini 2.0 Flash — extremely cheap and fast):**
+**Recommended (Gemini 2.5 Flash Lite — extremely cheap and fast):**
 ```json
 {
   "llmProvider": "google",
-  "llmModel": "gemini-2.0-flash",
+  "llmModel": "gemini-2.5-flash-lite",
   "llmApiKey": "YOUR_GEMINI_API_KEY"
 }
 ```

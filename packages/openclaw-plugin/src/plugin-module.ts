@@ -115,7 +115,7 @@ export const plugin: OpenClawPluginDefinition = {
       // No config found — use no-op queue (zero network calls, zero env var reads)
       extractionQueue = new ExtractionQueue(async (_exchange, _userId) => []);
       api.logger.info(
-        '[plumb] Fact extraction disabled -- create ~/.plumb/config.json to enable. Example: {"llmProvider":"google","llmModel":"gemini-2.0-flash","llmApiKey":"YOUR_KEY"}'
+        '[plumb] Fact extraction disabled -- create ~/.plumb/config.json to enable. Example: {"llmProvider":"google","llmModel":"gemini-2.5-flash-lite","llmApiKey":"YOUR_KEY"}'
       );
     }
 

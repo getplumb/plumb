@@ -94,7 +94,7 @@ function readLLMConfig(): LLMConfig {
       openai: 'gpt-4o-mini',
       anthropic: 'claude-haiku-4-5-20251001',
       ollama: 'llama3.1',
-      google: 'gemini-2.0-flash',
+      google: 'gemini-2.5-flash-lite',
       'openai-compatible': 'gpt-4o-mini',
     };
     config.model = defaults[config.provider] ?? 'gpt-4o-mini';
