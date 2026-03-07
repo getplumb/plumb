@@ -10,7 +10,7 @@ export { Bm25, tokenize } from './bm25.js';
 export { chunkExchange, formatExchange, CHUNK_WORDS, OVERLAP_WORDS } from './chunker.js';
 export type { Chunk } from './chunker.js';
 export { searchRawLog } from './raw-log-search.js';
-export type { RawChunk, ScoredFact, MemoryContext, ReadPathOptions, ReadPathStore } from './read-path.js';
+export type { RawChunk, MemoryFactChunk, MemoryContext, ReadPathOptions, ReadPathStore } from './read-path.js';
 export { buildMemoryContext } from './read-path.js';
 export { formatContextBlock, formatAge } from './context-builder.js';
 export { openDb } from './wasm-db.js';
