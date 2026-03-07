@@ -11,6 +11,7 @@ import { ingestCommand } from './commands/ingest.js';
 import { setupCommand } from './commands/setup.js';
 import { uninstallCommand } from './commands/uninstall.js';
 import { healthCommand } from './commands/health.js';
+import { bulkEmbedCommand } from './commands/bulk-embed.js';
 
 // Read version from package.json
 const __filename = fileURLToPath(import.meta.url);
@@ -117,6 +118,19 @@ program
     await healthCommand({
       db: options.db,
       json: options.json,
+      userId: options.userId,
+    });
+  });
+
+// Bulk embed command
+program
+  .command('bulk-embed')
+  .description('Offline bulk embedding of pending rows for initial DB seeding')
+  .option('--db <path>', 'Path to database file (defaults to ~/.plumb/memory.db)')
+  .option('--user-id <id>', 'User ID to process embeddings for (defaults to "default")')
+  .action(async (options) => {
+    await bulkEmbedCommand({
+      db: options.db,
       userId: options.userId,
     });
   });
