@@ -90,6 +90,97 @@ export interface LocalStoreOptions {
 
 export type { LLMConfig };
 
+/**
+ * Split text into overlapping child chunks for parent-child chunking (T-108).
+ * Target: ~250 chars per chunk with ~50 char overlap.
+ * Prefers sentence boundaries, falls back to word boundaries, hard-cuts at 300 chars max.
+ */
+function splitIntoChildren(text: string): string[] {
+  const TARGET_SIZE = 250;
+  const OVERLAP = 50;
+  const MAX_SIZE = 300;
+  const SENTENCE_ENDINGS = /[.!?]\s+/g;
+
+  if (text.length <= TARGET_SIZE) {
+    // Text is already small enough — return as single child
+    return [text];
+  }
+
+  const chunks: string[] = [];
+  let pos = 0;
+
+  while (pos < text.length) {
+    let endPos = Math.min(pos + TARGET_SIZE, text.length);
+
+    // If we're at the end of the text, take the rest
+    if (endPos >= text.length) {
+      chunks.push(text.slice(pos));
+      break;
+    }
+
+    // Try to find a sentence boundary within the target range
+    const segment = text.slice(pos, Math.min(pos + MAX_SIZE, text.length));
+    const sentenceMatches = Array.from(segment.matchAll(SENTENCE_ENDINGS));
+
+    if (sentenceMatches.length > 0) {
+      // Find the last sentence boundary before TARGET_SIZE
+      let bestMatch = sentenceMatches[0]!; // Safe: array is non-empty
+      for (const match of sentenceMatches) {
+        if (match.index !== undefined && match.index <= TARGET_SIZE) {
+          bestMatch = match;
+        } else {
+          break;
+        }
+      }
+
+      if (bestMatch.index !== undefined && bestMatch[0] !== undefined) {
+        endPos = pos + bestMatch.index + bestMatch[0].length;
+      } else {
+        // Fall back to word boundary
+        endPos = findWordBoundary(text, pos, TARGET_SIZE, MAX_SIZE);
+      }
+    } else {
+      // No sentence boundary found — fall back to word boundary
+      endPos = findWordBoundary(text, pos, TARGET_SIZE, MAX_SIZE);
+    }
+
+    chunks.push(text.slice(pos, endPos).trim());
+
+    // Move position forward, with overlap
+    pos = endPos - OVERLAP;
+    if (pos < 0) pos = endPos; // Safety: don't go negative
+  }
+
+  return chunks.filter(chunk => chunk.length > 0);
+}
+
+/**
+ * Find a word boundary near the target position.
+ * Prefers breaking at TARGET_SIZE, but will extend up to MAX_SIZE if needed.
+ */
+function findWordBoundary(text: string, start: number, targetSize: number, maxSize: number): number {
+  const targetPos = start + targetSize;
+  const maxPos = Math.min(start + maxSize, text.length);
+
+  // Look for whitespace near the target position
+  let endPos = targetPos;
+
+  // First try: find whitespace after targetPos
+  for (let i = targetPos; i < maxPos; i++) {
+    if (/\s/.test(text[i] ?? '')) {
+      endPos = i + 1; // Include the whitespace
+      break;
+    }
+  }
+
+  // If we hit maxPos without finding whitespace, hard cut at maxPos
+  if (endPos === targetPos && targetPos < maxPos) {
+    endPos = maxPos;
+  }
+
+  return endPos;
+}
+
 export class LocalStore implements MemoryStore {
   readonly #db: WasmDb;
   readonly #userId: string;
@@ -227,8 +318,14 @@ export class LocalStore implements MemoryStore {
     }
     vecStmt.finalize();
 
-    // T-103: Load all vec_raw_log embeddings into in-memory cache (eliminates ~3,700ms SQLite load per query)
-    const rawLogVecStmt = db.prepare(`SELECT rowid, embedding FROM vec_raw_log`);
+    // T-103/T-108: Load vec_raw_log embeddings for child rows only (eliminates ~3,700ms SQLite load per query)
+    // Child rows have parent_id IS NOT NULL. Parent rows are not embedded (embed_status='no_embed').
+    const rawLogVecStmt = db.prepare(`
+      SELECT v.rowid, v.embedding
+      FROM vec_raw_log v
+      JOIN raw_log r ON r.vec_rowid = v.rowid
+      WHERE r.parent_id IS NOT NULL
+    `);
     while (rawLogVecStmt.step()) {
       const row = rawLogVecStmt.get({}) as { rowid: number; embedding: string };
       store.#rawLogEmbeddingCache.push({
@@ -431,38 +528,21 @@ export class LocalStore implements MemoryStore {
     // Compute content hash for deduplication (scoped per userId).
     const contentHash = createHash('sha256').update(chunkText).digest('hex');
 
-    // T-079: Try to embed before opening the DB transaction.
-    let embedding: Float32Array | null = null;
-    let embeddingJson: string | null = null;
-    let embedStatus = 'pending';
-    let embedError: string | null = null;
-    let embedModel: string | null = null;
-
-    try {
-      embedding = await embed(chunkText);
-      embeddingJson = serializeEmbedding(embedding);
-      embedStatus = 'done';
-      embedModel = 'Xenova/bge-small-en-v1.5';
-    } catch (err: unknown) {
-      // Embedding failed — store the chunk anyway, but mark embed_status='failed'.
-      embedStatus = 'failed';
-      embedError = err instanceof Error ? err.message : String(err);
-    }
-
-    // T-079: Determine extract_status upfront: 'no_llm' if no config, otherwise 'pending'.
+    // T-108: Parent-child chunking — don't embed parent, only children.
+    // Parent extract_status: 'no_llm' if no config, otherwise 'pending' (extraction runs on parent only).
     const extractStatus = this.#llmConfig ? 'pending' : 'no_llm';
 
     // Attempt insert — catch UNIQUE constraint violations (duplicate content_hash).
     try {
       this.#db.exec('BEGIN');
 
-      // Insert into raw_log with processing state columns (T-079).
+      // T-108: Insert parent row (no embedding, no vec_rowid).
       const rawLogStmt = this.#db.prepare(`
         INSERT INTO raw_log
           (id, user_id, session_id, session_label,
            user_message, agent_response, timestamp, source, chunk_text, chunk_index, content_hash,
-           embed_status, embed_error, embed_model, extract_status)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           embed_status, embed_error, embed_model, extract_status, parent_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
       rawLogStmt.bind([
         rawLogId,
@@ -476,31 +556,87 @@ export class LocalStore implements MemoryStore {
         chunkText,
         0,
         contentHash,
-        embedStatus,
-        embedError,
-        embedModel,
+        'no_embed', // Parent is not embedded (T-108)
+        null,
+        null,
         extractStatus,
+        null, // parent_id=NULL for parent rows
       ]);
       rawLogStmt.step();
       rawLogStmt.finalize();
 
-      // Insert embedding into vec_raw_log only if embedding succeeded.
-      if (embeddingJson !== null) {
-        const vecStmt = this.#db.prepare(`INSERT INTO vec_raw_log(embedding) VALUES (?)`);
-        vecStmt.bind([embeddingJson]);
-        vecStmt.step();
-        vecStmt.finalize();
+      // T-108: Split parent into child chunks and embed each child.
+      const childChunks = splitIntoChildren(chunkText);
 
-        const vecRowid = this.#db.selectValue('SELECT last_insert_rowid()') as number;
+      for (let i = 0; i < childChunks.length; i++) {
+        const childText = childChunks[i];
+        if (!childText) continue;
 
-        // Back-fill vec_rowid so raw-log-search can join without a mapping table.
-        const updateStmt = this.#db.prepare(`UPDATE raw_log SET vec_rowid = ? WHERE id = ?`);
-        updateStmt.bind([vecRowid, rawLogId]);
-        updateStmt.step();
-        updateStmt.finalize();
+        const childId = crypto.randomUUID();
+        let childEmbedding: Float32Array | null = null;
+        let childEmbeddingJson: string | null = null;
+        let childEmbedStatus = 'pending';
+        let childEmbedError: string | null = null;
+        let childEmbedModel: string | null = null;
 
-        // T-103: Append new embedding to in-memory cache
-        this.#rawLogEmbeddingCache.push({ rowid: vecRowid, embedding: embedding! });
+        // Embed the child chunk
+        try {
+          childEmbedding = await embed(childText);
+          childEmbeddingJson = serializeEmbedding(childEmbedding);
+          childEmbedStatus = 'done';
+          childEmbedModel = 'Xenova/bge-small-en-v1.5';
+        } catch (err: unknown) {
+          childEmbedStatus = 'failed';
+          childEmbedError = err instanceof Error ? err.message : String(err);
+        }
+
+        // Insert child row
+        const childStmt = this.#db.prepare(`
+          INSERT INTO raw_log
+            (id, user_id, session_id, session_label,
+             user_message, agent_response, timestamp, source, chunk_text, chunk_index, content_hash,
+             embed_status, embed_error, embed_model, extract_status, parent_id)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `);
+        childStmt.bind([
+          childId,
+          this.#userId,
+          exchange.sessionId,
+          exchange.sessionLabel ?? null,
+          exchange.userMessage,
+          exchange.agentResponse,
+          exchange.timestamp.toISOString(),
+          exchange.source,
+          childText,
+          i, // chunk_index for ordering
+          null, // No content_hash for children (they don't participate in dedup)
+          childEmbedStatus,
+          childEmbedError,
+          childEmbedModel,
+          'child', // T-108: Mark as 'child' to prevent extraction
+          rawLogId, // parent_id points to parent
+        ]);
+        childStmt.step();
+        childStmt.finalize();
+
+        // Insert child embedding into vec_raw_log if embedding succeeded
+        if (childEmbeddingJson !== null) {
+          const vecStmt = this.#db.prepare(`INSERT INTO vec_raw_log(embedding) VALUES (?)`);
+          vecStmt.bind([childEmbeddingJson]);
+          vecStmt.step();
+          vecStmt.finalize();
+
+          const vecRowid = this.#db.selectValue('SELECT last_insert_rowid()') as number;
+
+          // Back-fill vec_rowid on child row
+          const updateStmt = this.#db.prepare(`UPDATE raw_log SET vec_rowid = ? WHERE id = ?`);
+          updateStmt.bind([vecRowid, childId]);
+          updateStmt.step();
+          updateStmt.finalize();
+
+          // T-103: Append child embedding to in-memory cache
+          this.#rawLogEmbeddingCache.push({ rowid: vecRowid, embedding: childEmbedding! });
+        }
       }
 
       this.#db.exec('COMMIT');
@@ -824,10 +960,11 @@ export class LocalStore implements MemoryStore {
   async #processEmbedBatch(): Promise<number> {
     const BATCH_SIZE = 50; // Large batch — embed is CPU-bound, no rate limit
 
-    // Fetch pending rows
+    // T-108: Fetch pending child rows only (parent_id IS NOT NULL).
+    // Old parent rows (parent_id IS NULL, embed_status='pending') are left as-is for fallback search.
     const stmt = this.#db.prepare(`
       SELECT id, chunk_text FROM raw_log
-      WHERE user_id = ? AND embed_status = 'pending'
+      WHERE user_id = ? AND embed_status = 'pending' AND parent_id IS NOT NULL
       ORDER BY rowid ASC
       LIMIT ?
     `);

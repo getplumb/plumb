@@ -55,6 +55,7 @@ export const CREATE_RAW_LOG_TABLE = `
     embed_model   TEXT,
     extract_status TEXT NOT NULL DEFAULT 'pending',
     extract_error TEXT,
+    parent_id     TEXT REFERENCES raw_log(id),
     UNIQUE(user_id, content_hash)
   )
 `;
@@ -63,6 +64,7 @@ export const CREATE_RAW_LOG_INDEXES = [
   `CREATE INDEX IF NOT EXISTS idx_raw_log_user_id ON raw_log (user_id)`,
   `CREATE INDEX IF NOT EXISTS idx_raw_log_session_id ON raw_log (session_id)`,
   `CREATE INDEX IF NOT EXISTS idx_raw_log_timestamp ON raw_log (timestamp)`,
+  `CREATE INDEX IF NOT EXISTS idx_raw_log_parent_id ON raw_log (parent_id)`,
 ];
 
 /**
@@ -185,5 +187,18 @@ export function applySchema(db: import('./wasm-db.js').WasmDb): void {
   if (!hasSourceChunkId) {
     db.exec('ALTER TABLE facts ADD COLUMN source_chunk_id TEXT');
     // Existing facts have source_chunk_id=NULL (no retroactive mapping).
+  }
+
+  // T-108: Add parent_id column to raw_log if it doesn't exist (for parent-child chunking).
+  const rawLogColumns3 = db.exec({
+    sql: 'PRAGMA table_info(raw_log)',
+    rowMode: 'object',
+    returnValue: 'resultRows',
+  }) as Array<{ name: string }>;
+  const hasParentId = rawLogColumns3.some((c) => c.name === 'parent_id');
+  if (!hasParentId) {
+    db.exec('ALTER TABLE raw_log ADD COLUMN parent_id TEXT REFERENCES raw_log(id)');
+    db.exec('CREATE INDEX IF NOT EXISTS idx_raw_log_parent_id ON raw_log (parent_id)');
+    // Existing rows have parent_id=NULL (they are parent-only rows, treated as searchable fallback).
   }
 }
