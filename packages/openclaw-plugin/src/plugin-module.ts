@@ -12,6 +12,7 @@ import { createPostExchangeHook } from './hooks/post-exchange.js';
 import { createPreResponseHook } from './hooks/pre-response.js';
 import { NudgeManager } from './nudge.js';
 import { readPlumbConfig, checkConfigPermissions } from './plumb-config.js';
+import { startQueryServer, stopQueryServer } from './query-server.js';
 
 // Define types inline since they aren't re-exported from openclaw/plugin-sdk
 type PluginLogger = {
@@ -155,6 +156,11 @@ export const plugin: OpenClawPluginDefinition = {
       api.logger.debug?.('[plumb] Embedding pipeline warm-up skipped (model unavailable)');
     });
 
+    // Start the query server (T-110)
+    const queryPort = (api.pluginConfig?.queryPort as number | undefined) ??
+                      Number(process.env.PLUMB_QUERY_PORT || '18791');
+    const queryServer = startQueryServer(store, queryPort, api.logger);
+
     // Shared state map for threading user prompts from before_prompt_build to llm_output
     // Key: sessionId, Value: user message prompt
     const pendingPrompts = new Map<string, string>();
@@ -168,6 +174,8 @@ export const plugin: OpenClawPluginDefinition = {
     // Clean up on session end — stop queue and flush before closing store
     api.on('session_end', async () => {
       try {
+        await stopQueryServer(queryServer);
+        api.logger.debug?.('[plumb] Query server stopped on session_end');
         await store.extractionQueue.stop();
         api.logger.debug?.('[plumb] Extraction queue stopped and flushed on session_end');
         await store.stopBacklogProcessor();
@@ -182,6 +190,8 @@ export const plugin: OpenClawPluginDefinition = {
     // Safety net: flush queue on process exit
     const exitHandler = async () => {
       try {
+        await stopQueryServer(queryServer);
+        api.logger.debug?.('[plumb] Query server stopped on process exit');
         await store.extractionQueue.stop();
         api.logger.debug?.('[plumb] Extraction queue stopped on process exit');
         await store.stopBacklogProcessor();
