@@ -2,10 +2,10 @@ import OpenAI from 'openai';
 
 /**
  * Default models per provider
- * Recommended: google/gemini-2.0-flash (extremely cheap and fast)
+ * Recommended: google/gemini-2.5-flash-lite (extremely cheap and fast)
  */
 const DEFAULT_MODELS: Record<string, string> = {
-  google: 'gemini-2.0-flash',
+  google: 'gemini-2.5-flash-lite',
   openai: 'gpt-4o-mini',
   anthropic: 'claude-haiku-4-5-20251001',
   ollama: 'llama3.1',
