@@ -8,12 +8,12 @@ import type { MemoryStore } from './store.js';
 import type { Fact, IngestResult, MessageExchange, SearchResult, StoreStatus } from './types.js';
 import { extractFacts } from './extractor.js';
 import { callLLMWithConfig, type LLMConfig } from './llm-client.js';
-import { embed, warmEmbedder } from './embedder.js';
+import { embed, warmEmbedder, warmReranker } from './embedder.js';
 import { formatExchange } from './chunker.js';
 import { searchRawLog, type RawLogSearchResult } from './raw-log-search.js';
 import { searchFacts } from './fact-search.js';
 import { ExtractionQueue, type ExtractFn } from './extraction-queue.js';
-import { serializeEmbedding, deserializeEmbedding } from './vector-search.js';
+import { serializeEmbedding, deserializeEmbedding, cosineDistance } from './vector-search.js';
 
 export type { RawLogSearchResult };
 
@@ -209,6 +209,10 @@ export class LocalStore implements MemoryStore {
     // T-096: Warm embedder pipeline to eliminate 365ms cold-start on first query
     await warmEmbedder();
 
+    // T-101: Warm reranker pipeline to eliminate ~200ms cold-start on first query
+    // (intentionally loads ~80MB model at init for consistent <250ms query performance)
+    await warmReranker();
+
     // T-096: Load all vec_facts embeddings into in-memory cache (eliminates 292ms SQLite load per query)
     const vecStmt = db.prepare(`SELECT rowid, embedding FROM vec_facts`);
     while (vecStmt.step()) {
@@ -224,12 +228,64 @@ export class LocalStore implements MemoryStore {
   }
 
   async store(fact: Omit<Fact, 'id'>, sourceChunkId?: string): Promise<string> {
-    const id = crypto.randomUUID();
+    // T-097: Cross-chunk fact deduplication — prevent storing duplicate facts across different chunks.
+    // A fact is considered a duplicate if it has the same subject+predicate and the object is either:
+    // 1. Identical (case-insensitive, normalized whitespace), OR
+    // 2. Semantically similar (cosine similarity >= 0.92 on embeddings)
+    //
+    // Pre-filter by subject+predicate via SQL (uses index, avoids full corpus scan).
+    const candidateStmt = this.#db.prepare(`
+      SELECT id, object, vec_rowid
+      FROM facts
+      WHERE user_id = ? AND subject = ? AND predicate = ? AND deleted_at IS NULL
+    `);
+    candidateStmt.bind([this.#userId, fact.subject, fact.predicate]);
 
-    // Embed concatenated fact text for vector search.
+    const candidates: Array<{ id: string; object: string; vec_rowid: number | null }> = [];
+    while (candidateStmt.step()) {
+      candidates.push(candidateStmt.get({}) as any);
+    }
+    candidateStmt.finalize();
+
+    // Helper: Normalize text for exact-match check (lowercase, trim, collapse multiple spaces)
+    const normalizeText = (text: string): string =>
+      text.toLowerCase().trim().replace(/\s+/g, ' ');
+
+    const normalizedNewObject = normalizeText(fact.object);
+
+    // Check for exact object match first (avoids embedding call in the common case)
+    for (const candidate of candidates) {
+      if (normalizeText(candidate.object) === normalizedNewObject) {
+        // Exact duplicate found — return existing fact ID without inserting
+        return candidate.id;
+      }
+    }
+
+    // No exact match found. Now embed the new fact for semantic similarity check and insertion.
     const text = `${fact.subject} ${fact.predicate} ${fact.object} ${fact.context ?? ''}`.trim();
     const embedding = await embed(text);
     const embeddingJson = serializeEmbedding(embedding);
+
+    // Check semantic similarity against candidates (only if we have candidates with embeddings)
+    if (candidates.length > 0) {
+      for (const candidate of candidates) {
+        if (candidate.vec_rowid === null) continue;
+
+        // Find candidate embedding in in-memory cache (T-096)
+        const cachedEntry = this.#embeddingCache.find(entry => entry.rowid === candidate.vec_rowid);
+        if (!cachedEntry) continue;
+
+        // Compute cosine similarity. Distance = 1 - similarity, so similarity >= 0.92 means distance <= 0.08.
+        const distance = cosineDistance(embedding, cachedEntry.embedding);
+        if (distance <= 0.08) {
+          // Semantically equivalent fact found — return existing ID without inserting
+          return candidate.id;
+        }
+      }
+    }
+
+    // No duplicate found (neither exact nor semantic) — proceed with normal insertion
+    const id = crypto.randomUUID();
 
     // Begin transaction
     this.#db.exec('BEGIN');
