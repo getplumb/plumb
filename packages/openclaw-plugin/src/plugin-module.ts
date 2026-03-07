@@ -79,7 +79,7 @@ export const plugin: OpenClawPluginDefinition = {
     let extractionQueue: ExtractionQueue;
     let store: LocalStore;
 
-    if (plumbConfig && plumbConfig.extractionEnabled !== false) {
+    if (plumbConfig && plumbConfig.extractionEnabled === true) {
       // Config found and extraction not explicitly disabled — enable fact extraction with real LLM calls
       const llmConfig: LLMConfig = {
         provider: plumbConfig.llmProvider,
@@ -130,7 +130,7 @@ export const plugin: OpenClawPluginDefinition = {
       userId,
       extractionQueue,
     };
-    if (plumbConfig && plumbConfig.extractionEnabled !== false) {
+    if (plumbConfig && plumbConfig.extractionEnabled === true) {
       storeOptions.llmConfig = {
         provider: plumbConfig.llmProvider,
         apiKey: plumbConfig.llmApiKey,
