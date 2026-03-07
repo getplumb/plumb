@@ -5,7 +5,7 @@ import { join, dirname } from 'node:path';
 import { openDb, type WasmDb } from './wasm-db.js';
 import { applySchema } from './schema.js';
 import type { MemoryStore } from './store.js';
-import type { IngestResult, MessageExchange, StoreStatus } from './types.js';
+import type { IngestResult, MessageExchange, StoreStatus, IngestMemoryFactInput } from './types.js';
 import { embed, warmEmbedder, warmReranker } from './embedder.js';
 import { formatExchange } from './chunker.js';
 import { searchRawLog, type RawLogSearchResult } from './raw-log-search.js';
@@ -416,6 +416,34 @@ export class LocalStore implements MemoryStore {
   }
 
   /**
+   * Ingest a curated memory fact (T-118).
+   * Facts are stored as single chunks (no splitting) with embed_status='pending'.
+   */
+  async ingestMemoryFact(input: IngestMemoryFactInput): Promise<{ factId: string }> {
+    const factId = crypto.randomUUID();
+    const tagsJson = input.tags ? JSON.stringify(input.tags) : null;
+
+    const stmt = this.#db.prepare(`
+      INSERT INTO memory_facts
+        (id, user_id, content, source_session_id, tags, created_at, embed_status)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+    stmt.bind([
+      factId,
+      this.#userId,
+      input.content,
+      input.sourceSessionId,
+      tagsJson,
+      new Date().toISOString(),
+      'pending',
+    ]);
+    stmt.step();
+    stmt.finalize();
+
+    return { factId };
+  }
+
+  /**
    * Hybrid search over raw_log (Layer 1 retrieval).
    * See raw-log-search.ts for the full pipeline description.
    */
@@ -553,8 +581,9 @@ export class LocalStore implements MemoryStore {
   }
 
   /**
-   * Process one batch of embed backlog rows (T-095).
+   * Process one batch of embed backlog rows (T-095, T-118).
    * Uses Promise.all for parallelism across the batch (embed runs in Worker, no API limits).
+   * Processes both raw_log and memory_facts rows.
    * Returns count of rows processed.
    */
   async #processEmbedBatch(): Promise<number> {
@@ -571,19 +600,38 @@ export class LocalStore implements MemoryStore {
 
     // T-108: Fetch pending child rows only (parent_id IS NOT NULL).
     // Old parent rows (parent_id IS NULL, embed_status='pending') are left as-is for fallback search.
-    const stmt = this.#db.prepare(`
+    const rawLogStmt = this.#db.prepare(`
       SELECT id, chunk_text FROM raw_log
       WHERE user_id = ? AND embed_status = 'pending' AND parent_id IS NOT NULL
       ORDER BY rowid ASC
       LIMIT ?
     `);
-    stmt.bind([this.#userId, BATCH_SIZE]);
+    rawLogStmt.bind([this.#userId, BATCH_SIZE]);
 
-    const pendingRows: Array<{ id: string; chunk_text: string }> = [];
-    while (stmt.step()) {
-      pendingRows.push(stmt.get({}) as any);
+    const pendingRows: Array<{ id: string; chunk_text: string; table: 'raw_log' | 'memory_facts' }> = [];
+    while (rawLogStmt.step()) {
+      const row = rawLogStmt.get({}) as { id: string; chunk_text: string };
+      pendingRows.push({ ...row, table: 'raw_log' });
     }
-    stmt.finalize();
+    rawLogStmt.finalize();
+
+    // T-118: Also fetch pending memory_facts rows
+    const remainingSlots = BATCH_SIZE - pendingRows.length;
+    if (remainingSlots > 0) {
+      const memoryFactsStmt = this.#db.prepare(`
+        SELECT id, content AS chunk_text FROM memory_facts
+        WHERE user_id = ? AND embed_status = 'pending'
+        ORDER BY rowid ASC
+        LIMIT ?
+      `);
+      memoryFactsStmt.bind([this.#userId, remainingSlots]);
+
+      while (memoryFactsStmt.step()) {
+        const row = memoryFactsStmt.get({}) as { id: string; chunk_text: string };
+        pendingRows.push({ ...row, table: 'memory_facts' });
+      }
+      memoryFactsStmt.finalize();
+    }
 
     if (pendingRows.length === 0) return 0;
 
@@ -596,6 +644,7 @@ export class LocalStore implements MemoryStore {
           const embedModel = 'Xenova/bge-small-en-v1.5';
 
           // Insert into vec_raw_log (transaction per row for isolation)
+          // T-118: Both raw_log and memory_facts share the same vec_raw_log table
           this.#db.exec('BEGIN');
           const vecStmt = this.#db.prepare(`INSERT INTO vec_raw_log(embedding) VALUES (?)`);
           vecStmt.bind([embeddingJson]);
@@ -604,9 +653,10 @@ export class LocalStore implements MemoryStore {
 
           const vecRowid = this.#db.selectValue('SELECT last_insert_rowid()') as number;
 
-          // Update raw_log: embed_status='done', vec_rowid, embed_model
+          // Update table (raw_log or memory_facts): embed_status='done', vec_rowid, embed_model
+          const tableName = row.table;
           const updateStmt = this.#db.prepare(`
-            UPDATE raw_log
+            UPDATE ${tableName}
             SET embed_status = 'done', embed_error = NULL, embed_model = ?, vec_rowid = ?
             WHERE id = ?
           `);
@@ -617,12 +667,16 @@ export class LocalStore implements MemoryStore {
           this.#db.exec('COMMIT');
 
           // T-103/T-115: Append new embedding to in-memory cache (with eviction)
-          this.#pushToCache({ rowid: vecRowid, embedding });
+          // Note: cache is used for raw_log search; memory_facts search (T-119) will handle its own cache
+          if (row.table === 'raw_log') {
+            this.#pushToCache({ rowid: vecRowid, embedding });
+          }
         } catch (err: unknown) {
           // Embedding failed — update embed_status='failed' with error
           const errorMsg = err instanceof Error ? err.message : String(err);
+          const tableName = row.table;
           const updateStmt = this.#db.prepare(`
-            UPDATE raw_log
+            UPDATE ${tableName}
             SET embed_status = 'failed', embed_error = ?
             WHERE id = ?
           `);

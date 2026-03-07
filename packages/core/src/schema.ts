@@ -50,6 +50,30 @@ export const CREATE_VEC_RAW_LOG = `
 `;
 
 /**
+ * Memory facts table for curated, high-signal facts written by Terra.
+ * Each fact is a short, dense piece of information stored as a single chunk.
+ */
+export const CREATE_MEMORY_FACTS_TABLE = `
+  CREATE TABLE IF NOT EXISTS memory_facts (
+    id            TEXT PRIMARY KEY,
+    user_id       TEXT NOT NULL,
+    content       TEXT NOT NULL,
+    source_session_id TEXT NOT NULL,
+    tags          TEXT,
+    created_at    TEXT NOT NULL,
+    embed_status  TEXT NOT NULL DEFAULT 'pending',
+    embed_error   TEXT,
+    embed_model   TEXT,
+    vec_rowid     INTEGER
+  )
+`;
+
+export const CREATE_MEMORY_FACTS_INDEXES = [
+  `CREATE INDEX IF NOT EXISTS idx_memory_facts_user_id ON memory_facts (user_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_memory_facts_embed_status ON memory_facts (embed_status)`,
+];
+
+/**
  * Nudge log table for tracking one-time upgrade prompts.
  * Each trigger type fires exactly once per install.
  */
@@ -128,5 +152,18 @@ export function applySchema(db: import('./wasm-db.js').WasmDb): void {
     db.exec('ALTER TABLE raw_log ADD COLUMN parent_id TEXT REFERENCES raw_log(id)');
     db.exec('CREATE INDEX IF NOT EXISTS idx_raw_log_parent_id ON raw_log (parent_id)');
     // Existing rows have parent_id=NULL (they are parent-only rows, treated as searchable fallback).
+  }
+
+  // T-118: Create memory_facts table if it doesn't exist (for curated facts from Terra).
+  const memoryFactsTables = db.exec({
+    sql: `SELECT name FROM sqlite_master WHERE type='table' AND name='memory_facts'`,
+    rowMode: 'object',
+    returnValue: 'resultRows',
+  }) as Array<{ name: string }>;
+  if (memoryFactsTables.length === 0) {
+    db.exec(CREATE_MEMORY_FACTS_TABLE);
+    for (const idx of CREATE_MEMORY_FACTS_INDEXES) {
+      db.exec(idx);
+    }
   }
 }

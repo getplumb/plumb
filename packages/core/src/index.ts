@@ -1,4 +1,4 @@
-export type { IngestResult, MessageExchange, StoreStatus } from './types.js';
+export type { IngestResult, MessageExchange, StoreStatus, MemoryFact, IngestMemoryFactInput } from './types.js';
 export type { MemoryStore } from './store.js';
 export type { RawLogChunk, ScoreResult } from './scorer.js';
 export { scoreRawLog } from './scorer.js';

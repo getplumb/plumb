@@ -18,3 +18,22 @@ export interface StoreStatus {
   readonly lastIngestion: Date | null;
   readonly storageBytes: number;
 }
+
+export interface MemoryFact {
+  readonly id: string;
+  readonly userId: string;
+  readonly content: string;
+  readonly sourceSessionId: string;
+  readonly tags: readonly string[] | null;
+  readonly createdAt: string;
+  readonly embedStatus: string;
+  readonly embedError: string | null;
+  readonly embedModel: string | null;
+  readonly vecRowid: number | null;
+}
+
+export interface IngestMemoryFactInput {
+  readonly content: string;
+  readonly sourceSessionId: string;
+  readonly tags?: readonly string[];
+}
