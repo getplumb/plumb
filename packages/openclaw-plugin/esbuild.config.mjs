@@ -5,6 +5,19 @@ import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
+// esbuild plugin to replace llm-client imports with stub
+const llmClientStubPlugin = {
+  name: 'llm-client-stub',
+  setup(build) {
+    build.onResolve({ filter: /\/llm-client\.js$/ }, (args) => {
+      // Redirect all imports ending in /llm-client.js to our stub
+      return {
+        path: resolve(__dirname, 'src/stubs/llm-client-stub.ts'),
+      };
+    });
+  },
+};
+
 async function main() {
   // Build the bundled ESM file — bundle @getplumb/core and all its deps in
   await build({
@@ -14,6 +27,8 @@ async function main() {
     format: 'esm',
     platform: 'node',
     target: 'node18',
+    // Replace LLM client with stub to eliminate all LLM network calls from bundle
+    plugins: [llmClientStubPlugin],
     // Only keep true Node built-ins external (they're always available)
     external: [
       'node:*',
@@ -33,12 +48,15 @@ async function main() {
     define: {
       'process.env.OPENAI_API_KEY': 'undefined',
       'process.env.ANTHROPIC_API_KEY': 'undefined',
+      'process.env.GEMINI_API_KEY': 'undefined',
       'process.env.PLUMB_LLM_PROVIDER': 'undefined',
       'process.env.PLUMB_LLM_MODEL': 'undefined',
       'process.env.PLUMB_LLM_BASE_URL': 'undefined',
       'process.env.OLLAMA_HOST': 'undefined',
       'process.env.PLUMB_EXTRACT_INTERVAL_MS': 'undefined',
       'process.env.PLUMB_EXTRACT_BATCH_SIZE': 'undefined',
+      'process.env.PLUMB_EXTRACT_ITEM_DELAY_MS': 'undefined',
+      'process.env.PLUMB_QUERY_PORT': 'undefined',
     },
     loader: {
       '.wasm': 'copy',
