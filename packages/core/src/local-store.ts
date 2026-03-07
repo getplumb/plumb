@@ -477,6 +477,7 @@ export class LocalStore implements MemoryStore {
     );
   }
 
+
   /**
    * Store a domain Fact into memory_facts (Layer 2).
    * Returns the UUID of the inserted fact.
