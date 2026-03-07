@@ -152,8 +152,11 @@ export class LocalStore implements MemoryStore {
   #embedDrainPromise: Promise<void> | null = null;
   readonly #embedIdleMs: number;
 
-  // T-103: In-memory embedding cache for vec_raw_log (eliminates ~3,700ms SQLite load on each query)
+  // T-103/T-115: In-memory embedding cache for vec_raw_log (eliminates ~3,700ms SQLite load on each query)
+  // T-115: Capped at MAX_CACHE_ENTRIES to prevent OOM crashes
   #rawLogEmbeddingCache: Array<{ rowid: number; embedding: Float32Array }> = [];
+  static readonly MAX_CACHE_ENTRIES = 10000;
+  static readonly HEAP_GUARD_THRESHOLD = 1_500_000_000; // 1.5GB in bytes
 
   // FIX 3: WAL checkpoint throttling to prevent unbounded WAL growth
   #lastCheckpoint = Date.now();
@@ -186,6 +189,21 @@ export class LocalStore implements MemoryStore {
   }
 
   /**
+   * T-115: Add entry to #rawLogEmbeddingCache with FIFO eviction.
+   * Evicts oldest 10% when cache exceeds MAX_CACHE_ENTRIES.
+   */
+  #pushToCache(entry: { rowid: number; embedding: Float32Array }): void {
+    this.#rawLogEmbeddingCache.push(entry);
+
+    // Check if cache exceeds limit
+    if (this.#rawLogEmbeddingCache.length > LocalStore.MAX_CACHE_ENTRIES) {
+      // Evict oldest 10% to amortize splice cost
+      const evictCount = Math.floor(LocalStore.MAX_CACHE_ENTRIES * 0.1);
+      this.#rawLogEmbeddingCache.splice(0, evictCount);
+    }
+  }
+
+  /**
    * Create a new LocalStore instance (async factory).
    * Required because WASM initialization is async.
    */
@@ -213,14 +231,18 @@ export class LocalStore implements MemoryStore {
     // (intentionally loads ~80MB model at init for consistent <250ms query performance)
     await warmReranker();
 
-    // T-103/T-108: Load vec_raw_log embeddings for child rows only (eliminates ~3,700ms SQLite load per query)
+    // T-103/T-108/T-115: Load vec_raw_log embeddings for child rows only (eliminates ~3,700ms SQLite load per query)
+    // T-115: Limit to MAX_CACHE_ENTRIES most recent rows to prevent OOM on startup
     // Child rows have parent_id IS NOT NULL. Parent rows are not embedded (embed_status='no_embed').
     const rawLogVecStmt = db.prepare(`
       SELECT v.rowid, v.embedding
       FROM vec_raw_log v
       JOIN raw_log r ON r.vec_rowid = v.rowid
       WHERE r.parent_id IS NOT NULL
+      ORDER BY v.rowid DESC
+      LIMIT ?
     `);
+    rawLogVecStmt.bind([LocalStore.MAX_CACHE_ENTRIES]);
     while (rawLogVecStmt.step()) {
       const row = rawLogVecStmt.get({}) as { rowid: number; embedding: string };
       store.#rawLogEmbeddingCache.push({
@@ -365,8 +387,8 @@ export class LocalStore implements MemoryStore {
           updateStmt.step();
           updateStmt.finalize();
 
-          // T-103: Append child embedding to in-memory cache
-          this.#rawLogEmbeddingCache.push({ rowid: vecRowid, embedding: childEmbedding! });
+          // T-103/T-115: Append child embedding to in-memory cache (with eviction)
+          this.#pushToCache({ rowid: vecRowid, embedding: childEmbedding! });
         }
 
         i++;
@@ -398,8 +420,18 @@ export class LocalStore implements MemoryStore {
    * See raw-log-search.ts for the full pipeline description.
    */
   async searchRawLog(query: string, limit = 10): Promise<readonly RawLogSearchResult[]> {
-    // T-103: Pass in-memory embedding cache to searchRawLog (eliminates ~3,700ms SQLite load per query)
-    return searchRawLog(this.#db, this.#userId, query, limit, this.#rawLogEmbeddingCache);
+    // T-103/T-115: Pass in-memory embedding cache to searchRawLog (eliminates ~3,700ms SQLite load per query)
+    // T-115: If cache is incomplete (capped due to MAX_CACHE_ENTRIES), fall back to SQLite load
+    const totalVecRows = this.#db.selectValue('SELECT COUNT(*) FROM vec_raw_log') as number;
+    const cacheComplete = this.#rawLogEmbeddingCache.length >= totalVecRows;
+
+    return searchRawLog(
+      this.#db,
+      this.#userId,
+      query,
+      limit,
+      cacheComplete ? this.#rawLogEmbeddingCache : undefined
+    );
   }
 
   /**
@@ -526,7 +558,16 @@ export class LocalStore implements MemoryStore {
    * Returns count of rows processed.
    */
   async #processEmbedBatch(): Promise<number> {
-    const BATCH_SIZE = 50; // Large batch — embed is CPU-bound, no rate limit
+    // T-115: Heap guard — skip batch if memory pressure is high
+    const heapUsed = process.memoryUsage().heapUsed;
+    if (heapUsed > LocalStore.HEAP_GUARD_THRESHOLD) {
+      // Memory pressure detected — sleep and retry later
+      await new Promise(resolve => setTimeout(resolve, this.#embedIdleMs));
+      return 0;
+    }
+
+    // T-115: Reduced from 50 to 8 to prevent OOM crashes from tensor pile-up
+    const BATCH_SIZE = 8;
 
     // T-108: Fetch pending child rows only (parent_id IS NOT NULL).
     // Old parent rows (parent_id IS NULL, embed_status='pending') are left as-is for fallback search.
@@ -575,8 +616,8 @@ export class LocalStore implements MemoryStore {
 
           this.#db.exec('COMMIT');
 
-          // T-103: Append new embedding to in-memory cache
-          this.#rawLogEmbeddingCache.push({ rowid: vecRowid, embedding });
+          // T-103/T-115: Append new embedding to in-memory cache (with eviction)
+          this.#pushToCache({ rowid: vecRowid, embedding });
         } catch (err: unknown) {
           // Embedding failed — update embed_status='failed' with error
           const errorMsg = err instanceof Error ? err.message : String(err);
