@@ -110,6 +110,9 @@ export class LocalStore implements MemoryStore {
   // T-096: In-memory embedding cache for vec_facts (eliminates 292ms SQLite load on each query)
   #embeddingCache: Array<{ rowid: number; embedding: Float32Array }> = [];
 
+  // T-103: In-memory embedding cache for vec_raw_log (eliminates ~3,700ms SQLite load on each query)
+  #rawLogEmbeddingCache: Array<{ rowid: number; embedding: Float32Array }> = [];
+
   /** Expose database for plugin use (e.g., NudgeManager) */
   get db(): WasmDb {
     return this.#db;
@@ -223,6 +226,17 @@ export class LocalStore implements MemoryStore {
       });
     }
     vecStmt.finalize();
+
+    // T-103: Load all vec_raw_log embeddings into in-memory cache (eliminates ~3,700ms SQLite load per query)
+    const rawLogVecStmt = db.prepare(`SELECT rowid, embedding FROM vec_raw_log`);
+    while (rawLogVecStmt.step()) {
+      const row = rawLogVecStmt.get({}) as { rowid: number; embedding: string };
+      store.#rawLogEmbeddingCache.push({
+        rowid: row.rowid,
+        embedding: deserializeEmbedding(row.embedding),
+      });
+    }
+    rawLogVecStmt.finalize();
 
     return store;
   }
@@ -484,6 +498,9 @@ export class LocalStore implements MemoryStore {
         updateStmt.bind([vecRowid, rawLogId]);
         updateStmt.step();
         updateStmt.finalize();
+
+        // T-103: Append new embedding to in-memory cache
+        this.#rawLogEmbeddingCache.push({ rowid: vecRowid, embedding: embedding! });
       }
 
       this.#db.exec('COMMIT');
@@ -522,7 +539,8 @@ export class LocalStore implements MemoryStore {
    * See raw-log-search.ts for the full pipeline description.
    */
   async searchRawLog(query: string, limit = 10): Promise<readonly RawLogSearchResult[]> {
-    return searchRawLog(this.#db, this.#userId, query, limit);
+    // T-103: Pass in-memory embedding cache to searchRawLog (eliminates ~3,700ms SQLite load per query)
+    return searchRawLog(this.#db, this.#userId, query, limit, this.#rawLogEmbeddingCache);
   }
 
   /**
@@ -851,6 +869,9 @@ export class LocalStore implements MemoryStore {
           updateStmt.finalize();
 
           this.#db.exec('COMMIT');
+
+          // T-103: Append new embedding to in-memory cache
+          this.#rawLogEmbeddingCache.push({ rowid: vecRowid, embedding });
         } catch (err: unknown) {
           // Embedding failed — update embed_status='failed' with error
           const errorMsg = err instanceof Error ? err.message : String(err);
