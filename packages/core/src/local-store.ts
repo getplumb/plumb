@@ -13,6 +13,11 @@ import { serializeEmbedding, deserializeEmbedding } from './vector-search.js';
 
 export type { RawLogSearchResult };
 
+// T-121: Raw log retention limits
+export const RAW_LOG_TTL_DAYS = 90; // Delete rows older than 90 days
+export const RAW_LOG_MAX_ROWS = 25000; // Max rows per user
+export const RAW_LOG_EVICTION_BATCH = 500; // Rows to delete per eviction pass
+
 export interface RawLogEntry {
   readonly id: string;
   readonly userId: string;
@@ -165,6 +170,9 @@ export class LocalStore implements MemoryStore {
   // FIX 4: Health check to detect stuck drain loops
   #lastActivityTimestamp = Date.now();
   #healthCheckInterval: ReturnType<typeof setInterval> | null = null;
+
+  // T-121: Row count cache to avoid COUNT(*) on every ingest
+  #rawLogRowCount: number | null = null;
 
   /** Expose database for plugin use (e.g., NudgeManager) */
   get db(): WasmDb {
@@ -410,9 +418,90 @@ export class LocalStore implements MemoryStore {
       throw err;
     }
 
+    // T-121: Initialize row count cache on first ingest
+    if (this.#rawLogRowCount === null) {
+      const countStmt = this.#db.prepare('SELECT COUNT(*) FROM raw_log WHERE user_id = ?');
+      countStmt.bind([this.#userId]);
+      countStmt.step();
+      this.#rawLogRowCount = countStmt.get(0) as number;
+      countStmt.finalize();
+    } else {
+      // Increment counter for the newly inserted parent row
+      this.#rawLogRowCount++;
+    }
+
+    // T-121: Expire old raw logs (TTL + row cap)
+    await this.#expireRawLogs();
+
     return {
       rawLogId,
     };
+  }
+
+  /**
+   * T-121: Expire raw logs based on TTL and row cap.
+   * Called after each successful ingest.
+   */
+  async #expireRawLogs(): Promise<void> {
+    let totalDeleted = 0;
+
+    // 1. TTL pass: delete rows older than RAW_LOG_TTL_DAYS
+    const ttlCutoff = new Date(Date.now() - RAW_LOG_TTL_DAYS * 24 * 60 * 60 * 1000).toISOString();
+    const ttlStmt = this.#db.prepare(
+      'DELETE FROM raw_log WHERE user_id = ? AND timestamp < ?'
+    );
+    ttlStmt.bind([this.#userId, ttlCutoff]);
+    ttlStmt.step();
+    const ttlDeleted = this.#db.selectValue('SELECT changes()') as number;
+    ttlStmt.finalize();
+    totalDeleted += ttlDeleted;
+
+    // 2. Row cap pass: delete oldest rows if over RAW_LOG_MAX_ROWS
+    if (this.#rawLogRowCount !== null && this.#rawLogRowCount > RAW_LOG_MAX_ROWS) {
+      let rowsToDelete = this.#rawLogRowCount - RAW_LOG_MAX_ROWS;
+
+      while (rowsToDelete > 0) {
+        const batchSize = Math.min(rowsToDelete, RAW_LOG_EVICTION_BATCH);
+
+        const capStmt = this.#db.prepare(`
+          DELETE FROM raw_log
+          WHERE id IN (
+            SELECT id FROM raw_log
+            WHERE user_id = ?
+            ORDER BY timestamp ASC
+            LIMIT ?
+          )
+        `);
+        capStmt.bind([this.#userId, batchSize]);
+        capStmt.step();
+        const capDeleted = this.#db.selectValue('SELECT changes()') as number;
+        capStmt.finalize();
+
+        totalDeleted += capDeleted;
+        rowsToDelete -= capDeleted;
+
+        // Safety: if no rows deleted, break to avoid infinite loop
+        if (capDeleted === 0) break;
+      }
+    }
+
+    // 3. Clean up orphaned vec_raw_log rows
+    if (totalDeleted > 0) {
+      const orphanStmt = this.#db.prepare(`
+        DELETE FROM vec_raw_log
+        WHERE rowid NOT IN (
+          SELECT vec_rowid FROM raw_log WHERE vec_rowid IS NOT NULL
+        )
+      `);
+      orphanStmt.step();
+      orphanStmt.finalize();
+
+      // Update row count cache
+      if (this.#rawLogRowCount !== null) {
+        this.#rawLogRowCount -= totalDeleted;
+        if (this.#rawLogRowCount < 0) this.#rawLogRowCount = 0;
+      }
+    }
   }
 
   /**
