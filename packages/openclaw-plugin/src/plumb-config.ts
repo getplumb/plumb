@@ -15,6 +15,12 @@ export interface PlumbLLMConfig {
   llmApiKey: string;
   /** Base URL for openai-compatible or ollama providers. Optional. */
   llmBaseUrl?: string;
+  /**
+   * Set to false to disable LLM fact extraction while keeping the rest of the config intact.
+   * Embed-only mode will still ingest and embed conversations — just no LLM extraction.
+   * Defaults to true when omitted.
+   */
+  extractionEnabled?: boolean;
 }
 
 /**
@@ -76,6 +82,7 @@ export async function readPlumbConfig(): Promise<PlumbLLMConfig | null> {
       llmProvider: provider,
       llmModel: model,
       llmApiKey: obj.llmApiKey,
+      extractionEnabled: obj.extractionEnabled === false ? false : true,
     };
 
     if (typeof obj.llmBaseUrl === 'string') {
