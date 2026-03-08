@@ -84,8 +84,8 @@ importers:
   packages/cli:
     dependencies:
       '@getplumb/core':
-        specifier: 0.4.5
-        version: 0.4.5(ws@8.19.0)(zod@3.25.76)
+        specifier: 0.4.6
+        version: 0.4.6(ws@8.19.0)(zod@3.25.76)
       '@inquirer/prompts':
         specifier: ^8.3.0
         version: 8.3.0(@types/node@25.3.3)
@@ -142,8 +142,8 @@ importers:
   packages/mcp-server:
     dependencies:
       '@getplumb/core':
-        specifier: 0.4.5
-        version: 0.4.5(ws@8.19.0)(zod@4.3.6)
+        specifier: 0.4.6
+        version: 0.4.6(ws@8.19.0)(zod@4.3.6)
       '@modelcontextprotocol/sdk':
         specifier: ^1.27.1
         version: 1.27.1(zod@4.3.6)
@@ -908,8 +908,8 @@ packages:
     resolution: {integrity: sha512-2m3Zqzr82qT7XMU9tYGi0mQV5XDnYhwsFshjz8j9UiWaQtJvcRQVEcKbEle8uUjutzsDheA1WyGpcf/80wkoIQ==}
     engines: {node: '>=18'}
 
-  '@getplumb/core@0.4.5':
-    resolution: {integrity: sha512-v9wfTv3+bvd7xVk8xPpsTszly11BE1z66XcnUMIhvK8Omb2LpNYK0TgvPcEIc4mo/SsBwIBvNdY7kEujN+uFXQ==}
+  '@getplumb/core@0.4.6':
+    resolution: {integrity: sha512-ipiyu8MZeFfZEUOTBOUhL7PzCuWfL33TXjdCFDsF/wP6BWfRcAs2OeVL2CZpIcFJYwUfMaXncTxi4s4rLEIcgg==}
     engines: {node: '>=18'}
 
   '@google/genai@1.43.0':
@@ -7200,7 +7200,7 @@ snapshots:
       - ws
       - zod
 
-  '@getplumb/core@0.4.5(ws@8.19.0)(zod@3.25.76)':
+  '@getplumb/core@0.4.6(ws@8.19.0)(zod@3.25.76)':
     dependencies:
       better-sqlite3: 9.6.0
       openai: 4.104.0(ws@8.19.0)(zod@3.25.76)
@@ -7215,7 +7215,7 @@ snapshots:
       - ws
       - zod
 
-  '@getplumb/core@0.4.5(ws@8.19.0)(zod@4.3.6)':
+  '@getplumb/core@0.4.6(ws@8.19.0)(zod@4.3.6)':
     dependencies:
       better-sqlite3: 9.6.0
       openai: 4.104.0(ws@8.19.0)(zod@4.3.6)
