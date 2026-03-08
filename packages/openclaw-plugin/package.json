@@ -8,12 +8,10 @@
   "types": "./dist/index.d.ts",
   "files": [
     "dist",
+    "scripts",
     "openclaw.plugin.json",
     "LICENSE",
     "README.md"
-  ],
-  "bundledDependencies": [
-    "better-sqlite3"
   ],
   "publishConfig": {
     "access": "public"
@@ -32,12 +30,13 @@
   "scripts": {
     "build": "node esbuild.config.mjs",
     "prepublishOnly": "npm run build",
+    "postinstall": "node scripts/postinstall.mjs",
     "test": "vitest run",
     "lint": "echo \"No lint yet\" && exit 0",
     "clean": "rm -rf dist *.tsbuildinfo"
   },
   "dependencies": {
-    "@getplumb/core": "0.4.4",
+    "@getplumb/core": "0.4.6",
     "better-sqlite3": "^9.4.3"
   },
   "devDependencies": {
