@@ -6,13 +6,17 @@
  *
  *   [MEMORY CONTEXT]
  *
+ *   ## Memories
+ *   - [tech-planning] today: "User prefers TypeScript for all new code"
+ *
  *   ## Related conversations
  *   - [tech-planning] today: "Let me help you design the memory system..."
  *
- * Empty MemoryContext returns an empty string — no block is injected.
+ * Always includes a tool hint section. Returns empty string only when both
+ * relatedMemories and relatedConversations are empty.
  */
 
-import type { MemoryContext, RawChunk } from './read-path.js';
+import type { MemoryContext, MemoryFactChunk, RawChunk } from './read-path.js';
 
 // ─── Age formatting ───────────────────────────────────────────────────────────
 
@@ -34,6 +38,14 @@ export function formatAge(ageInDays: number): string {
 
 // ─── Line formatters ──────────────────────────────────────────────────────────
 
+function formatMemoryLine(memory: MemoryFactChunk): string {
+  const excerpt = memory.content.slice(0, 200);
+  const sessionLabel = memory.sourceSessionLabel ?? memory.sourceSessionId;
+  const ageInDays = (Date.now() - memory.timestamp.getTime()) / (1_000 * 60 * 60 * 24);
+  const age = formatAge(ageInDays);
+  return `- [${sessionLabel}] ${age}: "${excerpt}"`;
+}
+
 function formatChunkLine(chunk: RawChunk): string {
   const excerpt = chunk.chunkText.slice(0, 200);
   const sessionLabel = chunk.sessionLabel ?? chunk.sessionId;
@@ -48,27 +60,36 @@ function formatChunkLine(chunk: RawChunk): string {
  * Formats a MemoryContext into a [MEMORY CONTEXT] prompt block.
  *
  * Always returns a non-empty string with a tool hint section,
- * even when there are no related conversations.
+ * even when there are no related memories or conversations.
  */
 export function formatContextBlock(context: MemoryContext): string {
-  const { relatedConversations } = context;
+  const { relatedMemories, relatedConversations } = context;
 
   const lines: string[] = ['[MEMORY CONTEXT]'];
 
+  // ── Render ## Memories section (above ## Related conversations) ──────────
+  if (relatedMemories.length > 0) {
+    lines.push('');
+    lines.push('## Memories');
+    for (const memory of relatedMemories) lines.push(formatMemoryLine(memory));
+  }
+
+  // ── Render ## Related conversations section ──────────────────────────────
   if (relatedConversations.length > 0) {
-    // Show related conversations section
     lines.push('');
     lines.push('## Related conversations');
     for (const chunk of relatedConversations) lines.push(formatChunkLine(chunk));
+  }
 
-    // Append tool hint
+  // ── Append tool hint ──────────────────────────────────────────────────────
+  if (relatedMemories.length > 0 || relatedConversations.length > 0) {
     lines.push('');
     lines.push('## Memory search available');
-    lines.push('Use the `plumb_search` tool to look up specific subtopics not covered above.');
+    lines.push('Use the \`plumb_search\` tool to look up specific subtopics not covered above.');
   } else {
-    // No related conversations - show only tool hint with alternate text
+    // No memories or conversations — show only tool hint with alternate text
     lines.push('## Memory search available');
-    lines.push('Use the `plumb_search` tool to look up relevant context from memory.');
+    lines.push('Use the \`plumb_search\` tool to look up relevant context from memory.');
   }
 
   return lines.join('\n');

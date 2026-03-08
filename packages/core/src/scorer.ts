@@ -1,8 +1,23 @@
+import type { Fact, DecayRate } from './types.js';
+
+/** Lambda map for each DecayRate value. */
+const DECAY_LAMBDA: Record<DecayRate, number> = {
+  slow: 0.003,
+  medium: 0.012,
+  fast: 0.05,
+};
+
 /** Lambda applied to raw log chunks (medium decay). */
 const RAW_LOG_LAMBDA = 0.012;
 
 /** Cold score threshold — chunks below this are flagged. */
 const COLD_THRESHOLD = 0.01;
+
+/** Memory fact score boost multiplier (applied after RRF fusion). */
+export const MEMORY_FACT_BOOST = 2.0;
+
+/** Memory fact minimum score threshold (after boost) for fallback logic. */
+export const MEMORY_FACT_MIN_SCORE = 0.3;
 
 export interface ScoreResult {
   readonly score: number;
@@ -25,6 +40,26 @@ export function computeDecay(lambda: number, ageInDays: number): number {
 }
 
 /**
+ * Scores a domain Fact using its own decayRate and confidence.
+ *
+ * Formula: score = confidence × e^(-lambda × ageInDays)
+ * isCold is true when score < COLD_THRESHOLD.
+ *
+ * @param fact  The Fact to score.
+ * @param now   Reference time (defaults to current time). Useful for deterministic tests.
+ */
+export function scoreFact(
+  fact: Pick<Fact, 'confidence' | 'decayRate' | 'timestamp'>,
+  now: Date = new Date(),
+): ScoreResult {
+  const ageInDays =
+    (now.getTime() - fact.timestamp.getTime()) / (1_000 * 60 * 60 * 24);
+  const lambda = DECAY_LAMBDA[fact.decayRate];
+  const score = fact.confidence * computeDecay(lambda, ageInDays);
+  return { score, isCold: score < COLD_THRESHOLD };
+}
+
+/**
  * Scores a raw log chunk using medium decay (lambda = 0.012).
  * Raw chunks have no confidence field; decay is applied to a base of 1.0.
  */
@@ -36,4 +71,15 @@ export function scoreRawLog(
     (now.getTime() - chunk.timestamp.getTime()) / (1_000 * 60 * 60 * 24);
   const score = computeDecay(RAW_LOG_LAMBDA, ageInDays);
   return { score, isCold: score < COLD_THRESHOLD };
+}
+
+/**
+ * Scores a memory fact by applying MEMORY_FACT_BOOST to its hybrid search score.
+ * Memory facts are high-signal curated content, so they get a 2.0× boost.
+ *
+ * @param hybridScore The RRF-fused score from BM25 + vector search.
+ * @returns The boosted score.
+ */
+export function scoreMemoryFact(hybridScore: number): number {
+  return hybridScore * MEMORY_FACT_BOOST;
 }

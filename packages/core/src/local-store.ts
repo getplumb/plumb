@@ -5,13 +5,14 @@ import { join, dirname } from 'node:path';
 import { openDb, type WasmDb } from './wasm-db.js';
 import { applySchema } from './schema.js';
 import type { MemoryStore } from './store.js';
-import type { IngestResult, MessageExchange, StoreStatus } from './types.js';
+import type { IngestResult, MessageExchange, StoreStatus, IngestMemoryFactInput, Fact, SearchResult } from './types.js';
 import { embed, warmEmbedder, warmReranker } from './embedder.js';
 import { formatExchange } from './chunker.js';
 import { searchRawLog, type RawLogSearchResult } from './raw-log-search.js';
+import { searchMemoryFacts, type MemoryFactSearchResult } from './memory-facts-search.js';
 import { serializeEmbedding, deserializeEmbedding } from './vector-search.js';
 
-export type { RawLogSearchResult };
+export type { RawLogSearchResult, MemoryFactSearchResult };
 
 // T-121: Raw log retention limits
 export const RAW_LOG_TTL_DAYS = 90; // Delete rows older than 90 days
@@ -264,16 +265,26 @@ export class LocalStore implements MemoryStore {
   }
 
   async status(): Promise<StoreStatus> {
+    // Count only parent rows (parent_id IS NULL) — one per ingest() call
     const rawLogStmt = this.#db.prepare(
-      `SELECT COUNT(*) AS c FROM raw_log WHERE user_id = ?`
+      `SELECT COUNT(*) AS c FROM raw_log WHERE user_id = ? AND parent_id IS NULL`
     );
     rawLogStmt.bind([this.#userId]);
     rawLogStmt.step();
     const rawLogCount = rawLogStmt.get(0) as number;
     rawLogStmt.finalize();
 
+    // Count non-deleted memory facts
+    const factCountStmt = this.#db.prepare(
+      `SELECT COUNT(*) AS c FROM memory_facts WHERE user_id = ? AND (deleted_at IS NULL)`
+    );
+    factCountStmt.bind([this.#userId]);
+    factCountStmt.step();
+    const factCount = factCountStmt.get(0) as number;
+    factCountStmt.finalize();
+
     const lastIngestionStmt = this.#db.prepare(
-      `SELECT MAX(timestamp) AS ts FROM raw_log WHERE user_id = ?`
+      `SELECT MAX(timestamp) AS ts FROM raw_log WHERE user_id = ? AND parent_id IS NULL`
     );
     lastIngestionStmt.bind([this.#userId]);
     lastIngestionStmt.step();
@@ -285,6 +296,7 @@ export class LocalStore implements MemoryStore {
 
     return {
       rawLogCount,
+      factCount,
       lastIngestion: lastIngestionTs !== null ? new Date(lastIngestionTs as string) : null,
       storageBytes: pageCount * pageSize,
     };
@@ -412,6 +424,8 @@ export class LocalStore implements MemoryStore {
         return {
           rawLogId: '',
           skipped: true,
+          factsExtracted: 0,
+          factIds: [],
         };
       }
       // Re-throw other errors (e.g., real DB issues).
@@ -435,6 +449,8 @@ export class LocalStore implements MemoryStore {
 
     return {
       rawLogId,
+      factsExtracted: 0,
+      factIds: [],
     };
   }
 
@@ -505,6 +521,34 @@ export class LocalStore implements MemoryStore {
   }
 
   /**
+   * Ingest a curated memory fact (T-118).
+   * Facts are stored as single chunks (no splitting) with embed_status='pending'.
+   */
+  async ingestMemoryFact(input: IngestMemoryFactInput): Promise<{ factId: string }> {
+    const factId = crypto.randomUUID();
+    const tagsJson = input.tags ? JSON.stringify(input.tags) : null;
+
+    const stmt = this.#db.prepare(`
+      INSERT INTO memory_facts
+        (id, user_id, content, source_session_id, tags, created_at, embed_status)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+    stmt.bind([
+      factId,
+      this.#userId,
+      input.content,
+      input.sourceSessionId,
+      tagsJson,
+      new Date().toISOString(),
+      'pending',
+    ]);
+    stmt.step();
+    stmt.finalize();
+
+    return { factId };
+  }
+
+  /**
    * Hybrid search over raw_log (Layer 1 retrieval).
    * See raw-log-search.ts for the full pipeline description.
    */
@@ -521,6 +565,129 @@ export class LocalStore implements MemoryStore {
       limit,
       cacheComplete ? this.#rawLogEmbeddingCache : undefined
     );
+  }
+
+  /**
+   * Hybrid search over memory_facts (Layer 2 retrieval).
+   * See memory-facts-search.ts for the full pipeline description.
+   */
+  async searchMemoryFacts(query: string, limit = 10): Promise<readonly MemoryFactSearchResult[]> {
+    return searchMemoryFacts(
+      this.#db,
+      this.#userId,
+      query,
+      limit
+    );
+  }
+
+
+  /**
+   * Store a domain Fact into memory_facts (Layer 2).
+   * Returns the UUID of the inserted fact.
+   * Accepts an optional `context` field (stored in content for extra context).
+   */
+  async store(fact: Fact & { context?: string }): Promise<string> {
+    const factId = (fact as { id?: string }).id ?? crypto.randomUUID();
+    const baseContent = `${fact.subject} ${fact.predicate} ${fact.object}`;
+    const content = fact.context ? `${baseContent} — ${fact.context}` : baseContent;
+
+    const stmt = this.#db.prepare(`
+      INSERT OR REPLACE INTO memory_facts
+        (id, user_id, content, subject, predicate, object, confidence, decay_rate,
+         source_session_id, source_session_label, tags, created_at, embed_status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    stmt.bind([
+      factId,
+      this.#userId,
+      content,
+      fact.subject,
+      fact.predicate,
+      fact.object,
+      fact.confidence,
+      fact.decayRate,
+      fact.sourceSessionId,
+      fact.sourceSessionLabel ?? null,
+      null, // tags
+      fact.timestamp.toISOString(),
+      'pending',
+    ]);
+    stmt.step();
+    stmt.finalize();
+
+    return factId;
+  }
+
+  /**
+   * Soft-delete a memory fact by id (sets deleted_at timestamp).
+   * Soft-deleted facts are excluded from search results.
+   */
+  async delete(factId: string): Promise<void> {
+    const stmt = this.#db.prepare(`
+      UPDATE memory_facts SET deleted_at = ? WHERE id = ? AND user_id = ?
+    `);
+    stmt.bind([new Date().toISOString(), factId, this.#userId]);
+    stmt.step();
+    stmt.finalize();
+  }
+
+  /**
+   * Search memory_facts using keyword (LIKE) matching on content (Layer 2).
+   * Returns SearchResult[] with full Fact objects reconstructed from stored data.
+   *
+   * Note: T-119 will add vector search for memory_facts. For now, LIKE search
+   * is sufficient for tests and basic use.
+   */
+  async search(query: string, limit = 10): Promise<readonly SearchResult[]> {
+    const likePattern = `%${query}%`;
+
+    const stmt = this.#db.prepare(`
+      SELECT id, content, subject, predicate, object, confidence, decay_rate,
+             source_session_id, source_session_label, created_at
+      FROM memory_facts
+      WHERE user_id = ? AND content LIKE ? AND deleted_at IS NULL
+      ORDER BY created_at DESC
+      LIMIT ?
+    `);
+    stmt.bind([this.#userId, likePattern, limit]);
+
+    type MemFactRow = {
+      id: string;
+      content: string;
+      subject: string | null;
+      predicate: string | null;
+      object: string | null;
+      confidence: number | null;
+      decay_rate: string | null;
+      source_session_id: string;
+      source_session_label: string | null;
+      created_at: string;
+    };
+
+    const rows: MemFactRow[] = [];
+    while (stmt.step()) {
+      rows.push(stmt.get({}) as MemFactRow);
+    }
+    stmt.finalize();
+
+    return rows.map((row) => {
+      const fact: Fact = {
+        id: row.id,
+        subject: row.subject ?? row.content,
+        predicate: row.predicate ?? 'contains',
+        object: row.object ?? '',
+        confidence: row.confidence ?? 0.9,
+        decayRate: (row.decay_rate ?? 'slow') as Fact['decayRate'],
+        timestamp: new Date(row.created_at),
+        sourceSessionId: row.source_session_id,
+        ...(row.source_session_label !== null
+          ? { sourceSessionLabel: row.source_session_label }
+          : {}),
+      };
+      const ageInDays =
+        (Date.now() - fact.timestamp.getTime()) / (1_000 * 60 * 60 * 24);
+      return { fact, score: 1.0, ageInDays };
+    });
   }
 
   /**
@@ -642,8 +809,9 @@ export class LocalStore implements MemoryStore {
   }
 
   /**
-   * Process one batch of embed backlog rows (T-095).
+   * Process one batch of embed backlog rows (T-095, T-118).
    * Uses Promise.all for parallelism across the batch (embed runs in Worker, no API limits).
+   * Processes both raw_log and memory_facts rows.
    * Returns count of rows processed.
    */
   async #processEmbedBatch(): Promise<number> {
@@ -660,19 +828,38 @@ export class LocalStore implements MemoryStore {
 
     // T-108: Fetch pending child rows only (parent_id IS NOT NULL).
     // Old parent rows (parent_id IS NULL, embed_status='pending') are left as-is for fallback search.
-    const stmt = this.#db.prepare(`
+    const rawLogStmt = this.#db.prepare(`
       SELECT id, chunk_text FROM raw_log
       WHERE user_id = ? AND embed_status = 'pending' AND parent_id IS NOT NULL
       ORDER BY rowid ASC
       LIMIT ?
     `);
-    stmt.bind([this.#userId, BATCH_SIZE]);
+    rawLogStmt.bind([this.#userId, BATCH_SIZE]);
 
-    const pendingRows: Array<{ id: string; chunk_text: string }> = [];
-    while (stmt.step()) {
-      pendingRows.push(stmt.get({}) as any);
+    const pendingRows: Array<{ id: string; chunk_text: string; table: 'raw_log' | 'memory_facts' }> = [];
+    while (rawLogStmt.step()) {
+      const row = rawLogStmt.get({}) as { id: string; chunk_text: string };
+      pendingRows.push({ ...row, table: 'raw_log' });
     }
-    stmt.finalize();
+    rawLogStmt.finalize();
+
+    // T-118: Also fetch pending memory_facts rows
+    const remainingSlots = BATCH_SIZE - pendingRows.length;
+    if (remainingSlots > 0) {
+      const memoryFactsStmt = this.#db.prepare(`
+        SELECT id, content AS chunk_text FROM memory_facts
+        WHERE user_id = ? AND embed_status = 'pending'
+        ORDER BY rowid ASC
+        LIMIT ?
+      `);
+      memoryFactsStmt.bind([this.#userId, remainingSlots]);
+
+      while (memoryFactsStmt.step()) {
+        const row = memoryFactsStmt.get({}) as { id: string; chunk_text: string };
+        pendingRows.push({ ...row, table: 'memory_facts' });
+      }
+      memoryFactsStmt.finalize();
+    }
 
     if (pendingRows.length === 0) return 0;
 
@@ -685,6 +872,7 @@ export class LocalStore implements MemoryStore {
           const embedModel = 'Xenova/bge-small-en-v1.5';
 
           // Insert into vec_raw_log (transaction per row for isolation)
+          // T-118: Both raw_log and memory_facts share the same vec_raw_log table
           this.#db.exec('BEGIN');
           const vecStmt = this.#db.prepare(`INSERT INTO vec_raw_log(embedding) VALUES (?)`);
           vecStmt.bind([embeddingJson]);
@@ -693,9 +881,10 @@ export class LocalStore implements MemoryStore {
 
           const vecRowid = this.#db.selectValue('SELECT last_insert_rowid()') as number;
 
-          // Update raw_log: embed_status='done', vec_rowid, embed_model
+          // Update table (raw_log or memory_facts): embed_status='done', vec_rowid, embed_model
+          const tableName = row.table;
           const updateStmt = this.#db.prepare(`
-            UPDATE raw_log
+            UPDATE ${tableName}
             SET embed_status = 'done', embed_error = NULL, embed_model = ?, vec_rowid = ?
             WHERE id = ?
           `);
@@ -706,12 +895,16 @@ export class LocalStore implements MemoryStore {
           this.#db.exec('COMMIT');
 
           // T-103/T-115: Append new embedding to in-memory cache (with eviction)
-          this.#pushToCache({ rowid: vecRowid, embedding });
+          // Note: cache is used for raw_log search; memory_facts search (T-119) will handle its own cache
+          if (row.table === 'raw_log') {
+            this.#pushToCache({ rowid: vecRowid, embedding });
+          }
         } catch (err: unknown) {
           // Embedding failed — update embed_status='failed' with error
           const errorMsg = err instanceof Error ? err.message : String(err);
+          const tableName = row.table;
           const updateStmt = this.#db.prepare(`
-            UPDATE raw_log
+            UPDATE ${tableName}
             SET embed_status = 'failed', embed_error = ?
             WHERE id = ?
           `);

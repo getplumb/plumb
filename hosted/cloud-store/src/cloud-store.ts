@@ -139,6 +139,7 @@ export class CloudStore implements MemoryStore {
 
     return {
       rawLogCount: rawLogCount ?? 0,
+      factCount: 0, // T-118: cloud-store does not yet support memory_facts
       lastIngestion: lastIngestionRow?.timestamp ? new Date(lastIngestionRow.timestamp) : null,
       storageBytes,
     };
@@ -182,6 +183,8 @@ export class CloudStore implements MemoryStore {
           return {
             rawLogId: '',
             skipped: true,
+            factsExtracted: 0,
+            factIds: [],
           };
         }
         throw new Error(`Failed to insert raw_log: ${error.message}`);
@@ -194,6 +197,8 @@ export class CloudStore implements MemoryStore {
 
     return {
       rawLogId,
+      factsExtracted: 0,
+      factIds: [],
     };
   }
 
