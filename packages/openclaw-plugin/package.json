@@ -34,7 +34,7 @@
     "clean": "rm -rf dist *.tsbuildinfo"
   },
   "dependencies": {
-    "@getplumb/core": "0.4.2",
+    "@getplumb/core": "workspace:*",
     "better-sqlite3": "^9.4.3"
   },
   "devDependencies": {

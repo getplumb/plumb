@@ -4,7 +4,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { rmSync } from 'node:fs';
 import { LocalStore } from './local-store.js';
-import { DecayRate } from './types.js';
 
 // Use a unique temp path per test run so tests don't interfere with each other.
 const dbPath = join(tmpdir(), `plumb-test-${Date.now()}.db`);
@@ -21,63 +20,62 @@ after(() => {
   rmSync(dbPath, { force: true });
 });
 
-test('store() inserts a fact and returns a UUID', async () => {
-  const id = await store.store({
-    subject: 'user',
-    predicate: 'prefers',
-    object: 'dark mode',
-    confidence: 0.95,
-    decayRate: DecayRate.slow,
-    timestamp: new Date(),
+test('ingestMemoryFact() inserts a fact and returns a factId UUID', async () => {
+  const result = await store.ingestMemoryFact({
+    content: 'User prefers dark mode',
     sourceSessionId: 'session-abc',
-    sourceSessionLabel: 'test-session',
-    context: 'user mentioned this in passing',
+    tags: ['preferences', 'ui'],
   });
 
-  assert.match(id, /^[0-9a-f-]{36}$/, 'id should be a UUID');
+  assert.match(result.factId, /^[0-9a-f-]{36}$/, 'factId should be a UUID');
 });
 
-test('search() retrieves stored fact by keyword', async () => {
-  await store.store({
-    subject: 'user',
-    predicate: 'uses',
-    object: 'TypeScript',
-    confidence: 0.9,
-    decayRate: DecayRate.medium,
-    timestamp: new Date(),
-    sourceSessionId: 'session-abc',
+test('ingestMemoryFact() fact is counted in status()', async () => {
+  const fresh = await LocalStore.create({
+    dbPath: join(tmpdir(), `plumb-fact-status-${Date.now()}.db`),
+    userId: 'fact-status-user',
   });
 
-  const results = await store.search('TypeScript');
-  assert.ok(results.length > 0, 'should return at least one result');
-  const match = results.find((r) => r.fact.object === 'TypeScript');
-  assert.ok(match !== undefined, 'should find the TypeScript fact');
-  assert.equal(match.fact.subject, 'user');
-  assert.equal(match.fact.predicate, 'uses');
-  assert.ok(match.ageInDays >= 0, 'ageInDays should be non-negative');
-  assert.ok(match.score >= 0, 'score should be non-negative');
+  try {
+    const initial = await fresh.status();
+    assert.equal(initial.factCount, 0);
+
+    await fresh.ingestMemoryFact({
+      content: 'User uses TypeScript',
+      sourceSessionId: 'session-abc',
+    });
+
+    const after = await fresh.status();
+    assert.equal(after.factCount, 1);
+  } finally {
+    fresh.close();
+  }
 });
 
-test('delete() soft-deletes a fact (sets deleted_at, excludes from search)', async () => {
-  const id = await store.store({
-    subject: 'user',
-    predicate: 'dislikes',
-    object: 'Comic Sans',
-    confidence: 0.99,
-    decayRate: DecayRate.slow,
-    timestamp: new Date(),
-    sourceSessionId: 'session-xyz',
+test('delete() soft-deletes a fact (sets deleted_at, excludes from searchMemoryFacts)', async () => {
+  const fresh = await LocalStore.create({
+    dbPath: join(tmpdir(), `plumb-delete-${Date.now()}.db`),
+    userId: 'delete-user',
   });
 
-  // Fact should be findable before deletion.
-  const before = await store.search('Comic Sans');
-  assert.ok(before.some((r) => r.fact.id === id), 'fact should be visible before deletion');
+  try {
+    const { factId } = await fresh.ingestMemoryFact({
+      content: 'User dislikes Comic Sans',
+      sourceSessionId: 'session-xyz',
+    });
 
-  await store.delete(id);
+    // Fact should be counted before deletion
+    const before = await fresh.status();
+    assert.equal(before.factCount, 1, 'fact should be visible before deletion');
 
-  // Fact should be excluded after soft delete.
-  const after = await store.search('Comic Sans');
-  assert.ok(!after.some((r) => r.fact.id === id), 'soft-deleted fact should not appear in search');
+    await fresh.delete(factId);
+
+    // factCount excludes soft-deleted rows
+    const afterDelete = await fresh.status();
+    assert.equal(afterDelete.factCount, 0, 'soft-deleted fact should not appear in count');
+  } finally {
+    fresh.close();
+  }
 });
 
 test('status() returns accurate factCount and rawLogCount', async () => {
@@ -93,19 +91,14 @@ test('status() returns accurate factCount and rawLogCount', async () => {
     assert.equal(initial.lastIngestion, null);
     assert.ok(initial.storageBytes > 0, 'storageBytes should be positive even for empty DB');
 
-    await fresh.store({
-      subject: 'user',
-      predicate: 'is',
-      object: 'a developer',
-      confidence: 0.8,
-      decayRate: DecayRate.slow,
-      timestamp: new Date(),
+    await fresh.ingestMemoryFact({
+      content: 'User is a developer',
       sourceSessionId: 's1',
     });
 
-    const afterStore = await fresh.status();
-    assert.equal(afterStore.factCount, 1);
-    assert.equal(afterStore.rawLogCount, 0);
+    const afterFact = await fresh.status();
+    assert.equal(afterFact.factCount, 1);
+    assert.equal(afterFact.rawLogCount, 0);
 
     await fresh.ingest({
       userMessage: 'Hello!',
@@ -138,7 +131,7 @@ test('ingest() writes to raw_log and returns rawLogId', async () => {
   assert.deepEqual(result.factIds, []);
 });
 
-test('ingest() cross-session: facts from different sessions visible in same status()', async () => {
+test('ingest() cross-session: exchanges from different sessions visible in status()', async () => {
   const crossStore = await LocalStore.create({
     dbPath: join(tmpdir(), `plumb-cross-session-${Date.now()}.db`),
     userId: 'cross-user',

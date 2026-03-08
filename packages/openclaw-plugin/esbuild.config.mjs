@@ -33,7 +33,7 @@ async function main() {
     external: [
       'node:*',
       // WASM SQLite — cannot be bundled, must be present in node_modules at runtime.
-      '@sqlite.org/sqlite-wasm',
+      'better-sqlite3',
       // LLM SDKs — externalized to keep them out of the bundle.
       // The plugin does not call any LLM APIs in this version (MVP).
       'openai',

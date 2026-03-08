@@ -1,9 +1,10 @@
 import { LocalStore, embedQuery } from '@getplumb/core';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { readdir, readFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { createPostExchangeHook } from './hooks/post-exchange.js';
 import { createPreResponseHook } from './hooks/pre-response.js';
-import { NudgeManager } from './nudge.js';
 import { startQueryServer, stopQueryServer } from './query-server.js';
 
 // Define types inline since they aren't re-exported from openclaw/plugin-sdk
@@ -67,6 +68,111 @@ type OpenClawPluginDefinition = {
 };
 
 const DEFAULT_DB_PATH = join(homedir(), '.plumb', 'memory.db');
+
+/**
+ * One-shot seeding of memory_facts from existing workspace memory files.
+ * Runs only when the store has zero facts (first activation).
+ * Splits each .md file on ## headings and ingests each section as a fact.
+ * Tagged with source:memory-file and the filename date.
+ * Confidence 0.85 (slightly below fresh agent-written facts at 0.95), decay slow.
+ */
+async function seedFromMemoryFiles(
+  store: LocalStore,
+  userId: string,
+  api: OpenClawPluginApi
+): Promise<void> {
+  const status = await store.status();
+  if (status.factCount > 0) {
+    api.logger.debug?.('[plumb] Skipping memory file seed — store already has facts');
+    return;
+  }
+
+  // Candidate directories for memory files (workspace root / memory/)
+  const candidates = [
+    join(homedir(), '.openclaw', 'workspace', 'memory'),
+    join(homedir(), 'workspace', 'memory'),
+  ];
+
+  // Also check MEMORY.md in workspace root
+  const memoryMdCandidates = [
+    join(homedir(), '.openclaw', 'workspace', 'MEMORY.md'),
+    join(homedir(), 'workspace', 'MEMORY.md'),
+  ];
+
+  let totalIngested = 0;
+
+  // Seed MEMORY.md (hard invariants file) first, with higher confidence
+  for (const mdPath of memoryMdCandidates) {
+    if (!existsSync(mdPath)) continue;
+    try {
+      const content = await readFile(mdPath, 'utf-8');
+      const sections = splitOnHeadings(content);
+      for (const section of sections) {
+        if (section.trim().length < 20) continue;
+        await store.ingestMemoryFact({
+          content: section.trim(),
+          sourceSessionId: 'seed:MEMORY.md',
+          tags: ['source:memory-file', 'source:MEMORY.md'],
+          confidence: 0.9,
+          decayRate: 'slow',
+        });
+        totalIngested++;
+      }
+    } catch (err) {
+      api.logger.warn?.(`[plumb] Could not seed ${mdPath}: ${err}`);
+    }
+    break; // Use first found
+  }
+
+  // Seed daily memory files
+  for (const memDir of candidates) {
+    if (!existsSync(memDir)) continue;
+    try {
+      const files = await readdir(memDir);
+      const mdFiles = files.filter((f) => /^\d{4}-\d{2}-\d{2}\.md$/.test(f)).sort();
+
+      for (const filename of mdFiles) {
+        const date = filename.replace('.md', '');
+        try {
+          const content = await readFile(join(memDir, filename), 'utf-8');
+          const sections = splitOnHeadings(content);
+          for (const section of sections) {
+            if (section.trim().length < 20) continue;
+            await store.ingestMemoryFact({
+              content: section.trim(),
+              sourceSessionId: `seed:${filename}`,
+              tags: ['source:memory-file', `date:${date}`],
+              confidence: 0.85,
+              decayRate: 'slow',
+            });
+            totalIngested++;
+          }
+        } catch (err) {
+          api.logger.warn?.(`[plumb] Could not seed ${filename}: ${err}`);
+        }
+      }
+    } catch (err) {
+      api.logger.warn?.(`[plumb] Could not read memory dir ${memDir}: ${err}`);
+    }
+    break; // Use first found directory
+  }
+
+  if (totalIngested > 0) {
+    api.logger.info(`[plumb] Seeded ${totalIngested} facts from existing memory files`);
+  }
+}
+
+/**
+ * Split markdown content on ## headings.
+ * Returns one string per section (including the heading).
+ * Falls back to the full content as a single chunk if no headings found.
+ */
+function splitOnHeadings(content: string): string[] {
+  const sections = content.split(/^##\s+/m);
+  if (sections.length <= 1) return [content];
+  // Re-attach the ## prefix that was consumed by split
+  return sections.slice(1).map((s) => `## ${s}`);
+}
 
 /**
  * Plumb OpenClaw plugin entry point.
@@ -134,7 +240,11 @@ export const plugin: OpenClawPluginDefinition = {
     };
     store = await LocalStore.create(storeOptions);
     storeInitialized = true;
-    const nudgeManager = new NudgeManager();
+
+    // Auto-seed from existing memory files on first activation (Gap 3)
+    void seedFromMemoryFiles(store, userId, api).catch((err) => {
+      api.logger.warn?.(`[plumb] Memory file seeding failed: ${err}`);
+    });
 
     // Start the backlog processor (T-087: embed drain loop only)
     store.startBacklogProcessor();
@@ -150,6 +260,60 @@ export const plugin: OpenClawPluginDefinition = {
     const queryPort = (api.pluginConfig?.queryPort as number | undefined) ??
                       Number(process.env.PLUMB_QUERY_PORT || '18791');
     queryServer = startQueryServer(store, queryPort, api.logger);
+
+    // Register the plumb_remember tool for agent-driven memory writes
+    api.registerTool((toolCtx) => ({
+      name: 'plumb_remember',
+      description: 'Store a discrete fact or piece of information in Plumb memory. Use this whenever you learn something worth remembering across sessions — user preferences, decisions, important context. Write facts in plain English, one idea per call.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          fact: {
+            type: 'string',
+            description: 'The fact or memory to store, written in plain English (e.g. "Clay prefers dark mode in all editors")'
+          },
+          confidence: {
+            type: 'string',
+            enum: ['high', 'medium', 'low'],
+            description: 'How confident you are in this fact. Default: high'
+          },
+          tags: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Optional topic tags for better retrieval (e.g. ["preferences", "ui"])'
+          },
+          decay: {
+            type: 'string',
+            enum: ['slow', 'medium', 'fast'],
+            description: 'How quickly this fact should decay in relevance. Use slow for stable facts, fast for ephemeral context. Default: slow'
+          }
+        },
+        required: ['fact']
+      },
+      execute: async (params: { fact: string; confidence?: string; tags?: string[]; decay?: string }) => {
+        const confidenceMap: Record<string, number> = {
+          high: 0.95,
+          medium: 0.75,
+          low: 0.5,
+        };
+        const confidence = confidenceMap[params.confidence ?? 'high'] ?? 0.95;
+        const decayRate = (params.decay ?? 'slow') as 'slow' | 'medium' | 'fast';
+        const sessionId = (toolCtx as any)?.sessionId ?? 'unknown';
+
+        try {
+          const { factId } = await store.ingestMemoryFact({
+            content: params.fact,
+            sourceSessionId: sessionId,
+            ...(params.tags !== undefined && { tags: params.tags }),
+            confidence,
+            decayRate,
+          });
+          return `Remembered: "${params.fact.slice(0, 80)}${params.fact.length > 80 ? '...' : ''}" (id: ${factId})`;
+        } catch (err) {
+          return `Error storing memory: ${err instanceof Error ? err.message : String(err)}`;
+        }
+      }
+    }));
 
     // Register the plumb_search tool for mid-reasoning RAG lookups (T-116)
     api.registerTool(() => ({
@@ -222,7 +386,7 @@ export const plugin: OpenClawPluginDefinition = {
     api.on('llm_output', createPostExchangeHook(store, userId, pendingPrompts, dbPath));
 
     // Register the before_prompt_build hook for memory injection
-    api.on('before_prompt_build', createPreResponseHook(store, nudgeManager, shadowMode, pendingPrompts));
+    api.on('before_prompt_build', createPreResponseHook(store, shadowMode, pendingPrompts));
 
     api.logger.info('[plumb] Plugin activated');
     } catch (error) {
