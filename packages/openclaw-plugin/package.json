@@ -1,6 +1,6 @@
 {
   "name": "@getplumb/plumb",
-  "version": "0.4.6",
+  "version": "0.4.7",
   "description": "Plumb OpenClaw plugin — auto-ingest and memory injection for OpenClaw",
   "license": "MIT",
   "type": "module",
@@ -36,7 +36,7 @@
     "clean": "rm -rf dist *.tsbuildinfo"
   },
   "dependencies": {
-    "@getplumb/core": "0.4.6",
+    "@getplumb/core": "0.4.7",
     "better-sqlite3": "^9.4.3"
   },
   "devDependencies": {

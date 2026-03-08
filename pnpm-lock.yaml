@@ -84,8 +84,8 @@ importers:
   packages/cli:
     dependencies:
       '@getplumb/core':
-        specifier: 0.4.6
-        version: 0.4.6(ws@8.19.0)(zod@3.25.76)
+        specifier: 0.4.7
+        version: 0.4.7(ws@8.19.0)(zod@3.25.76)
       '@inquirer/prompts':
         specifier: ^8.3.0
         version: 8.3.0(@types/node@25.3.3)
@@ -142,8 +142,8 @@ importers:
   packages/mcp-server:
     dependencies:
       '@getplumb/core':
-        specifier: 0.4.6
-        version: 0.4.6(ws@8.19.0)(zod@4.3.6)
+        specifier: 0.4.7
+        version: 0.4.7(ws@8.19.0)(zod@4.3.6)
       '@modelcontextprotocol/sdk':
         specifier: ^1.27.1
         version: 1.27.1(zod@4.3.6)
@@ -164,8 +164,8 @@ importers:
   packages/openclaw-plugin:
     dependencies:
       '@getplumb/core':
-        specifier: 0.4.4
-        version: 0.4.4(ws@8.19.0)(zod@4.3.6)
+        specifier: 0.4.7
+        version: 0.4.7(ws@8.19.0)(zod@4.3.6)
       better-sqlite3:
         specifier: ^9.4.3
         version: 9.6.0
@@ -904,12 +904,8 @@ packages:
     resolution: {integrity: sha512-d9zaMRSTIKDLhctzH12MtXvJKSSUhaHcjV+2Z+GK+EEY7XKpP5yR4x+N3TAcHTcu963nIr+TMcCb4DBCYX1z6Q==}
     engines: {node: ^12.22.0 || ^14.17.0 || >=16.0.0}
 
-  '@getplumb/core@0.4.4':
-    resolution: {integrity: sha512-2m3Zqzr82qT7XMU9tYGi0mQV5XDnYhwsFshjz8j9UiWaQtJvcRQVEcKbEle8uUjutzsDheA1WyGpcf/80wkoIQ==}
-    engines: {node: '>=18'}
-
-  '@getplumb/core@0.4.6':
-    resolution: {integrity: sha512-ipiyu8MZeFfZEUOTBOUhL7PzCuWfL33TXjdCFDsF/wP6BWfRcAs2OeVL2CZpIcFJYwUfMaXncTxi4s4rLEIcgg==}
+  '@getplumb/core@0.4.7':
+    resolution: {integrity: sha512-+Kmjd2ioZHC/Hh0puO6nIe6rDNbq0K0KmwK0FOeevdOldL5ARhaBCmyFLFeEyOfMZTfILYu6+tDAHNzb4m/EpA==}
     engines: {node: '>=18'}
 
   '@google/genai@1.43.0':
@@ -7185,22 +7181,7 @@ snapshots:
 
   '@eslint/js@8.57.1': {}
 
-  '@getplumb/core@0.4.4(ws@8.19.0)(zod@4.3.6)':
-    dependencies:
-      better-sqlite3: 9.6.0
-      openai: 4.104.0(ws@8.19.0)(zod@4.3.6)
-    optionalDependencies:
-      '@anthropic-ai/sdk': 0.78.0(zod@4.3.6)
-      '@xenova/transformers': 2.17.2
-    transitivePeerDependencies:
-      - bare-abort-controller
-      - bare-buffer
-      - encoding
-      - react-native-b4a
-      - ws
-      - zod
-
-  '@getplumb/core@0.4.6(ws@8.19.0)(zod@3.25.76)':
+  '@getplumb/core@0.4.7(ws@8.19.0)(zod@3.25.76)':
     dependencies:
       better-sqlite3: 9.6.0
       openai: 4.104.0(ws@8.19.0)(zod@3.25.76)
@@ -7215,7 +7196,7 @@ snapshots:
       - ws
       - zod
 
-  '@getplumb/core@0.4.6(ws@8.19.0)(zod@4.3.6)':
+  '@getplumb/core@0.4.7(ws@8.19.0)(zod@4.3.6)':
     dependencies:
       better-sqlite3: 9.6.0
       openai: 4.104.0(ws@8.19.0)(zod@4.3.6)
