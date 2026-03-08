@@ -24,7 +24,6 @@ type PluginHookAgentContext = {
 };
 
 const INJECTION_TIMEOUT_MS = 800;
-const MAX_PENDING_PROMPTS = 1000; // Prevent memory leaks
 
 /**
  * Creates a hook handler that retrieves and injects memory context before each agent response.
@@ -36,33 +35,18 @@ const MAX_PENDING_PROMPTS = 1000; // Prevent memory leaks
  *
  * @param store LocalStore instance for memory retrieval
  * @param shadowMode If true, retrieves and logs what would be injected but doesn't actually inject
- * @param pendingPrompts Shared map for storing prompts to be consumed by post-exchange hook
  * @param dbPath Path to the Plumb database for orientation check
  * @returns Hook handler for before_prompt_build event
  */
 export function createPreResponseHook(
   store: LocalStore | null,
   shadowMode = false,
-  pendingPrompts?: Map<string, string>,
   dbPath?: string
 ) {
   return async (
     event: PluginHookBeforePromptBuildEvent,
     ctx: PluginHookAgentContext
   ): Promise<PluginHookBeforePromptBuildResult | void> => {
-    // Store the user prompt in shared state for the post-exchange hook
-    if (pendingPrompts && ctx.sessionId && event.prompt) {
-      // Prevent memory leaks by enforcing a size cap
-      if (pendingPrompts.size >= MAX_PENDING_PROMPTS) {
-        // Remove the oldest entry (first entry in the map)
-        const firstKey = pendingPrompts.keys().next().value;
-        if (firstKey) {
-          pendingPrompts.delete(firstKey);
-        }
-      }
-      pendingPrompts.set(ctx.sessionId, event.prompt);
-    }
-
     if (!store) {
       return;
     }

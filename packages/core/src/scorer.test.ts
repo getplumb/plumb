@@ -1,10 +1,10 @@
 /**
- * scorer.test.ts — decay curve verification for computeDecay(), scoreRawLog(), and scoreMemoryFact().
+ * scorer.test.ts — decay curve verification for computeDecay() and scoreMemoryFact().
  */
 
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
-import { computeDecay, scoreRawLog, scoreMemoryFact, MEMORY_FACT_BOOST } from './scorer.js';
+import { computeDecay, scoreMemoryFact, MEMORY_FACT_BOOST } from './scorer.js';
 
 describe('computeDecay', () => {
   it('returns 1.0 at age 0', () => {
@@ -31,26 +31,6 @@ describe('computeDecay', () => {
     const medium = computeDecay(0.012, 90);
     const slow = computeDecay(0.003, 90);
     assert.ok(slow > medium, 'slow decay should be higher than medium at same age');
-  });
-});
-
-describe('scoreRawLog', () => {
-  it('returns score of 1.0 for brand new chunk', () => {
-    const { score, isCold } = scoreRawLog({ timestamp: new Date() });
-    assert.ok(score > 0.99 && score <= 1.0, `expected ~1.0, got ${score}`);
-    assert.equal(isCold, false);
-  });
-
-  it('returns lower score for older chunk', () => {
-    const old = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000); // 60 days ago
-    const { score } = scoreRawLog({ timestamp: old });
-    assert.ok(score > 0.4 && score < 0.5, `expected ~0.486 at 60 days, got ${score}`);
-  });
-
-  it('marks very old chunks as cold', () => {
-    const ancient = new Date(Date.now() - 1000 * 24 * 60 * 60 * 1000); // ~2.7 years
-    const { isCold } = scoreRawLog({ timestamp: ancient });
-    assert.equal(isCold, true);
   });
 });
 

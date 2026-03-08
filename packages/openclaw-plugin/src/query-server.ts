@@ -17,10 +17,11 @@ interface QueryRequest {
 
 interface QueryResponse {
   results: Array<{
-    chunk_text: string;
-    session_id: string;
-    session_label: string | null;
-    timestamp: string;
+    content: string;
+    source_session_id: string;
+    source_session_label: string | null;
+    created_at: string;
+    tags: readonly string[] | null;
     final_score: number;
   }>;
   latencyMs: number;
@@ -59,15 +60,16 @@ export function startQueryServer(store: LocalStore, port: number, logger?: { inf
 
         // Execute search and measure latency
         const startMs = performance.now();
-        const results = await store.searchRawLog(parsed.query, topK);
+        const results = await store.searchMemoryFacts(parsed.query, topK);
         const latencyMs = performance.now() - startMs;
 
         const response: QueryResponse = {
           results: results.map((r) => ({
-            chunk_text: r.chunk_text,
-            session_id: r.session_id,
-            session_label: r.session_label,
-            timestamp: r.timestamp,
+            content: r.content,
+            source_session_id: r.source_session_id,
+            source_session_label: r.source_session_label,
+            created_at: r.created_at,
+            tags: r.tags,
             final_score: r.final_score,
           })),
           latencyMs,

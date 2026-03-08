@@ -3,7 +3,6 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { readdir, readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { createPostExchangeHook } from './hooks/post-exchange.js';
 import { createPreResponseHook } from './hooks/pre-response.js';
 import { startQueryServer, stopQueryServer } from './query-server.js';
 
@@ -16,7 +15,6 @@ type PluginLogger = {
 };
 
 type PluginHookHandlerMap = {
-  llm_output: (event: any, ctx: any) => Promise<void> | void;
   session_end: (event: any, ctx: any) => Promise<void> | void;
   before_prompt_build: (event: any, ctx: any) => Promise<any> | void;
   [key: string]: any;
@@ -177,8 +175,8 @@ function splitOnHeadings(content: string): string[] {
 /**
  * Plumb OpenClaw plugin entry point.
  *
- * Automatically ingests every LLM exchange into the local memory store via the
- * llm_output hook. Runs fire-and-forget so it never blocks the agent pipeline.
+ * Injects memory context via before_prompt_build hook and provides
+ * plumb_remember and plumb_search tools for agent-driven memory management.
  */
 export const plugin: OpenClawPluginDefinition = {
   id: 'plumb',
@@ -347,10 +345,11 @@ export const plugin: OpenClawPluginDefinition = {
 
           const data = await response.json() as {
             results?: Array<{
-              chunk_text: string;
-              session_id: string;
-              session_label: string | null;
-              timestamp: string;
+              content: string;
+              source_session_id: string;
+              source_session_label: string | null;
+              created_at: string;
+              tags: readonly string[] | null;
               final_score: number;
             }>;
             latencyMs?: number;
@@ -363,10 +362,11 @@ export const plugin: OpenClawPluginDefinition = {
           // Format results as a readable string
           const lines = ['Search results from Plumb memory:', ''];
           for (const result of data.results) {
-            const excerpt = result.chunk_text.slice(0, 200);
-            const sessionLabel = result.session_label ?? result.session_id;
-            const timestamp = new Date(result.timestamp).toLocaleString();
-            lines.push(`- [${sessionLabel}] ${timestamp}:`);
+            const excerpt = result.content.slice(0, 200);
+            const sessionLabel = result.source_session_label ?? result.source_session_id;
+            const timestamp = new Date(result.created_at).toLocaleString();
+            const tagsStr = result.tags && result.tags.length > 0 ? ` [${result.tags.join(', ')}]` : '';
+            lines.push(`- [${sessionLabel}]${tagsStr} ${timestamp}:`);
             lines.push(`  "${excerpt}"`);
             lines.push('');
           }
@@ -378,15 +378,8 @@ export const plugin: OpenClawPluginDefinition = {
       }
     }));
 
-    // Shared state map for threading user prompts from before_prompt_build to llm_output
-    // Key: sessionId, Value: user message prompt
-    const pendingPrompts = new Map<string, string>();
-
-    // Register the llm_output hook for auto-ingest
-    api.on('llm_output', createPostExchangeHook(store, userId, pendingPrompts, dbPath));
-
     // Register the before_prompt_build hook for memory injection
-    api.on('before_prompt_build', createPreResponseHook(store, shadowMode, pendingPrompts, dbPath));
+    api.on('before_prompt_build', createPreResponseHook(store, shadowMode, dbPath));
 
     api.logger.info('[plumb] Plugin activated');
     } catch (error) {
