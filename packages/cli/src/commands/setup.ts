@@ -601,15 +601,15 @@ async function setupOpenClaw(): Promise<void> {
         if (shouldPatch) {
           const result = await patchWorkspaceFiles(workspaceDir);
 
-          if (result.agentsMd) {
+          if (result.agentsMd && !result.agentsMdSkipped) {
             console.log('  ✓ Patched AGENTS.md');
-          } else if (existsSync(agentsMdPath)) {
+          } else if (result.agentsMdSkipped) {
             console.log('  ✓ Skipped AGENTS.md (## Plumb Memory already present)');
           }
 
-          if (result.memoryMd) {
+          if (result.memoryMd && !result.memoryMdSkipped) {
             console.log('  ✓ Patched MEMORY.md');
-          } else if (existsSync(memoryMdPath)) {
+          } else if (result.memoryMdSkipped) {
             console.log('  ✓ Skipped MEMORY.md (## Plumb Memory already present)');
           }
         }
