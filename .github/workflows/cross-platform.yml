@@ -109,8 +109,12 @@ jobs:
           pnpm --filter @getplumb/plumb build
 
       - name: Pack plugin tarball
+        shell: bash
         working-directory: packages/openclaw-plugin
-        run: npm pack --pack-destination ../../dist-pack
+        run: |
+          npm pack
+          # Move tarball to a known location with a fixed name
+          mv getplumb-plumb-*.tgz $GITHUB_WORKSPACE/plumb-plugin.tgz
 
       - name: Install into fresh directory (simulate real user install)
         shell: bash
@@ -119,7 +123,7 @@ jobs:
           cd /tmp/plumb-smoke-test
           npm init -y
           # Install from the local pack (swap for @getplumb/plumb on real publish)
-          npm install $GITHUB_WORKSPACE/dist-pack/*.tgz
+          npm install $GITHUB_WORKSPACE/plumb-plugin.tgz
 
       - name: Run smoke test
         shell: bash
