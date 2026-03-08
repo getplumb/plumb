@@ -50,7 +50,7 @@
     "node": ">=18"
   },
   "dependencies": {
-    "@getplumb/core": "0.4.8",
+    "@getplumb/core": "workspace:*",
     "@inquirer/prompts": "^8.3.0",
     "commander": "^12.1.0",
     "openai": "^4.104.0",
