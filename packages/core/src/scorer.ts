@@ -7,8 +7,11 @@ const COLD_THRESHOLD = 0.01;
 /** Memory fact score boost multiplier (applied after RRF fusion). */
 export const MEMORY_FACT_BOOST = 2.0;
 
-/** Memory fact minimum score threshold (after boost) for fallback logic. */
-export const MEMORY_FACT_MIN_SCORE = 0.3;
+/** Memory fact minimum score threshold (after boost) for fallback logic.
+ *  Calibrated for RRF hybrid scores: top ~25% of boosted fact scores qualify,
+ *  triggering the raw_log cap (1 result) when strong facts are present.
+ */
+export const MEMORY_FACT_MIN_SCORE = 0.054;
 
 export interface ScoreResult {
   readonly score: number;
