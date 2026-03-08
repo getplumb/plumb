@@ -23,7 +23,7 @@ type PluginHookHandlerMap = {
 type AnyAgentTool = {
   name: string;
   description: string;
-  inputSchema: object;
+  parameters: object;
   execute: (params: any) => Promise<string>;
 };
 
@@ -263,7 +263,7 @@ export const plugin: OpenClawPluginDefinition = {
     api.registerTool((toolCtx) => ({
       name: 'plumb_remember',
       description: 'Store a discrete fact or piece of information in Plumb memory. Use this whenever you learn something worth remembering across sessions — user preferences, decisions, important context. Write facts in plain English, one idea per call.',
-      inputSchema: {
+      parameters: {
         type: 'object',
         properties: {
           fact: {
@@ -317,7 +317,7 @@ export const plugin: OpenClawPluginDefinition = {
     api.registerTool(() => ({
       name: 'plumb_search',
       description: 'Search Plumb memory for relevant context about a specific topic or subtopic. Use this when the initial memory context does not cover something specific you need to reason about.',
-      inputSchema: {
+      parameters: {
         type: 'object',
         properties: {
           query: {
