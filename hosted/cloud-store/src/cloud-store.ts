@@ -15,8 +15,29 @@
 
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { createHash } from 'node:crypto';
-import type { MemoryStore, IngestResult, MessageExchange, StoreStatus } from '@getplumb/core';
-import { embed, embedQuery, rerankScores, formatExchange, Bm25 } from '@getplumb/core';
+import type { MemoryStore, StoreStatus } from '@getplumb/core';
+import { embed, embedQuery, rerankScores, Bm25 } from '@getplumb/core';
+
+// cloud-store maintains its own raw log ingest types (not exported from core since T-128)
+interface IngestResult {
+  rawLogId: string;
+  skipped?: boolean;
+  factsExtracted: number;
+  factIds: string[];
+}
+
+interface MessageExchange {
+  userMessage: string;
+  agentResponse: string;
+  timestamp: Date;
+  source: string;
+  sessionId: string;
+  sessionLabel?: string;
+}
+
+function formatExchange(exchange: MessageExchange): string {
+  return `User: ${exchange.userMessage}\nAssistant: ${exchange.agentResponse}`;
+}
 import pg from 'pg';
 
 const { Pool } = pg;
@@ -137,8 +158,11 @@ export class CloudStore implements MemoryStore {
     // For now, return 0 (TODO: implement via direct Postgres query if needed)
     const storageBytes = 0;
 
+    // rawLogCount suppressed — StoreStatus no longer includes it (T-128)
+    // cloud-store tracks raw_log internally but doesn't surface it via StoreStatus
+    void rawLogCount;
+
     return {
-      rawLogCount: rawLogCount ?? 0,
       factCount: 0, // T-118: cloud-store does not yet support memory_facts
       lastIngestion: lastIngestionRow?.timestamp ? new Date(lastIngestionRow.timestamp) : null,
       storageBytes,
