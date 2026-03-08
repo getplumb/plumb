@@ -3,7 +3,7 @@
  */
 
 import { strict as assert } from 'node:assert';
-import { describe, it } from 'node:test';
+import { describe, it } from 'vitest';
 import { computeDecay, scoreMemoryFact, MEMORY_FACT_BOOST } from './scorer.js';
 
 describe('computeDecay', () => {

@@ -37,7 +37,7 @@
   },
   "scripts": {
     "build": "tsc",
-    "test": "node --import tsx/esm --test 'src/**/*.test.ts'",
+    "test": "vitest run",
     "lint": "echo \"No lint yet\" && exit 0",
     "clean": "rm -rf dist *.tsbuildinfo",
     "prepublishOnly": "pnpm build",
@@ -59,7 +59,8 @@
   "devDependencies": {
     "@types/node": "^25.3.3",
     "tsx": "^4.0.0",
-    "typescript": "^5.4.0"
+    "typescript": "^5.4.0",
+    "vitest": "^4.0.18"
   },
   "optionalDependencies": {
     "@anthropic-ai/sdk": "^0.78.0"

@@ -32,7 +32,7 @@
   },
   "scripts": {
     "build": "tsc",
-    "test": "node --import tsx/esm --test src/**/*.test.ts",
+    "test": "vitest run",
     "lint": "echo \"No lint yet\" && exit 0",
     "clean": "rm -rf dist *.tsbuildinfo",
     "prepublishOnly": "pnpm build"
@@ -40,7 +40,8 @@
   "devDependencies": {
     "tsx": "^4.0.0",
     "typescript": "^5.4.0",
-    "@types/better-sqlite3": "^7.6.13"
+    "@types/better-sqlite3": "^7.6.13",
+    "vitest": "^4.0.18"
   },
   "dependencies": {
     "openai": "^4.80.0",
