@@ -108,7 +108,7 @@ type AnyAgentTool = {
   name: string;
   description: string;
   parameters: object;
-  execute: (params: any) => Promise<string>;
+  execute: (...args: any[]) => Promise<string>;
 };
 
 type OpenClawPluginToolContext = {
@@ -386,7 +386,7 @@ export const plugin: OpenClawPluginDefinition = {
         },
         required: ['fact']
       },
-      execute: async (params: { fact: string; confidence?: string; tags?: string[]; decay?: string }) => {
+      execute: async (_toolCallId: string, params: { fact: string; confidence?: string; tags?: string[]; decay?: string }) => {
         const confidenceMap: Record<string, number> = {
           high: 0.95,
           medium: 0.75,
@@ -429,7 +429,7 @@ export const plugin: OpenClawPluginDefinition = {
         },
         required: ['query']
       },
-      execute: async (params: { query: string; topK?: number }) => {
+      execute: async (_toolCallId: string, params: { query: string; topK?: number }) => {
         try {
           const response = await fetch(`http://127.0.0.1:${queryPort}/query`, {
             method: 'POST',
