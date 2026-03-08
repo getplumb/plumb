@@ -14,6 +14,7 @@
 
 import { rmSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { tmpdir } from 'node:os';
 
 const smokeDir = process.env.PLUMB_SMOKE_DIR ?? join(tmpdir(), 'plumb-smoke-test');
@@ -45,7 +46,8 @@ async function main() {
   // --- 1. Import @getplumb/plumb (which bundles and re-exports LocalStore) ---
   let LocalStore;
   try {
-    const plumb = await import(join(smokeDir, 'node_modules', '@getplumb', 'plumb', 'dist', 'index.js'));
+    const plumbPath = join(smokeDir, 'node_modules', '@getplumb', 'plumb', 'dist', 'index.js');
+    const plumb = await import(pathToFileURL(plumbPath).href);
     LocalStore = plumb.LocalStore;
     assert('@getplumb/plumb imports without error', !!LocalStore);
   } catch (err) {
