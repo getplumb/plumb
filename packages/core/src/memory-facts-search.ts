@@ -102,11 +102,13 @@ export async function searchMemoryFacts(
   query: string,
   limit = 10,
 ): Promise<readonly MemoryFactSearchResult[]> {
-  // ── 1. Fetch all memory_facts rows (non-deleted, with embeddings) ────────
+  // ── 1. Fetch all memory_facts rows (non-deleted) ─────────────────────────
+  // Include pending facts — BM25 works regardless of embed_status.
+  // Vector search only uses rows where vec_rowid IS NOT NULL (already embedded).
   const stmt = db.prepare(
     `SELECT id, content, source_session_id, source_session_label, tags, created_at, decay_rate, vec_rowid
      FROM memory_facts
-     WHERE user_id = ? AND deleted_at IS NULL AND embed_status = 'done'
+     WHERE user_id = ? AND deleted_at IS NULL
      ORDER BY created_at DESC`
   );
   stmt.bind([userId]);
