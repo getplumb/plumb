@@ -9,6 +9,7 @@ import ora from 'ora';
 import { LocalStore } from '@getplumb/core';
 import { getConfigPath, getMcpSnippet, type SupportedTool } from './connect.js';
 import { getDefaultDbPath } from '../utils/db-path.js';
+import { patchWorkspaceFiles } from '../utils/workspace-patcher.js';
 
 const execAsync = promisify(exec);
 
@@ -353,6 +354,45 @@ function getOpenClawConfigPath(): string | null {
 }
 
 /**
+ * Detect the OpenClaw workspace directory.
+ * Tries multiple common locations in order.
+ */
+function detectWorkspaceDir(): string | null {
+  // Try OPENCLAW_WORKSPACE env var
+  if (process.env['OPENCLAW_WORKSPACE'] && existsSync(process.env['OPENCLAW_WORKSPACE'])) {
+    return process.env['OPENCLAW_WORKSPACE'];
+  }
+
+  // Try reading workspace field from openclaw.json if it exists
+  const configPath = getOpenClawConfigPath();
+  if (configPath && existsSync(configPath)) {
+    try {
+      const configContent = readFileSync(configPath, 'utf-8');
+      const config = JSON.parse(configContent);
+      if (config.workspace && existsSync(config.workspace)) {
+        return config.workspace;
+      }
+    } catch {
+      // Ignore parsing errors, fall through to defaults
+    }
+  }
+
+  // Try common default locations
+  const candidates = [
+    join(homedir(), '.openclaw', 'workspace'),
+    join(homedir(), 'workspace'),
+  ];
+
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
+/**
  * Print manual instructions for configuring Plumb in openclaw.json.
  */
 function printOpenClawManualInstructions(userId: string): void {
@@ -539,7 +579,44 @@ async function setupOpenClaw(): Promise<void> {
 
     // Write back
     writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
-    console.log('\n✓ plumb entry added to openclaw.json. Restart OpenClaw to activate.\n');
+    console.log('\n✓ plumb entry added to openclaw.json. Restart OpenClaw to activate.');
+
+    // Offer to patch workspace files (AGENTS.md, MEMORY.md)
+    const workspaceDir = detectWorkspaceDir();
+    if (workspaceDir) {
+      // Check if there are any files to patch
+      const agentsMdPath = join(workspaceDir, 'AGENTS.md');
+      const memoryMdPath = join(workspaceDir, 'MEMORY.md');
+      const hasWorkspaceFiles = existsSync(agentsMdPath) || existsSync(memoryMdPath);
+
+      if (hasWorkspaceFiles) {
+        console.log('\n📋 Want to update your workspace files so Terra knows how to use Plumb?');
+        console.log('   This adds a ## Plumb Memory section to AGENTS.md and MEMORY.md.');
+
+        const shouldPatch = await confirm({
+          message: 'Update workspace files?',
+          default: true,
+        });
+
+        if (shouldPatch) {
+          const result = await patchWorkspaceFiles(workspaceDir);
+
+          if (result.agentsMd && !result.agentsMdSkipped) {
+            console.log('  ✓ Patched AGENTS.md');
+          } else if (result.agentsMdSkipped) {
+            console.log('  ✓ Skipped AGENTS.md (## Plumb Memory already present)');
+          }
+
+          if (result.memoryMd && !result.memoryMdSkipped) {
+            console.log('  ✓ Patched MEMORY.md');
+          } else if (result.memoryMdSkipped) {
+            console.log('  ✓ Skipped MEMORY.md (## Plumb Memory already present)');
+          }
+        }
+      }
+    }
+
+    console.log();
   } catch (err: unknown) {
     // On error, fall through to manual instructions
     const message = err instanceof Error ? err.message : String(err);
