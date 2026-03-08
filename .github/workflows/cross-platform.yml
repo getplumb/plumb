@@ -1,0 +1,150 @@
+name: Cross-Platform Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  # Run before publishing to catch issues early
+  workflow_dispatch:
+    inputs:
+      run_install_smoke:
+        description: 'Run full pack+install smoke test'
+        type: boolean
+        default: false
+
+# -------------------------------------------------------------------
+# STRATEGY
+#
+# Three layers of testing, cheapest-to-run first:
+#
+# 1. build-and-unit  — build the monorepo + run vitest on every
+#    OS × Node combo. Catches: native addon (better-sqlite3) compile
+#    failures, path separator bugs, ESM/CJS issues.
+#
+# 2. install-smoke   — `npm pack` the plugin, install it into a
+#    fresh temp dir, exercise plumb_remember + plumb_search directly
+#    (no openclaw process needed). Catches: postinstall failures,
+#    bundled dep issues, runtime import errors.
+#
+# 3. (future) openclaw-e2e — full openclaw + plumb install flow.
+#    Needs a --headless/--ci openclaw flag. Marked TODO below.
+# -------------------------------------------------------------------
+
+jobs:
+  # ----------------------------------------------------------------
+  # Job 1: Build + unit tests
+  # ----------------------------------------------------------------
+  build-and-unit:
+    name: Build & Unit (${{ matrix.os }} / Node ${{ matrix.node }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false   # see all failures, not just the first
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        node: ['18', '20', '22']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '10'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: 'pnpm'
+
+      - name: Install deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Build all packages
+        run: pnpm build
+
+      - name: Run unit tests
+        run: pnpm test
+        env:
+          # Vitest needs this on Windows to avoid interactive TTY issues
+          CI: true
+
+  # ----------------------------------------------------------------
+  # Job 2: Pack + install smoke test
+  # Simulates what a real user does: npm install @getplumb/plumb
+  # ----------------------------------------------------------------
+  install-smoke:
+    name: Install Smoke (${{ matrix.os }} / Node ${{ matrix.node }})
+    runs-on: ${{ matrix.os }}
+    # Run on push to main, PRs, or manual trigger with flag set
+    if: |
+      github.event_name == 'push' ||
+      github.event_name == 'pull_request' ||
+      (github.event_name == 'workflow_dispatch' && inputs.run_install_smoke)
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        node: ['18', '20', '22']
+        # Reduce matrix size slightly — spot-check node 20 on all OS,
+        # full matrix on ubuntu only
+        exclude:
+          - os: windows-latest
+            node: '18'
+          - os: macos-latest
+            node: '18'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '10'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: 'pnpm'
+
+      - name: Install deps + build plugin
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm --filter @getplumb/plumb build
+
+      - name: Pack plugin tarball
+        working-directory: packages/openclaw-plugin
+        run: npm pack --pack-destination ../../dist-pack
+
+      - name: Install into fresh directory (simulate real user install)
+        shell: bash
+        run: |
+          mkdir -p /tmp/plumb-smoke-test
+          cd /tmp/plumb-smoke-test
+          npm init -y
+          # Install from the local pack (swap for @getplumb/plumb on real publish)
+          npm install $GITHUB_WORKSPACE/dist-pack/*.tgz
+
+      - name: Run smoke test
+        shell: bash
+        run: node $GITHUB_WORKSPACE/.github/scripts/smoke-test.mjs
+        env:
+          PLUMB_SMOKE_DIR: /tmp/plumb-smoke-test
+          PLUMB_DB_PATH: /tmp/plumb-smoke-test/.plumb-test/memory.db
+
+  # ----------------------------------------------------------------
+  # Job 3: Full openclaw E2E (TODO — needs openclaw --ci/--headless)
+  # ----------------------------------------------------------------
+  # openclaw-e2e:
+  #   name: OpenClaw E2E (${{ matrix.os }})
+  #   runs-on: ${{ matrix.os }}
+  #   strategy:
+  #     matrix:
+  #       os: [ubuntu-latest, windows-latest, macos-latest]
+  #   steps:
+  #     - name: Install openclaw
+  #       run: npm install -g openclaw
+  #     - name: Init gateway (headless)
+  #       run: openclaw gateway install --ci --no-interactive
+  #     - name: Install plumb plugin
+  #       run: openclaw plugins install @getplumb/plumb
+  #     - name: Run E2E assertions
+  #       run: node .github/scripts/e2e-test.mjs
