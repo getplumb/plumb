@@ -9,7 +9,16 @@
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { CloudStore } from './cloud-store.js';
-import type { MessageExchange } from '@getplumb/core';
+
+// MessageExchange is now local to cloud-store (not exported from @getplumb/core since T-128)
+interface MessageExchange {
+  userMessage: string;
+  agentResponse: string;
+  timestamp: Date;
+  source: string;
+  sessionId: string;
+  sessionLabel?: string;
+}
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -45,7 +54,7 @@ describe('CloudStore', () => {
 
   it('should return status', { skip: skipIfNoSupabase }, async () => {
     const status = await store.status();
-    expect(status.rawLogCount).toBeGreaterThanOrEqual(0);
+    expect(status.factCount).toBeGreaterThanOrEqual(0);
     expect(status.storageBytes).toBeGreaterThanOrEqual(0);
   });
 
