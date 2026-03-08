@@ -348,12 +348,16 @@ export const plugin: OpenClawPluginDefinition = {
     queryServer = startQueryServer(store, queryPort, api.logger);
 
     // Register the plumb_remember tool for agent-driven memory writes.
-    // Guard: api.registerTool was added in OpenClaw 2026.3.x — older versions
-    // won't have it. Degrade gracefully rather than crashing activation.
-    const toolsRegistered = typeof api.registerTool === 'function';
-    if (!toolsRegistered) {
-      api.logger.warn('[plumb] api.registerTool not available — upgrade OpenClaw for plumb_remember / plumb_search tool support. Memory injection still works.');
-    } else {
+    // Hard version gate: api.registerTool is required for plumb_remember / plumb_search.
+    // Without it, memories can never be written — the plugin is useless.
+    // Fail fast with a clear upgrade message rather than silently doing nothing.
+    if (typeof api.registerTool !== 'function') {
+      throw new Error(
+        'Plumb requires OpenClaw 2026.3.7 or later (api.registerTool is not available). ' +
+        'Upgrade with: npm install -g openclaw@latest'
+      );
+    }
+
     api.registerTool((toolCtx) => ({
       name: 'plumb_remember',
       description: 'Store a discrete fact or piece of information in Plumb memory. Use this whenever you learn something worth remembering across sessions — user preferences, decisions, important context. Write facts in plain English, one idea per call.',
@@ -471,10 +475,9 @@ export const plugin: OpenClawPluginDefinition = {
         }
       }
     }));
-    } // end: typeof api.registerTool === 'function'
 
     // Register the before_prompt_build hook for memory injection
-    api.on('before_prompt_build', createPreResponseHook(store, shadowMode, dbPath, toolsRegistered));
+    api.on('before_prompt_build', createPreResponseHook(store, shadowMode, dbPath));
 
     api.logger.info('[plumb] Plugin activated');
     } catch (error) {

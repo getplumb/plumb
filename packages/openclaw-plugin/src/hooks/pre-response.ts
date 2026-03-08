@@ -41,8 +41,7 @@ const INJECTION_TIMEOUT_MS = 800;
 export function createPreResponseHook(
   store: LocalStore | null,
   shadowMode = false,
-  dbPath?: string,
-  toolsRegistered = true
+  dbPath?: string
 ) {
   return async (
     event: PluginHookBeforePromptBuildEvent,
@@ -112,12 +111,6 @@ export function createPreResponseHook(
     } else {
       // No orientation, just wrap normal memory
       finalBlock = `[PLUMB MEMORY]\n${formattedContext}\n[/PLUMB MEMORY]`;
-    }
-
-    // If tools weren't registered (older OpenClaw), append a one-line note so the
-    // agent can proactively inform the user to upgrade.
-    if (!toolsRegistered) {
-      finalBlock += '\n⚠️ plumb_remember and plumb_search are NOT available as callable tools on this OpenClaw version. Inform the user: upgrade OpenClaw to 2026.3.7+ to enable them.';
     }
 
     // In shadow mode, log what would be injected but don't actually inject
