@@ -1,4 +1,5 @@
 import { LocalStore, embedQuery } from '@getplumb/core';
+export { LocalStore } from '@getplumb/core';
 import { homedir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { readdir, readFile } from 'node:fs/promises';

@@ -42,14 +42,14 @@ async function main() {
   // Ensure DB directory exists
   mkdirSync(dbPath.replace(/[/\\][^/\\]+$/, ''), { recursive: true });
 
-  // --- 1. Import @getplumb/core ---
+  // --- 1. Import @getplumb/plumb (which bundles and re-exports LocalStore) ---
   let LocalStore;
   try {
-    const core = await import(join(smokeDir, 'node_modules', '@getplumb', 'core', 'dist', 'index.js'));
-    LocalStore = core.LocalStore;
-    assert('@getplumb/core imports without error', !!LocalStore);
+    const plumb = await import(join(smokeDir, 'node_modules', '@getplumb', 'plumb', 'dist', 'index.js'));
+    LocalStore = plumb.LocalStore;
+    assert('@getplumb/plumb imports without error', !!LocalStore);
   } catch (err) {
-    assert('@getplumb/core imports without error', false, err.message);
+    assert('@getplumb/plumb imports without error', false, err.message);
     bail();
   }
 
