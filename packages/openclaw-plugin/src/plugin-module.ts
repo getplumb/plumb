@@ -350,7 +350,8 @@ export const plugin: OpenClawPluginDefinition = {
     // Register the plumb_remember tool for agent-driven memory writes.
     // Guard: api.registerTool was added in OpenClaw 2026.3.x — older versions
     // won't have it. Degrade gracefully rather than crashing activation.
-    if (typeof api.registerTool !== 'function') {
+    const toolsRegistered = typeof api.registerTool === 'function';
+    if (!toolsRegistered) {
       api.logger.warn('[plumb] api.registerTool not available — upgrade OpenClaw for plumb_remember / plumb_search tool support. Memory injection still works.');
     } else {
     api.registerTool((toolCtx) => ({
@@ -473,7 +474,7 @@ export const plugin: OpenClawPluginDefinition = {
     } // end: typeof api.registerTool === 'function'
 
     // Register the before_prompt_build hook for memory injection
-    api.on('before_prompt_build', createPreResponseHook(store, shadowMode, dbPath));
+    api.on('before_prompt_build', createPreResponseHook(store, shadowMode, dbPath, toolsRegistered));
 
     api.logger.info('[plumb] Plugin activated');
     } catch (error) {
