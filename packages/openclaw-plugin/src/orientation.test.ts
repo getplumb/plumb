@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { randomUUID } from 'node:crypto';
 import Database from 'better-sqlite3';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -53,7 +54,7 @@ describe('OrientationManager', () => {
       db.prepare(`
         INSERT INTO nudge_log (id, trigger_type, fired_at)
         VALUES (?, ?, ?)
-      `).run(crypto.randomUUID(), 'first_activation', new Date().toISOString());
+      `).run(randomUUID(), 'first_activation', new Date().toISOString());
 
       // Check should return true
       const result = orientationManager.hasOrientationFired(db);
@@ -65,7 +66,7 @@ describe('OrientationManager', () => {
       db.prepare(`
         INSERT INTO nudge_log (id, trigger_type, fired_at)
         VALUES (?, ?, ?)
-      `).run(crypto.randomUUID(), 'second_integration', new Date().toISOString());
+      `).run(randomUUID(), 'second_integration', new Date().toISOString());
 
       // first_activation should still be false
       const result = orientationManager.hasOrientationFired(db);
@@ -145,8 +146,8 @@ describe('OrientationManager', () => {
 
       // Should not contain ~ in the output
       expect(text).not.toContain('~/.plumb');
-      // Should contain the expanded path
-      expect(text).toMatch(/\/.*\/.plumb\/memory\.db/);
+      // Should contain the expanded path (forward or back slashes on Windows)
+      expect(text).toMatch(/[/\\].*[/\\]\.plumb[/\\]memory\.db/);
     });
 
     it('wraps content in [PLUMB MEMORY] delimiters', () => {
