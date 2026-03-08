@@ -1,15 +1,8 @@
-/** Lambda applied to raw log chunks (medium decay). */
-const RAW_LOG_LAMBDA = 0.012;
-
-/** Cold score threshold — chunks below this are flagged. */
-const COLD_THRESHOLD = 0.01;
-
 /** Memory fact score boost multiplier (applied after RRF fusion). */
 export const MEMORY_FACT_BOOST = 2.0;
 
 /** Memory fact minimum score threshold (after boost) for fallback logic.
- *  Calibrated for RRF hybrid scores: top ~25% of boosted fact scores qualify,
- *  triggering the raw_log cap (1 result) when strong facts are present.
+ *  Calibrated for RRF hybrid scores: top ~25% of boosted fact scores qualify.
  */
 export const MEMORY_FACT_MIN_SCORE = 0.054;
 
@@ -19,32 +12,10 @@ export interface ScoreResult {
 }
 
 /**
- * Minimal shape required by scoreRawLog().
- * raw_log rows carry a timestamp; other fields are not needed for scoring.
- */
-export interface RawLogChunk {
-  readonly timestamp: Date;
-}
-
-/**
  * Computes the exponential decay multiplier: e^(-lambda × age_in_days).
  */
 export function computeDecay(lambda: number, ageInDays: number): number {
   return Math.exp(-lambda * ageInDays);
-}
-
-/**
- * Scores a raw log chunk using medium decay (lambda = 0.012).
- * Raw chunks have no confidence field; decay is applied to a base of 1.0.
- */
-export function scoreRawLog(
-  chunk: RawLogChunk,
-  now: Date = new Date(),
-): ScoreResult {
-  const ageInDays =
-    (now.getTime() - chunk.timestamp.getTime()) / (1_000 * 60 * 60 * 24);
-  const score = computeDecay(RAW_LOG_LAMBDA, ageInDays);
-  return { score, isCold: score < COLD_THRESHOLD };
 }
 
 /**

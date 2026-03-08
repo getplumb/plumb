@@ -18,7 +18,6 @@ export interface IngestResult {
 }
 
 export interface StoreStatus {
-  readonly rawLogCount: number;
   /** Count of curated memory facts (memory_facts table). */
   readonly factCount: number;
   readonly lastIngestion: Date | null;

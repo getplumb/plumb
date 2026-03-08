@@ -16,23 +16,24 @@ const inputSchema = {
 export function registerMemorySearch(server: McpServer, store: LocalStore): void {
   server.tool(
     'memory_search',
-    'Search long-term memory for relevant conversations. Returns ranked results from raw conversation log.',
+    'Search long-term memory for relevant facts. Returns ranked results from curated memory facts.',
     inputSchema,
     async (args) => {
       try {
         const limit = args.limit ?? 20;
 
-        // Search raw conversation log
-        const rawLogResults = await store.searchRawLog(args.query, limit);
+        // Search memory facts
+        const memoryFactResults = await store.searchMemoryFacts(args.query, limit);
 
-        const output = rawLogResults.map((r) => ({
-          text: r.chunk_text,
+        const output = memoryFactResults.map((r) => ({
+          content: r.content,
           score: r.final_score,
           age_in_days:
             Math.round(
-              ((Date.now() - new Date(r.timestamp).getTime()) / (1000 * 60 * 60 * 24)) * 10,
+              ((Date.now() - new Date(r.created_at).getTime()) / (1000 * 60 * 60 * 24)) * 10,
             ) / 10,
-          session_label: r.session_label ?? r.session_id,
+          session_label: r.source_session_label ?? r.source_session_id,
+          tags: r.tags,
         }));
 
         return {

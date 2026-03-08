@@ -78,7 +78,7 @@ test('delete() soft-deletes a fact (sets deleted_at, excludes from searchMemoryF
   }
 });
 
-test('status() returns accurate factCount and rawLogCount', async () => {
+test('status() returns accurate factCount', async () => {
   const fresh = await LocalStore.create({
     dbPath: join(tmpdir(), `plumb-status-test-${Date.now()}.db`),
     userId: 'status-test-user',
@@ -87,7 +87,6 @@ test('status() returns accurate factCount and rawLogCount', async () => {
   try {
     const initial = await fresh.status();
     assert.equal(initial.factCount, 0);
-    assert.equal(initial.rawLogCount, 0);
     assert.equal(initial.lastIngestion, null);
     assert.ok(initial.storageBytes > 0, 'storageBytes should be positive even for empty DB');
 
@@ -98,67 +97,8 @@ test('status() returns accurate factCount and rawLogCount', async () => {
 
     const afterFact = await fresh.status();
     assert.equal(afterFact.factCount, 1);
-    assert.equal(afterFact.rawLogCount, 0);
-
-    await fresh.ingest({
-      userMessage: 'Hello!',
-      agentResponse: 'Hi there!',
-      timestamp: new Date(),
-      source: 'openclaw',
-      sessionId: 'session-1',
-    });
-
-    const afterIngest = await fresh.status();
-    assert.equal(afterIngest.rawLogCount, 1);
-    assert.ok(afterIngest.lastIngestion !== null, 'lastIngestion should be set after ingest');
+    assert.ok(afterFact.lastIngestion !== null, 'lastIngestion should be set after ingest');
   } finally {
     fresh.close();
-  }
-});
-
-test('ingest() writes to raw_log and returns rawLogId', async () => {
-  const result = await store.ingest({
-    userMessage: 'What is the capital of France?',
-    agentResponse: 'The capital of France is Paris.',
-    timestamp: new Date(),
-    source: 'claude-code',
-    sessionId: 'session-ingest-test',
-    sessionLabel: 'geography-chat',
-  });
-
-  assert.match(result.rawLogId, /^[0-9a-f-]{36}$/, 'rawLogId should be a UUID');
-  assert.equal(result.factsExtracted, 0, 'no facts extracted yet (T-005)');
-  assert.deepEqual(result.factIds, []);
-});
-
-test('ingest() cross-session: exchanges from different sessions visible in status()', async () => {
-  const crossStore = await LocalStore.create({
-    dbPath: join(tmpdir(), `plumb-cross-session-${Date.now()}.db`),
-    userId: 'cross-user',
-  });
-
-  try {
-    await crossStore.ingest({
-      userMessage: 'Planning session A',
-      agentResponse: 'Got it.',
-      timestamp: new Date(),
-      source: 'openclaw',
-      sessionId: 'session-A',
-      sessionLabel: 'planning',
-    });
-
-    await crossStore.ingest({
-      userMessage: 'Continuing in session B',
-      agentResponse: 'Understood.',
-      timestamp: new Date(),
-      source: 'openclaw',
-      sessionId: 'session-B',
-      sessionLabel: 'followup',
-    });
-
-    const status = await crossStore.status();
-    assert.equal(status.rawLogCount, 2, 'both sessions should be counted in raw_log');
-  } finally {
-    crossStore.close();
   }
 });

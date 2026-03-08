@@ -1,8 +1,6 @@
-import { LocalStore } from '@getplumb/core';
-import { join } from 'node:path';
-import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
-import { formatRawLogMarkdown } from '../formatters/markdown.js';
 import { getDefaultDbPath } from '../utils/db-path.js';
+import { existsSync } from 'node:fs';
+import { openDb } from '@getplumb/core';
 
 export interface ExportOptions {
   /** Path to the database file. Defaults to ~/.plumb/memory.db */
@@ -15,9 +13,7 @@ export interface ExportOptions {
 
 /**
  * Export command handler.
- * Two modes:
- *   1. plumb export          → creates ./plumb-export-<timestamp>/ directory with JSON + Markdown files
- *   2. plumb export --json   → prints raw-log.json to stdout only (for piping)
+ * Exports memory_facts to JSON (raw_log layer has been removed from Plumb).
  */
 export async function exportCommand(options: ExportOptions): Promise<void> {
   const dbPath = options.db ?? getDefaultDbPath();
@@ -30,50 +26,36 @@ export async function exportCommand(options: ExportOptions): Promise<void> {
     process.exit(1);
   }
 
-  // Open LocalStore and export data.
-  const store = await LocalStore.create({ dbPath, userId });
-  const exportData = store.exportAll(userId);
-  store.close();
+  // Query memory_facts directly
+  const db = await openDb(dbPath);
+  const stmt = db.prepare(`
+    SELECT
+      id,
+      user_id,
+      content,
+      source_session_id,
+      source_session_label,
+      tags,
+      confidence,
+      decay_rate,
+      created_at,
+      deleted_at
+    FROM memory_facts
+    WHERE user_id = ? AND deleted_at IS NULL
+    ORDER BY created_at DESC
+  `);
+  stmt.bind([userId]);
 
-  // Mode 1: --json flag → print JSON to stdout and exit.
-  if (options.json) {
-    console.log(JSON.stringify(exportData.rawLog, null, 2));
-    return;
+  const facts: any[] = [];
+  while (stmt.step()) {
+    facts.push(stmt.get({}));
   }
+  stmt.finalize();
+  db.close();
 
-  // Mode 2: default → create timestamped directory with all export files.
-  const timestamp = new Date().toISOString().replace(/:/g, '-').replace(/\.\d{3}Z$/, 'Z');
-  const exportDir = join(process.cwd(), `plumb-export-${timestamp}`);
+  console.log(JSON.stringify(facts, null, 2));
 
-  mkdirSync(exportDir, { recursive: true });
-
-  // Write raw-log.json
-  writeFileSync(
-    join(exportDir, 'raw-log.json'),
-    JSON.stringify(exportData.rawLog, null, 2),
-    'utf-8',
-  );
-
-  // Write raw-log.md
-  writeFileSync(
-    join(exportDir, 'raw-log.md'),
-    formatRawLogMarkdown(exportData.rawLog),
-    'utf-8',
-  );
-
-  // Write export-summary.json
-  const summary = {
-    exportedAt: new Date().toISOString(),
-    userId,
-    rawLogCount: exportData.rawLog.length,
-    dbPath,
-  };
-  writeFileSync(
-    join(exportDir, 'export-summary.json'),
-    JSON.stringify(summary, null, 2),
-    'utf-8',
-  );
-
-  console.log(`✓ Exported ${exportData.rawLog.length} log entries`);
-  console.log(`✓ Export written to: ${exportDir}`);
+  if (!options.json) {
+    console.error(`\n✓ Exported ${facts.length} memory fact${facts.length !== 1 ? 's' : ''}`);
+  }
 }

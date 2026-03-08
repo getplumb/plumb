@@ -7,11 +7,9 @@ import { fileURLToPath } from 'node:url';
 import { exportCommand } from './commands/export.js';
 import { statusCommand } from './commands/status.js';
 import { connectCommand } from './commands/connect.js';
-import { ingestCommand } from './commands/ingest.js';
 import { setupCommand } from './commands/setup.js';
 import { uninstallCommand } from './commands/uninstall.js';
 import { healthCommand } from './commands/health.js';
-import { bulkEmbedCommand } from './commands/bulk-embed.js';
 
 // Read version from package.json
 const __filename = fileURLToPath(import.meta.url);
@@ -58,37 +56,11 @@ program
     await connectCommand({ tool });
   });
 
-// Ingest command
-program
-  .command('ingest [file]')
-  .description('Ingest text, markdown, files, or directories into memory graph')
-  .option('--text <content>', 'Ingest raw text inline')
-  .option('--stdin', 'Read from stdin (for piping)')
-  .option('--db <path>', 'Path to database file (defaults to ~/.plumb/memory.db)')
-  .option('--user-id <id>', 'User ID to ingest data for (defaults to "default")')
-  .option('--dry-run', 'Preview what would be ingested without writing to DB')
-  .option('--delay <ms>', 'Delay in ms between chunks (default: 0 for dirs, 800ms for single file)', parseInt)
-  .option('--concurrency <n>', 'Concurrency level (default: 1, max: 5)', parseInt)
-  .option('--glob <pattern>', 'Glob pattern for filtering files in directory mode')
-  .action(async (file, options) => {
-    await ingestCommand({
-      db: options.db,
-      userId: options.userId,
-      text: options.text,
-      stdin: options.stdin,
-      file,
-      dryRun: options.dryRun,
-      delay: options.delay,
-      concurrency: options.concurrency,
-      glob: options.glob,
-    });
-  });
-
 // Export command
 program
   .command('export')
-  .description('Export all raw log entries to JSON + Markdown')
-  .option('--json', 'Print raw-log.json to stdout only (for piping)')
+  .description('Export all memory facts to JSON')
+  .option('--json', 'Suppress extra output (stdout only)')
   .option('--db <path>', 'Path to database file (defaults to ~/.plumb/memory.db)')
   .option('--user-id <id>', 'User ID to export data for (defaults to "default")')
   .action(async (options) => {
@@ -118,19 +90,6 @@ program
     await healthCommand({
       db: options.db,
       json: options.json,
-      userId: options.userId,
-    });
-  });
-
-// Bulk embed command
-program
-  .command('bulk-embed')
-  .description('Offline bulk embedding of pending rows for initial DB seeding')
-  .option('--db <path>', 'Path to database file (defaults to ~/.plumb/memory.db)')
-  .option('--user-id <id>', 'User ID to process embeddings for (defaults to "default")')
-  .action(async (options) => {
-    await bulkEmbedCommand({
-      db: options.db,
       userId: options.userId,
     });
   });

@@ -92,7 +92,7 @@ export async function statusCommand(options: StatusOptions): Promise<void> {
   // Mode 1: --json flag → print JSON to stdout.
   if (options.json) {
     const jsonOutput = {
-      rawLogCount: status.rawLogCount,
+      factCount: status.factCount,
       lastIngestion: status.lastIngestion?.toISOString() ?? null,
       storageBytes: status.storageBytes,
       mcpServer: {
@@ -107,7 +107,7 @@ export async function statusCommand(options: StatusOptions): Promise<void> {
   // Mode 2: default → print human-readable summary.
   console.log('Plumb Memory — Local Store');
   console.log('──────────────────────────');
-  console.log(`Raw log:        ${formatNumber(status.rawLogCount)} exchange${status.rawLogCount !== 1 ? 's' : ''}`);
+  console.log(`Memory facts:   ${formatNumber(status.factCount)} fact${status.factCount !== 1 ? 's' : ''}`);
   console.log(`Last ingestion: ${status.lastIngestion ? formatAge(status.lastIngestion) : 'never'}`);
   console.log(`Storage:        ${formatBytes(status.storageBytes)}`);
   console.log();

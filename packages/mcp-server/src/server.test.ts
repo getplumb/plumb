@@ -1,29 +1,29 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { LocalStore, StoreStatus, RawLogSearchResult } from '@getplumb/core';
+import type { LocalStore, StoreStatus, MemoryFactSearchResult } from '@getplumb/core';
 import { createPlumbServer } from './server.js';
 
 // Minimal mock of LocalStore — only the methods used by MCP tools.
 function makeMockStore(): LocalStore {
-  const rawLogResult: RawLogSearchResult = {
-    chunk_text: 'User asked about coffee preferences',
-    session_id: 'sess-001',
-    session_label: 'My Session',
-    timestamp: new Date('2026-01-01T00:00:00Z').toISOString(),
+  const memoryFactResult: MemoryFactSearchResult = {
+    fact_id: 'fact-001',
+    content: 'User asked about coffee preferences',
+    source_session_id: 'sess-001',
+    source_session_label: 'My Session',
+    created_at: new Date('2026-01-01T00:00:00Z').toISOString(),
+    tags: null,
+    confidence: 0.95,
     final_score: 0.85,
   };
 
   const status: StoreStatus = {
     factCount: 5,
-    rawLogCount: 3,
     lastIngestion: new Date('2026-01-15T00:00:00Z'),
     storageBytes: 102400,
   };
 
   return {
-    searchRawLog: vi.fn().mockResolvedValue([rawLogResult]),
-    searchMemoryFacts: vi.fn().mockResolvedValue([]),
+    searchMemoryFacts: vi.fn().mockResolvedValue([memoryFactResult]),
     status: vi.fn().mockResolvedValue(status),
-    ingest: vi.fn().mockResolvedValue({ rawLogId: 'r1', factsExtracted: 0, factIds: [] }),
     ingestMemoryFact: vi.fn().mockResolvedValue({ factId: 'f1' }),
     delete: vi.fn().mockResolvedValue(undefined),
     close: vi.fn(),
@@ -57,12 +57,12 @@ describe('MCP server tool schemas and responses', () => {
   });
 
   describe('memory_search', () => {
-    it('returns array of results from raw log', async () => {
+    it('returns array of results from memory facts', async () => {
       const result = await callTool(store, 'memory_search', {
         query: 'coffee',
       }) as { content: Array<{ type: string; text: string }> };
 
-      expect(store.searchRawLog).toHaveBeenCalledWith('coffee', 20);
+      expect(store.searchMemoryFacts).toHaveBeenCalledWith('coffee', 20);
       const parsed = JSON.parse(result.content[0]!.text) as unknown[];
       expect(Array.isArray(parsed)).toBe(true);
       expect(parsed.length).toBeGreaterThan(0);
@@ -70,7 +70,7 @@ describe('MCP server tool schemas and responses', () => {
 
     it('uses custom limit', async () => {
       await callTool(store, 'memory_search', { query: 'test', limit: 5 });
-      expect(store.searchRawLog).toHaveBeenCalledWith('test', 5);
+      expect(store.searchMemoryFacts).toHaveBeenCalledWith('test', 5);
     });
 
     it('result items have required shape', async () => {
@@ -104,12 +104,12 @@ describe('MCP server tool schemas and responses', () => {
 
       expect(store.status).toHaveBeenCalledOnce();
       const parsed = JSON.parse(result.content[0]!.text) as {
-        rawLogCount: number;
+        factCount: number;
         lastIngestion: string | null;
         storageBytes: number;
       };
 
-      expect(parsed.rawLogCount).toBe(3);
+      expect(parsed.factCount).toBe(5);
       expect(parsed.lastIngestion).toBe('2026-01-15T00:00:00.000Z');
       expect(parsed.storageBytes).toBe(102400);
     });

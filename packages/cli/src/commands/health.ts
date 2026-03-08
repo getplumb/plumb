@@ -26,7 +26,7 @@ interface HealthResult {
 }
 
 /**
- * Query raw_log for embed status counts.
+ * Query memory_facts for embed status counts.
  */
 function getEmbedStatusCounts(
   db: Awaited<ReturnType<typeof openDb>>,
@@ -34,7 +34,7 @@ function getEmbedStatusCounts(
 ): StatusCounts {
   const stmt = db.prepare(`
     SELECT embed_status as status, COUNT(*) as count
-    FROM raw_log
+    FROM memory_facts
     WHERE user_id = ?
     GROUP BY embed_status
   `);
@@ -60,7 +60,7 @@ function getEmbedStatusCounts(
 }
 
 /**
- * Query raw_log for embedding model breakdown.
+ * Query memory_facts for embedding model breakdown.
  */
 function getEmbedModels(
   db: Awaited<ReturnType<typeof openDb>>,
@@ -68,7 +68,7 @@ function getEmbedModels(
 ): Record<string, number> {
   const stmt = db.prepare(`
     SELECT embed_model, COUNT(*) as count
-    FROM raw_log
+    FROM memory_facts
     WHERE user_id = ? AND embed_model IS NOT NULL
     GROUP BY embed_model
   `);

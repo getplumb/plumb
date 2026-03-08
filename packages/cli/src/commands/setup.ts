@@ -187,15 +187,14 @@ async function persistEnv(result: SetupResult): Promise<void> {
   try {
     const dbPath = getDefaultDbPath();
     const store = await LocalStore.create({ dbPath, userId: 'default' });
-    const seedExchange = {
-      userMessage: `I just set up Plumb on ${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}.`,
-      agentResponse: `Setup complete. You configured Plumb with the ${result.provider} provider. Your memory database is now active and will start capturing conversations from your AI interactions.`,
-      timestamp: new Date(),
-      source: 'openclaw' as const,
-      sessionId: 'setup',
-      sessionLabel: 'plumb-setup',
-    };
-    await store.ingest(seedExchange);
+    // Store initial setup fact
+    await store.ingestMemoryFact({
+      content: `Plumb set up on ${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })} with ${result.provider} provider.`,
+      sourceSessionId: 'setup',
+      tags: ['setup', 'configuration'],
+      confidence: 0.95,
+      decayRate: 'slow',
+    });
     store.close();
     dbSpinner.succeed('Memory database ready');
   } catch (err: unknown) {
@@ -247,15 +246,13 @@ async function seedUserContext(): Promise<void> {
   try {
     const dbPath = getDefaultDbPath();
     const store = await LocalStore.create({ dbPath, userId: 'default' });
-    const seedExchange = {
-      userMessage: answers.join(' '),
-      agentResponse: "Got it. I'll remember that for future conversations.",
-      timestamp: new Date(),
-      source: 'openclaw' as const,
-      sessionId: 'setup',
-      sessionLabel: 'plumb-setup',
-    };
-    await store.ingest(seedExchange);
+    await store.ingestMemoryFact({
+      content: answers.join(' '),
+      sourceSessionId: 'setup',
+      tags: ['user-profile', 'setup'],
+      confidence: 0.95,
+      decayRate: 'slow',
+    });
     store.close();
   } catch (err: unknown) {
     // Non-fatal: context will be captured on first real conversation

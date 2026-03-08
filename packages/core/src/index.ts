@@ -1,14 +1,11 @@
-export type { IngestResult, MessageExchange, StoreStatus, MemoryFact, IngestMemoryFactInput } from './types.js';
+export type { StoreStatus, MemoryFact, IngestMemoryFactInput } from './types.js';
 export type { MemoryStore } from './store.js';
-export type { RawLogChunk, ScoreResult } from './scorer.js';
-export { scoreRawLog, scoreMemoryFact, computeDecay } from './scorer.js';
+export { scoreMemoryFact, computeDecay } from './scorer.js';
 export { LocalStore } from './local-store.js';
-export type { LocalStoreOptions, RawLogSearchResult, RawLogEntry, ExportData } from './local-store.js';
+export type { LocalStoreOptions, MemoryFactSearchResult } from './local-store.js';
 export { embed, embedQuery, rerankScores, EMBED_DIM } from './embedder.js';
 export { Bm25, tokenize } from './bm25.js';
-export { formatExchange } from './chunker.js';
-export { searchRawLog } from './raw-log-search.js';
-export type { RawChunk, MemoryFactChunk, MemoryContext, ReadPathOptions, ReadPathStore } from './read-path.js';
+export type { MemoryFactChunk, MemoryContext, ReadPathOptions, ReadPathStore } from './read-path.js';
 export { buildMemoryContext } from './read-path.js';
 export { formatContextBlock, formatAge } from './context-builder.js';
 export { openDb } from './wasm-db.js';

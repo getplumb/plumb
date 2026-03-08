@@ -10,15 +10,12 @@
  *   [HIGH] [tech-planning] today: "User prefers TypeScript for all new code"
  *   [MED]  [plumb-dev] 3 days ago: "Plumb uses BM25 + vector KNN..."
  *
- *   ## Related conversations
- *   [HIGH] [tech-planning] today: "Let me help you design the memory system..."
- *
  * Tier labels: [HIGH] = strong match (treat as fact), [MED] = likely, [LOW] = hint.
- * Always includes a tool hint section. Returns empty string only when both
- * relatedMemories and relatedConversations are empty.
+ * Always includes a tool hint section. Returns empty string only when
+ * relatedMemories is empty.
  */
 
-import type { MemoryContext, MemoryFactChunk, RawChunk } from './read-path.js';
+import type { MemoryContext, MemoryFactChunk } from './read-path.js';
 
 // ─── Confidence tier helpers ──────────────────────────────────────────────────
 
@@ -33,19 +30,6 @@ import type { MemoryContext, MemoryFactChunk, RawChunk } from './read-path.js';
 export function scoreFactTier(boostedScore: number): '[HIGH]' | '[MED] ' | '[LOW] ' {
   if (boostedScore >= 0.062) return '[HIGH]';
   if (boostedScore >= 0.054) return '[MED] ';
-  return '[LOW] ';
-}
-
-/**
- * Maps a raw log final_score to a display tier label.
- * Calibrated for RRF hybrid scores. Observed raw score range: 0.022–0.033.
- *   [HIGH] ≥ 0.031 — top ~10%: strong match
- *   [MED]  0.027–0.031 — mid range: moderate match
- *   [LOW]  < 0.027 — weak signal
- */
-export function scoreChunkTier(finalScore: number): '[HIGH]' | '[MED] ' | '[LOW] ' {
-  if (finalScore >= 0.031) return '[HIGH]';
-  if (finalScore >= 0.027) return '[MED] ';
   return '[LOW] ';
 }
 
@@ -78,25 +62,16 @@ function formatMemoryLine(memory: MemoryFactChunk): string {
   return `${tier} [${sessionLabel}] ${age}: "${excerpt}"`;
 }
 
-function formatChunkLine(chunk: RawChunk): string {
-  const tier = scoreChunkTier(chunk.score);
-  const excerpt = chunk.chunkText.slice(0, 200);
-  const sessionLabel = chunk.sessionLabel ?? chunk.sessionId;
-  const ageInDays = (Date.now() - chunk.timestamp.getTime()) / (1_000 * 60 * 60 * 24);
-  const age = formatAge(ageInDays);
-  return `${tier} [${sessionLabel}] ${age}: "${excerpt}"`;
-}
-
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 /**
  * Formats a MemoryContext into a [MEMORY CONTEXT] prompt block.
  *
  * Always returns a non-empty string with a tool hint section,
- * even when there are no related memories or conversations.
+ * even when there are no related memories.
  */
 export function formatContextBlock(context: MemoryContext): string {
-  const { relatedMemories, relatedConversations } = context;
+  const { relatedMemories } = context;
 
   const lines: string[] = ['[PLUMB MEMORY]'];
 
@@ -107,21 +82,14 @@ export function formatContextBlock(context: MemoryContext): string {
     for (const memory of relatedMemories) lines.push(formatMemoryLine(memory));
   }
 
-  // ── Render ## Related conversations section (raw log, Layer 1) ───────────
-  if (relatedConversations.length > 0) {
-    lines.push('');
-    lines.push('## Related conversations');
-    for (const chunk of relatedConversations) lines.push(formatChunkLine(chunk));
-  }
-
   // ── Append tool hints ─────────────────────────────────────────────────────
-  if (relatedMemories.length > 0 || relatedConversations.length > 0) {
+  if (relatedMemories.length > 0) {
     lines.push('');
     lines.push('## Memory tools available');
     lines.push('- `plumb_search` — search for specific subtopics not covered above');
     lines.push('- `plumb_remember` — store a new fact for future sessions');
   } else {
-    // No memories or conversations — show only tool hints with alternate text
+    // No memories — show only tool hints with alternate text
     lines.push('## Memory tools available');
     lines.push('- `plumb_search` — look up relevant context from memory');
     lines.push('- `plumb_remember` — store a new fact for future sessions');
