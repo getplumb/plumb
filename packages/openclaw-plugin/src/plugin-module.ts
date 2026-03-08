@@ -24,17 +24,16 @@ async function ensureSqliteBinary(logger: { info: (s: string) => void; warn: (s:
   // we walk up to find node_modules/better-sqlite3.
   const req = createRequire(import.meta.url);
 
-  // Try loading — if it works, we're done.
+  // Probe by actually instantiating a :memory: database — the native binary
+  // loads lazily inside the Database() constructor, so require() alone is not enough.
   try {
-    req('better-sqlite3');
-    return;
+    const Db = req('better-sqlite3') as any;
+    const probe = new Db(':memory:');
+    probe.close();
+    return; // Binary works — nothing to do
   } catch (e) {
-    const msg = String(e);
-    if (!msg.includes('bindings') && !msg.includes('NODE_MODULE_VERSION') && !msg.includes('was compiled against')) {
-      // Some other error — rethrow rather than silently ignoring
-      throw e;
-    }
-    logger.info('[plumb] better-sqlite3 binary missing or incompatible; attempting to download prebuilt...');
+    logger.info(`[plumb] better-sqlite3 binary not ready (${String(e).split('\n')[0]}); attempting to download prebuilt...`);
+    // Fall through to prebuild-install / source rebuild
   }
 
   // Resolve the better-sqlite3 directory.
