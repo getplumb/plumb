@@ -68,6 +68,7 @@ async function main() {
   try {
     await store.ingestMemoryFact({
       content: testContent,
+      sourceSessionId: 'smoke-test-session',
       tags: ['smoke-test'],
       confidence: 0.9,
       decayRate: 'slow',

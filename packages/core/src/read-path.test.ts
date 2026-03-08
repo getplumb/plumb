@@ -181,7 +181,9 @@ describe('formatContextBlock', () => {
 
 // ─── Cross-session integration test ───────────────────────────────────────────
 
-describe('Cross-session integration', () => {
+// This test downloads an ML model (~100MB) and runs WASM inference.
+// It can crash vitest worker forks on Windows due to memory/WASM constraints.
+describe.skipIf(process.platform === 'win32')('Cross-session integration', () => {
   let testDbPath: string;
   let store: LocalStore;
 
