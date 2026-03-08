@@ -24,26 +24,28 @@ import type { MemoryContext, MemoryFactChunk, RawChunk } from './read-path.js';
 
 /**
  * Maps a boosted memory fact score to a display tier label.
- * Thresholds are applied to the already-boosted score (MEMORY_FACT_BOOST × raw score).
- *   [HIGH] ≥ 0.7  — treat as ground truth
- *   [MED]  0.4–0.7 — treat as likely true
- *   [LOW]  < 0.4  — treat as a hint
+ * Thresholds are calibrated for RRF hybrid scores (BM25 + vector KNN) after
+ * MEMORY_FACT_BOOST (2.0×) is applied. Observed boosted score range: 0.044–0.066.
+ *   [HIGH] ≥ 0.062 — top ~10%: strong match, treat as ground truth
+ *   [MED]  0.054–0.062 — middle band: likely relevant
+ *   [LOW]  < 0.054 — bottom half: weak signal, treat as hint
  */
 export function scoreFactTier(boostedScore: number): '[HIGH]' | '[MED] ' | '[LOW] ' {
-  if (boostedScore >= 0.7) return '[HIGH]';
-  if (boostedScore >= 0.4) return '[MED] ';
+  if (boostedScore >= 0.062) return '[HIGH]';
+  if (boostedScore >= 0.054) return '[MED] ';
   return '[LOW] ';
 }
 
 /**
  * Maps a raw log final_score to a display tier label.
- *   [HIGH] ≥ 0.6  — strong match
- *   [MED]  0.3–0.6 — moderate match
- *   [LOW]  < 0.3  — weak signal
+ * Calibrated for RRF hybrid scores. Observed raw score range: 0.022–0.033.
+ *   [HIGH] ≥ 0.031 — top ~10%: strong match
+ *   [MED]  0.027–0.031 — mid range: moderate match
+ *   [LOW]  < 0.027 — weak signal
  */
 export function scoreChunkTier(finalScore: number): '[HIGH]' | '[MED] ' | '[LOW] ' {
-  if (finalScore >= 0.6) return '[HIGH]';
-  if (finalScore >= 0.3) return '[MED] ';
+  if (finalScore >= 0.031) return '[HIGH]';
+  if (finalScore >= 0.027) return '[MED] ';
   return '[LOW] ';
 }
 
