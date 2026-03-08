@@ -173,6 +173,9 @@ importers:
         specifier: ^12.6.2
         version: 12.6.2
     devDependencies:
+      '@getplumb/core':
+        specifier: workspace:*
+        version: link:../core
       '@types/better-sqlite3':
         specifier: ^7.6.13
         version: 7.6.13

@@ -1,7 +1,7 @@
 {
   "name": "@getplumb/plumb",
   "version": "0.4.16",
-  "description": "Plumb OpenClaw plugin — auto-ingest and memory injection for OpenClaw",
+  "description": "Plumb OpenClaw plugin \u2014 auto-ingest and memory injection for OpenClaw",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
@@ -39,6 +39,7 @@
     "better-sqlite3": "^12.6.2"
   },
   "devDependencies": {
+    "@getplumb/core": "workspace:*",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^25.3.3",
     "esbuild": "^0.20.0",
