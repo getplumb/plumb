@@ -1,4 +1,4 @@
-import { test, after, mock } from 'node:test';
+import { test, afterAll as after, vi } from 'vitest';
 import assert from 'node:assert/strict';
 import { statusCommand } from './status.js';
 import { LocalStore } from '@getplumb/core';
@@ -86,7 +86,7 @@ test('handles database not found gracefully', async () => {
   try {
     const originalExit = process.exit;
     let exitCode: number | undefined;
-    process.exit = mock.fn((code?: string | number | null | undefined) => {
+    process.exit = vi.fn((code?: string | number | null | undefined) => {
       exitCode = typeof code === 'number' ? code : 1;
       throw new Error('exit');
     }) as typeof process.exit;

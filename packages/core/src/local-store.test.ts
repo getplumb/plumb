@@ -1,4 +1,4 @@
-import { test, after, before } from 'node:test';
+import { test, afterAll as after, beforeAll as before } from 'vitest';
 import assert from 'node:assert/strict';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
