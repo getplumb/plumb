@@ -1,6 +1,7 @@
 import { homedir } from 'node:os';
 import { mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { openDb, type WasmDb } from './wasm-db.js';
 import { applySchema } from './schema.js';
 import type { MemoryStore } from './store.js';
@@ -140,7 +141,7 @@ export class LocalStore implements MemoryStore {
    * Accepts optional confidence (0–1) and decayRate ('slow'|'medium'|'fast').
    */
   async ingestMemoryFact(input: IngestMemoryFactInput): Promise<{ factId: string }> {
-    const factId = crypto.randomUUID();
+    const factId = randomUUID();
     const tagsJson = input.tags ? JSON.stringify(input.tags) : null;
     const confidence = input.confidence ?? 0.95;
     const decayRate = input.decayRate ?? 'slow';
