@@ -79,7 +79,7 @@ describe('MCP server tool schemas and responses', () => {
       }) as { content: Array<{ type: string; text: string }> };
 
       const parsed = JSON.parse(result.content[0]!.text) as Array<{
-        text: string;
+        content: string;
         score: number;
         age_in_days: number;
         session_label: string;
@@ -88,7 +88,7 @@ describe('MCP server tool schemas and responses', () => {
       const first = parsed[0];
       expect(first).toBeDefined();
       if (first) {
-        expect(typeof first.text).toBe('string');
+        expect(typeof first.content).toBe('string');
         expect(typeof first.score).toBe('number');
         expect(typeof first.age_in_days).toBe('number');
         expect(typeof first.session_label).toBe('string');
