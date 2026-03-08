@@ -1,10 +1,95 @@
 import { LocalStore, embedQuery } from '@getplumb/core';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import { readdir, readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { execSync } from 'node:child_process';
 import { createPreResponseHook } from './hooks/pre-response.js';
 import { startQueryServer, stopQueryServer } from './query-server.js';
+
+/**
+ * Ensure better-sqlite3 native binary is available.
+ *
+ * OpenClaw installs plugins with `npm install --ignore-scripts`, which means
+ * better-sqlite3's own install script (`prebuild-install || node-gyp rebuild`)
+ * never runs. We detect this at activation time and download the prebuilt
+ * binary using prebuild-install (bundled as a dep of better-sqlite3).
+ *
+ * Falls back to source compilation (node-gyp) if prebuild-install fails.
+ */
+async function ensureSqliteBinary(logger: { info: (s: string) => void; warn: (s: string) => void; debug?: (s: string) => void }): Promise<void> {
+  // Locate better-sqlite3 relative to this file's location in node_modules.
+  // In the installed plugin, __dirname resolves to the dist/ folder, so
+  // we walk up to find node_modules/better-sqlite3.
+  const req = createRequire(import.meta.url);
+
+  // Try loading — if it works, we're done.
+  try {
+    req('better-sqlite3');
+    return;
+  } catch (e) {
+    const msg = String(e);
+    if (!msg.includes('bindings') && !msg.includes('NODE_MODULE_VERSION') && !msg.includes('was compiled against')) {
+      // Some other error — rethrow rather than silently ignoring
+      throw e;
+    }
+    logger.info('[plumb] better-sqlite3 binary missing or incompatible; attempting to download prebuilt...');
+  }
+
+  // Resolve the better-sqlite3 directory.
+  let sqliteDir: string;
+  try {
+    sqliteDir = dirname(req.resolve('better-sqlite3'));
+    // resolve() returns the main entry file; go up to package root
+    // e.g. .../better-sqlite3/lib/index.js → .../better-sqlite3
+    while (!existsSync(join(sqliteDir, 'package.json'))) {
+      const parent = join(sqliteDir, '..');
+      if (parent === sqliteDir) throw new Error('Could not find better-sqlite3 package root');
+      sqliteDir = parent;
+    }
+  } catch (e) {
+    logger.warn(`[plumb] Could not locate better-sqlite3 package: ${e}`);
+    return;
+  }
+
+  // Find prebuild-install (it's a dep of better-sqlite3, so nested or hoisted).
+  const prebuildCandidates = [
+    join(sqliteDir, 'node_modules', 'prebuild-install', 'bin.js'),
+    join(sqliteDir, '..', 'prebuild-install', 'bin.js'),       // hoisted one level up (peer of better-sqlite3)
+    join(sqliteDir, '..', '..', 'prebuild-install', 'bin.js'), // hoisted further up (plugin root)
+  ];
+  const prebuildScript = prebuildCandidates.find(p => existsSync(p)) ?? null;
+
+  if (prebuildScript) {
+    try {
+      execSync(`node ${JSON.stringify(prebuildScript)}`, {
+        cwd: sqliteDir,
+        stdio: 'pipe',
+        timeout: 90_000,
+      });
+      logger.info('[plumb] better-sqlite3 prebuilt binary downloaded successfully.');
+
+      // Verify it loads now
+      try { req('better-sqlite3'); return; } catch { /* fall through to rebuild */ }
+    } catch (e) {
+      const errLine = (e as any)?.stderr?.toString().trim().split('\n')[0] ?? String(e);
+      logger.warn(`[plumb] prebuild-install failed (${errLine}), trying source build...`);
+    }
+  } else {
+    logger.warn('[plumb] prebuild-install not found, trying source build...');
+  }
+
+  // Last resort: compile from source (requires build tools on the machine).
+  const pluginDir = join(sqliteDir, '..');
+  try {
+    execSync('npm rebuild better-sqlite3', { cwd: pluginDir, stdio: 'pipe', timeout: 120_000 });
+    logger.info('[plumb] better-sqlite3 built from source successfully.');
+  } catch (e) {
+    logger.warn('[plumb] Could not build better-sqlite3 from source — Plumb may fail to initialize.');
+    logger.warn('[plumb] To fix manually: cd ' + pluginDir + ' && npm rebuild better-sqlite3');
+  }
+}
 
 // Define types inline since they aren't re-exported from openclaw/plugin-sdk
 type PluginLogger = {
@@ -231,6 +316,10 @@ export const plugin: OpenClawPluginDefinition = {
     api.logger.info(
       `[plumb] Activating with dbPath=${dbPath}, userId=${userId}, shadowMode=${shadowMode}`
     );
+
+    // Ensure native SQLite binary is present (OpenClaw installs with --ignore-scripts,
+    // so better-sqlite3's own install script never runs — we compensate here).
+    await ensureSqliteBinary(api.logger);
 
     const storeOptions: Parameters<typeof LocalStore.create>[0] = {
       dbPath,
