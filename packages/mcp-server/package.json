@@ -1,6 +1,6 @@
 {
   "name": "@getplumb/mcp-server",
-  "version": "0.4.7",
+  "version": "0.4.8",
   "description": "Plumb MCP stdio server — exposes memory tools to Claude and other MCP clients",
   "license": "MIT",
   "author": "Clay Waters <hello@plumb.run>",
@@ -49,7 +49,7 @@
     "node": ">=18"
   },
   "dependencies": {
-    "@getplumb/core": "0.4.7",
+    "@getplumb/core": "0.4.8",
     "@modelcontextprotocol/sdk": "^1.27.1",
     "zod": "^4.3.6"
   },
