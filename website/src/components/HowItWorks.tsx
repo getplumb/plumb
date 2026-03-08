@@ -22,12 +22,12 @@ openclaw: ✓ Installed. I can feel my brain growing.`,
   {
     num: "02",
     icon: Cpu,
-    title: "Facts are passively extracted",
-    body: "Plumb runs a lightweight extraction pipeline in the background — chunking, embedding, and classifying facts from every LLM response into Subject → Predicate → Object triples. No changes to your workflow.",
-    code: `→ "Clay uses Slack as primary channel"
-   S: agent.channel
-   P: primary
-   O: slack  [0.99]`,
+    title: "Facts are written as you work",
+    body: "Your agent writes facts to Plumb using a single lightweight tool call. Plumb handles embedding and indexing in the background — no extra prompting, no workflow changes.",
+    code: `→ plumb_remember("Primary comms channel is Slack")
+   embedding...
+   ✓ stored
+   [HIGH] ready for retrieval`,
   },
   {
     num: "03",

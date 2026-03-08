@@ -4,7 +4,6 @@ const NAV_LINKS = [
   { label: "Docs", href: "/docs" },
   { label: "GitHub", href: "https://github.com/getplumb/plumb" },
   { label: "Pricing", href: "#pricing" },
-  { label: "Architecture", href: "/architecture" },
   { label: "Privacy", href: "/privacy" },
   { label: "Terms", href: "/terms" },
 ];
@@ -101,10 +100,10 @@ export default function Footer() {
             © {new Date().getFullYear()} Plumb. Open source under MIT License.
           </p>
           <a
-            href="/architecture"
+            href="/docs"
             className="font-mono text-xs text-text-muted transition-colors hover:text-accent underline underline-offset-2"
           >
-            → Read the Architecture Manifesto
+            → Read the Docs
           </a>
         </div>
       </div>
