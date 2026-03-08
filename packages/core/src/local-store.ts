@@ -144,6 +144,9 @@ export class LocalStore implements MemoryStore {
     const tagsJson = input.tags ? JSON.stringify(input.tags) : null;
     const confidence = input.confidence ?? 0.95;
     const decayRate = input.decayRate ?? 'slow';
+    const createdAt = input.createdAt
+      ? (input.createdAt instanceof Date ? input.createdAt : new Date(input.createdAt)).toISOString()
+      : new Date().toISOString();
 
     const stmt = this.#db.prepare(`
       INSERT INTO memory_facts
@@ -158,7 +161,7 @@ export class LocalStore implements MemoryStore {
       tagsJson,
       confidence,
       decayRate,
-      new Date().toISOString(),
+      createdAt,
       'pending',
     ]);
     stmt.step();
