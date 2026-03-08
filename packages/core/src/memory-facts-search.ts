@@ -21,9 +21,6 @@ import { knnSearch, deserializeEmbedding } from './vector-search.js';
 import { scoreMemoryFact, computeDecay } from './scorer.js';
 
 // Lambda values per decay_rate tier.
-// slow:   λ=0.010 → half-life ~70 days
-// medium: λ=0.050 → half-life ~14 days
-// fast:   λ=0.100 → half-life  ~7 days
 const DECAY_LAMBDAS: Record<string, number> = {
   slow: 0.010,
   medium: 0.050,
@@ -195,9 +192,6 @@ export async function searchMemoryFacts(
   const rrfScores = rrf(vecRanked, bm25Ranked);
 
   // ── 5. Apply MEMORY_FACT_BOOST × recency decay ───────────────────────────
-  // Decay is a soft multiplier — slow-decaying facts (~70-day half-life) are
-  // barely affected, but provide a meaningful tiebreaker when two facts have
-  // near-identical relevance (e.g. a superseded fact vs its replacement).
   const now = Date.now();
   const boostedScores: Array<[string, number]> = [];
   for (const [id, rrfScore] of rrfScores) {
