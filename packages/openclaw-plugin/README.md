@@ -1,10 +1,10 @@
 # @getplumb/plumb — Plumb Memory Plugin for OpenClaw
 
-> Persistent memory for [OpenClaw](https://openclaw.ai) — automatic ingest and context injection, no setup required.
+> Persistent memory for [OpenClaw](https://openclaw.ai) — context injection and agent-driven memory tools.
 
 **Made by [Plumb](https://plumb.run) · [GitHub](https://github.com/getplumb/plumb) · [npm](https://www.npmjs.com/package/@getplumb/plumb)**
 
-This is the official OpenClaw memory plugin from Plumb (plumb.run). It replaces OpenClaw's default `memory-core` slot with a persistent SQLite-backed memory that learns from your conversations and injects relevant context automatically.
+This is the official OpenClaw memory plugin from Plumb (plumb.run). It assigns itself to OpenClaw's `memory` plugin slot and provides your agent with persistent memory backed by a local SQLite database.
 
 ## Install
 
@@ -27,7 +27,7 @@ openclaw plugins install @getplumb/plumb
 
 > **Note on security warning:** OpenClaw may warn about shell command execution in the plugin. This is expected — Plumb downloads a native SQLite binary on first activation (since OpenClaw installs plugins with `--ignore-scripts`, skipping the normal binary setup). Nothing runs at install time. You can safely proceed.
 
-**2. Assign the memory slot** — this step is required. Open your `openclaw.json` and add:
+**2. Assign the memory slot** — this step is required. Add to your `openclaw.json`:
 ```json
 "plugins": {
   "slots": {
@@ -46,59 +46,29 @@ openclaw config set plugins.slots.memory plumb
 openclaw gateway restart
 ```
 
-Plumb starts learning from your conversations immediately.
-
 ## What it does
 
-- **Auto-ingest** — every conversation turn is stored to a local SQLite DB after the response
-- **Context injection** — relevant memory facts are injected into the system prompt before each response
-- **Shadow mode** — observe what would be injected without actually injecting it (good for testing)
-- **Local only** — all data stays on your machine; nothing is sent to external servers
+- **Memory injection** — relevant facts from your memory store are injected into every agent response as a `[PLUMB MEMORY]` block
+- **Agent memory tools** — your agent gets `plumb_remember` and `plumb_search` as callable tools for reading and writing memory mid-conversation
+- **Bootstrap from notes** — on first activation, automatically seeds memory from existing workspace `.md` files (e.g. `memory/YYYY-MM-DD.md`, `MEMORY.md`)
+- **Shadow mode** — retrieve and log what would be injected without actually injecting it (useful for testing)
+- **Local only** — all data stays on your machine in a SQLite database at `~/.plumb/memory.db`
 
 ## Configuration
 
-Configuration lives under `plugins.entries.plumb.config` in your `openclaw.json`. All fields are optional — defaults work out of the box.
+Configuration lives under `plugins.entries.plumb.config` in your `openclaw.json`. All fields are optional.
 
 | Field | Default | Description |
 |---|---|---|
 | `dbPath` | `~/.plumb/memory.db` | Path to the SQLite database file |
 | `userId` | `default` | User ID for scoping memory |
 | `shadowMode` | `false` | If true, retrieves context but does not inject it |
-| `llmProvider` | *(inherits from OpenClaw)* | LLM provider for fact extraction (`openai`, `anthropic`, `ollama`, `openai-compatible`) |
-| `llmModel` | *(inherits from OpenClaw)* | Model for fact extraction |
-| `llmApiKey` | *(inherits from OpenClaw)* | API key for fact extraction |
+| `queryPort` | `18791` | Port for the internal memory query server |
 
 To configure via CLI:
 
 ```bash
 openclaw config set plugins.entries.plumb.config.userId "clay"
-openclaw gateway restart
-```
-
-### Enabling Fact Extraction
-
-Fact extraction requires an LLM provider. Create `~/.plumb/config.json` with your API key:
-
-**Recommended (Gemini 2.5 Flash Lite — extremely cheap and fast):**
-```json
-{
-  "llmProvider": "google",
-  "llmModel": "gemini-2.5-flash-lite",
-  "llmApiKey": "YOUR_GEMINI_API_KEY"
-}
-```
-
-**Alternative (OpenAI):**
-```json
-{
-  "llmProvider": "openai",
-  "llmModel": "gpt-4o-mini",
-  "llmApiKey": "YOUR_OPENAI_API_KEY"
-}
-```
-
-Then restart the gateway:
-```bash
 openclaw gateway restart
 ```
 
@@ -127,7 +97,7 @@ Remove any `"plumb"` blocks from `plugins.entries` and `plugins.installs`, then 
 openclaw gateway restart
 ```
 
-> **Note:** Skipping the manual config cleanup will leave OpenClaw with a broken memory slot. This is a known gap in the OpenClaw plugin uninstall flow — [filed as an issue](https://github.com/openclaw/openclaw/issues).
+> **Note:** Skipping the manual config cleanup will leave OpenClaw with a broken memory slot. This is a known gap in the OpenClaw plugin uninstall flow.
 
 ## Links
 
