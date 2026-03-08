@@ -169,9 +169,6 @@ importers:
 
   packages/openclaw-plugin:
     dependencies:
-      '@getplumb/core':
-        specifier: workspace:*
-        version: link:../core
       better-sqlite3:
         specifier: ^12.6.2
         version: 12.6.2
