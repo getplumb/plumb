@@ -1,6 +1,6 @@
 {
   "name": "plumb-memory",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "description": "Plumb CLI — memory management and AI context tools",
   "license": "MIT",
   "author": "Clay Waters <hello@plumb.run>",

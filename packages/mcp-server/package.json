@@ -1,6 +1,6 @@
 {
   "name": "@getplumb/mcp-server",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "description": "Plumb MCP stdio server — exposes memory tools to Claude and other MCP clients",
   "license": "MIT",
   "author": "Clay Waters <hello@plumb.run>",
