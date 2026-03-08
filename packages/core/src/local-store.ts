@@ -53,6 +53,13 @@ export interface LocalStoreOptions {
     /** Sleep duration when embed queue is empty (default 5000ms) */
     embedIdleMs?: number;
   };
+  /**
+   * Skip pre-warming the embedder/reranker pipelines at init time.
+   * Use in CLI tools (e.g. seed-dev.mjs) where startup latency matters and
+   * the model will load on first embed() call anyway.
+   * Default: false (warm at init for consistent query latency in the gateway).
+   */
+  skipWarm?: boolean;
 }
 
 /**
@@ -234,11 +241,14 @@ export class LocalStore implements MemoryStore {
     const store = new LocalStore(db, userId, options.backlog);
 
     // T-096: Warm embedder pipeline to eliminate 365ms cold-start on first query
-    await warmEmbedder();
+    // Skip if skipWarm=true (e.g. CLI seeding tools — model loads on first embed() call anyway)
+    if (!options.skipWarm) {
+      await warmEmbedder();
 
-    // T-101: Warm reranker pipeline to eliminate ~200ms cold-start on first query
-    // (intentionally loads ~80MB model at init for consistent <250ms query performance)
-    await warmReranker();
+      // T-101: Warm reranker pipeline to eliminate ~200ms cold-start on first query
+      // (intentionally loads ~80MB model at init for consistent <250ms query performance)
+      await warmReranker();
+    }
 
     // T-103/T-108/T-115: Load vec_raw_log embeddings for child rows only (eliminates ~3,700ms SQLite load per query)
     // T-115: Limit to MAX_CACHE_ENTRIES most recent rows to prevent OOM on startup

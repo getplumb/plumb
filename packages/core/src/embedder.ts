@@ -32,6 +32,12 @@ async function getEmbedPipeline(): Promise<Pipeline | null> {
       // @ts-ignore — @xenova/transformers has incomplete typings
       const { pipeline, env } = await import('@xenova/transformers');
       (env as { allowLocalModels: boolean }).allowLocalModels = true;
+      // Limit ONNX WASM to 1 thread so embedding doesn't peg all CPU cores.
+      // Without this, Xenova spawns up to N worker threads (one per core),
+      // making OpenClaw unusable during seeding or heavy ingest.
+      // 1 thread = ~2–4× slower embeddings but the gateway stays responsive.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (env as any).backends.onnx.wasm.numThreads = 1;
       _embedPipeline = (await pipeline('feature-extraction', 'Xenova/bge-small-en-v1.5')) as Pipeline;
     } catch {
       _embedLoadFailed = true;
