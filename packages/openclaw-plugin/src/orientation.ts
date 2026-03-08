@@ -55,6 +55,11 @@ Tools available to you:
 
 Memory is written to: ${resolvedPath}
 
+Daily backup convention:
+- At the end of a session with significant events or decisions, write a brief summary to memory/YYYY-MM-DD.md (relative to your workspace root)
+- This is a human-readable logbook for review — NOT a memory source (Plumb handles retrieval)
+- Keep it dense: decisions made, facts learned, tasks completed — not a transcript
+
 If your AGENTS.md or MEMORY.md don't already reference Plumb, you may want to update them so future sessions start with the right mental model.
 [/PLUMB MEMORY]`;
   }

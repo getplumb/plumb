@@ -124,6 +124,14 @@ describe('OrientationManager', () => {
       expect(text).toContain('MEMORY.md');
     });
 
+    it('includes daily backup convention', () => {
+      const text = orientationManager.getOrientationText('/test/path/memory.db');
+
+      expect(text).toContain('YYYY-MM-DD');
+      expect(text).toContain('memory/YYYY-MM-DD.md');
+      expect(text).toContain('Daily backup convention');
+    });
+
     it('includes the database path', () => {
       const dbPath = '/test/path/memory.db';
       const text = orientationManager.getOrientationText(dbPath);
