@@ -25,7 +25,7 @@ If you prefer to do it yourself:
 openclaw plugins install @getplumb/plumb
 ```
 
-> **Note on security warning:** OpenClaw may warn about shell command execution in the plugin. This is expected — Plumb downloads a native SQLite binary on first run (since OpenClaw installs with `--ignore-scripts`). No code runs at install time; the download happens when the plugin activates. You can safely proceed.
+> **Note on security warning:** OpenClaw may warn about shell command execution in the plugin. This is expected — Plumb downloads a native SQLite binary on first activation (since OpenClaw installs plugins with `--ignore-scripts`, skipping the normal binary setup). Nothing runs at install time. You can safely proceed.
 
 **2. Assign the memory slot** — this step is required. Open your `openclaw.json` and add:
 ```json
