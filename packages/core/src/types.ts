@@ -45,4 +45,10 @@ export interface IngestMemoryFactInput {
   readonly confidence?: number;
   /** Decay rate for time-based score decay. Defaults to 'slow' if omitted. */
   readonly decayRate?: 'slow' | 'medium' | 'fast';
+  /**
+   * Override the created_at timestamp (ISO 8601 string or Date).
+   * Useful for seeding historical facts or test fixtures with known timestamps.
+   * Defaults to the current time if omitted.
+   */
+  readonly createdAt?: Date | string;
 }

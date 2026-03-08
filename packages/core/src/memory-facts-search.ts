@@ -1,12 +1,14 @@
 /**
  * Memory facts hybrid search (Layer 2 retrieval).
  *
- * Pipeline (same as raw-log-search, but for memory_facts table):
+ * Pipeline:
  *   1. BM25 keyword search over memory_facts content
  *   2. KNN vector search via JS cosine similarity
  *   3. Reciprocal Rank Fusion (RRF, k=60) merges both ranked lists
  *   4. Apply MEMORY_FACT_BOOST (2.0×) to RRF scores
- *   5. Return top-k by boosted score
+ *   5. Apply recency decay based on decay_rate and created_at
+ *      (slow: λ=0.01 ≈ 70-day half-life, medium: λ=0.05, fast: λ=0.1)
+ *   6. Return top-k by final score
  *
  * Search is cross-session: no session filter is applied.
  * The caller (LocalStore) passes its internal db handle — no separate DB connection.
@@ -16,7 +18,21 @@ import type { WasmDb } from './wasm-db.js';
 import { Bm25 } from './bm25.js';
 import { embedQuery } from './embedder.js';
 import { knnSearch, deserializeEmbedding } from './vector-search.js';
-import { scoreMemoryFact } from './scorer.js';
+import { scoreMemoryFact, computeDecay } from './scorer.js';
+
+// Lambda values per decay_rate tier.
+// slow:   λ=0.010 → half-life ~70 days
+// medium: λ=0.050 → half-life ~14 days
+// fast:   λ=0.100 → half-life  ~7 days
+const DECAY_LAMBDAS: Record<string, number> = {
+  slow: 0.010,
+  medium: 0.050,
+  fast: 0.100,
+};
+
+function decayLambda(decayRate: string): number {
+  return DECAY_LAMBDAS[decayRate] ?? DECAY_LAMBDAS['slow']!;
+}
 
 // RRF constant (standard k=60; higher = less weight on top-1 rank).
 const RRF_K = 60;
@@ -42,6 +58,7 @@ interface MemoryFactRow {
   source_session_label: string | null;
   tags: string | null;
   created_at: string;
+  decay_rate: string;
   vec_rowid: number | null;
 }
 
@@ -90,7 +107,7 @@ export async function searchMemoryFacts(
 ): Promise<readonly MemoryFactSearchResult[]> {
   // ── 1. Fetch all memory_facts rows (non-deleted, with embeddings) ────────
   const stmt = db.prepare(
-    `SELECT id, content, source_session_id, source_session_label, tags, created_at, vec_rowid
+    `SELECT id, content, source_session_id, source_session_label, tags, created_at, decay_rate, vec_rowid
      FROM memory_facts
      WHERE user_id = ? AND deleted_at IS NULL AND embed_status = 'done'
      ORDER BY created_at DESC`
@@ -126,18 +143,21 @@ export async function searchMemoryFacts(
 
   if (vecRowids.length === 0) {
     // No embeddings available — fall back to BM25 only
+    const now = Date.now();
     const bm25Only: MemoryFactSearchResult[] = bm25Ranked
       .slice(0, limit)
       .map(([id, score]) => {
         const row = idToRow.get(id)!;
-        const boostedScore = scoreMemoryFact(score);
+        const ageDays = (now - new Date(row.created_at).getTime()) / (1000 * 60 * 60 * 24);
+        const lambda = decayLambda(row.decay_rate);
+        const finalScore = scoreMemoryFact(score) * computeDecay(lambda, ageDays);
         return {
           content: row.content,
           source_session_id: row.source_session_id,
           source_session_label: row.source_session_label,
           created_at: row.created_at,
           tags: row.tags ? (JSON.parse(row.tags) as string[]) : null,
-          final_score: boostedScore,
+          final_score: finalScore,
         };
       });
     return bm25Only;
@@ -174,11 +194,18 @@ export async function searchMemoryFacts(
   // ── 4. RRF merge ────────────────────────────────────────────────────────
   const rrfScores = rrf(vecRanked, bm25Ranked);
 
-  // ── 5. Apply MEMORY_FACT_BOOST ──────────────────────────────────────────
+  // ── 5. Apply MEMORY_FACT_BOOST × recency decay ───────────────────────────
+  // Decay is a soft multiplier — slow-decaying facts (~70-day half-life) are
+  // barely affected, but provide a meaningful tiebreaker when two facts have
+  // near-identical relevance (e.g. a superseded fact vs its replacement).
+  const now = Date.now();
   const boostedScores: Array<[string, number]> = [];
   for (const [id, rrfScore] of rrfScores) {
-    const boosted = scoreMemoryFact(rrfScore);
-    boostedScores.push([id, boosted]);
+    const row = idToRow.get(id)!;
+    const ageDays = (now - new Date(row.created_at).getTime()) / (1000 * 60 * 60 * 24);
+    const lambda = decayLambda(row.decay_rate);
+    const finalScore = scoreMemoryFact(rrfScore) * computeDecay(lambda, ageDays);
+    boostedScores.push([id, finalScore]);
   }
   boostedScores.sort((a, b) => b[1] - a[1]);
 
