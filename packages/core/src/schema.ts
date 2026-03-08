@@ -3,6 +3,7 @@
  *
  * Tables:
  *   - memory_facts: Curated facts written by the agent via plumb_remember
+ *   - vec_raw_log: Embedding vectors for memory_facts (keyed by vec_rowid)
  *   - nudge_log: One-time upgrade prompt tracking
  *
  * Design principles:
@@ -14,18 +15,15 @@
  * Memory facts table for curated, high-signal facts written by Terra.
  * Each fact is a short, dense piece of information stored as a single chunk.
  *
- * subject/predicate/object store the structured fact components.
  * confidence (0–1) and decay_rate ('slow'|'medium'|'fast') drive scoring.
  * source_session_label is optional human-readable session name for provenance.
+ * vec_rowid links to vec_raw_log for vector similarity search.
  */
 export const CREATE_MEMORY_FACTS_TABLE = `
   CREATE TABLE IF NOT EXISTS memory_facts (
     id                   TEXT PRIMARY KEY,
     user_id              TEXT NOT NULL,
     content              TEXT NOT NULL,
-    subject              TEXT,
-    predicate            TEXT,
-    object               TEXT,
     confidence           REAL NOT NULL DEFAULT 0.9,
     decay_rate           TEXT NOT NULL DEFAULT 'slow',
     source_session_id    TEXT NOT NULL,
@@ -88,9 +86,6 @@ export function applySchema(db: import('./wasm-db.js').WasmDb): void {
     }) as Array<{ name: string }>;
     const memFactColNames = new Set(memFactColumns.map((c) => c.name));
 
-    if (!memFactColNames.has('subject')) db.exec(`ALTER TABLE memory_facts ADD COLUMN subject TEXT`);
-    if (!memFactColNames.has('predicate')) db.exec(`ALTER TABLE memory_facts ADD COLUMN predicate TEXT`);
-    if (!memFactColNames.has('object')) db.exec(`ALTER TABLE memory_facts ADD COLUMN "object" TEXT`);
     if (!memFactColNames.has('confidence')) db.exec(`ALTER TABLE memory_facts ADD COLUMN confidence REAL NOT NULL DEFAULT 0.9`);
     if (!memFactColNames.has('decay_rate')) db.exec(`ALTER TABLE memory_facts ADD COLUMN decay_rate TEXT NOT NULL DEFAULT 'slow'`);
     if (!memFactColNames.has('source_session_label')) db.exec(`ALTER TABLE memory_facts ADD COLUMN source_session_label TEXT`);
