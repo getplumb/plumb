@@ -1,5 +1,7 @@
 import { buildMemoryContext, formatContextBlock } from '@getplumb/core';
 import type { LocalStore } from '@getplumb/core';
+import Database from 'better-sqlite3';
+import { OrientationManager } from '../orientation.js';
 
 // Define types inline since they aren't re-exported from openclaw/plugin-sdk
 type PluginHookBeforePromptBuildEvent = {
@@ -29,15 +31,19 @@ const MAX_PENDING_PROMPTS = 1000; // Prevent memory leaks
  * The hook queries the store with the incoming user message, formats the retrieved memories
  * into a [PLUMB MEMORY] block, and prepends it to the system prompt.
  *
+ * On the very first call (fresh database), injects a one-time orientation block before normal memory.
+ *
  * @param store LocalStore instance for memory retrieval
  * @param shadowMode If true, retrieves and logs what would be injected but doesn't actually inject
  * @param pendingPrompts Shared map for storing prompts to be consumed by post-exchange hook
+ * @param dbPath Path to the Plumb database for orientation check
  * @returns Hook handler for before_prompt_build event
  */
 export function createPreResponseHook(
   store: LocalStore | null,
   shadowMode = false,
-  pendingPrompts?: Map<string, string>
+  pendingPrompts?: Map<string, string>,
+  dbPath?: string
 ) {
   return async (
     event: PluginHookBeforePromptBuildEvent,
@@ -60,6 +66,26 @@ export function createPreResponseHook(
       return;
     }
 
+    // Check for first activation orientation (T-124)
+    let orientationText = '';
+    if (dbPath) {
+      try {
+        const db = new Database(dbPath);
+        const orientationManager = new OrientationManager();
+
+        if (!orientationManager.hasOrientationFired(db)) {
+          orientationText = orientationManager.getOrientationText(dbPath);
+          orientationManager.recordOrientation(db);
+          console.debug('[plumb] First activation — orientation injected');
+        }
+
+        db.close();
+      } catch (e: unknown) {
+        console.warn('[plumb] Orientation check failed:', e);
+        // Continue with normal memory injection even if orientation fails
+      }
+    }
+
     let formattedContext = '';
 
     try {
@@ -80,8 +106,22 @@ export function createPreResponseHook(
       }
     }
 
-    // Wrap in [PLUMB MEMORY] delimiters
-    const finalBlock = `[PLUMB MEMORY]\n${formattedContext}\n[/PLUMB MEMORY]`;
+    // If we have orientation text, prepend it before normal memory
+    // Otherwise, wrap normal memory in [PLUMB MEMORY] delimiters
+    let finalBlock: string;
+    if (orientationText) {
+      // Orientation already has [PLUMB MEMORY] wrapper
+      if (formattedContext) {
+        // Append normal memory after orientation
+        finalBlock = `${orientationText}\n\n[PLUMB MEMORY]\n${formattedContext}\n[/PLUMB MEMORY]`;
+      } else {
+        // Just orientation, no normal memory
+        finalBlock = orientationText;
+      }
+    } else {
+      // No orientation, just wrap normal memory
+      finalBlock = `[PLUMB MEMORY]\n${formattedContext}\n[/PLUMB MEMORY]`;
+    }
 
     // In shadow mode, log what would be injected but don't actually inject
     if (shadowMode) {

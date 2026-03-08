@@ -386,7 +386,7 @@ export const plugin: OpenClawPluginDefinition = {
     api.on('llm_output', createPostExchangeHook(store, userId, pendingPrompts, dbPath));
 
     // Register the before_prompt_build hook for memory injection
-    api.on('before_prompt_build', createPreResponseHook(store, shadowMode, pendingPrompts));
+    api.on('before_prompt_build', createPreResponseHook(store, shadowMode, pendingPrompts, dbPath));
 
     api.logger.info('[plumb] Plugin activated');
     } catch (error) {
