@@ -10,11 +10,24 @@ This is the official OpenClaw memory plugin from Plumb (plumb.run). It assigns i
 
 ### Recommended: agent-assisted install
 
-The easiest way to install Plumb is to let your OpenClaw agent handle it. Open a chat with your agent and paste:
+Open a chat with your OpenClaw agent and paste this exactly:
 
-> Install and activate the Plumb memory plugin from npm (`@getplumb/plumb`). After installing, set `plugins.slots.memory` to `"plumb"` in openclaw.json and restart the gateway.
-
-Your agent will download the package, patch the config, and restart the gateway for you.
+> Run these steps to install the Plumb memory plugin. Do not ask questions — just run the steps and report back.
+> 
+> 1. `openclaw plugins install @getplumb/plumb`
+> 2. `openclaw config set plugins.slots.memory plumb`
+> 3. `openclaw gateway restart`
+> 
+> If step 1 fails with a npm error, do the manual install instead:
+> - Stop the gateway
+> - Run `npm pack @getplumb/plumb@latest` in a temp directory
+> - Extract the tarball, run `npm install --omit=dev` inside it
+> - Move the folder to `~/.openclaw/extensions/plumb` (or `%USERPROFILE%\.openclaw\extensions\plumb` on Windows)
+> - Update `plugins.installs.plumb.version` in openclaw.json to match the installed version
+> - Set `plugins.slots.memory` to `"plumb"` in openclaw.json
+> - Restart the gateway
+> 
+> Once done, confirm the gateway is running and Plumb is active. Do not configure anything else.
 
 ### Manual install
 
