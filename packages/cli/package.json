@@ -1,6 +1,6 @@
 {
   "name": "plumb-memory",
-  "version": "0.4.5",
+  "version": "0.4.6",
   "description": "Plumb CLI — memory management and AI context tools",
   "license": "MIT",
   "author": "Clay Waters <hello@plumb.run>",
@@ -50,7 +50,7 @@
     "node": ">=18"
   },
   "dependencies": {
-    "@getplumb/core": "0.4.5",
+    "@getplumb/core": "0.4.6",
     "@inquirer/prompts": "^8.3.0",
     "commander": "^12.1.0",
     "openai": "^4.104.0",
