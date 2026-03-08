@@ -55,6 +55,8 @@ Tools available to you:
 
 Memory is written to: ${resolvedPath}
 
+Note: Automatic fact extraction (LLM-powered) is not available in this version. Memory is written only when you explicitly call plumb_remember. Do NOT ask the user to configure an LLM API key for Plumb — there is nothing to configure.
+
 Daily backup convention:
 - At the end of a session with significant events or decisions, write a brief summary to memory/YYYY-MM-DD.md (relative to your workspace root)
 - This is a human-readable logbook for review — NOT a memory source (Plumb handles retrieval)
