@@ -10,7 +10,7 @@ import { rmSync } from 'node:fs';
 const dbPath = join(tmpdir(), `plumb-status-test-${Date.now()}.db`);
 const userId = 'test-user';
 
-// Set up test data using ingestMemoryFact and ingest.
+// Set up test data using ingestMemoryFact only (raw log removed in T-128).
 const store = await LocalStore.create({ dbPath, userId });
 
 await store.ingestMemoryFact({
@@ -29,23 +29,13 @@ await store.ingestMemoryFact({
   sourceSessionId: 'session-2',
 });
 
-// Add a raw log entry.
-await store.ingest({
-  userMessage: 'Hello',
-  agentResponse: 'Hi there!',
-  timestamp: new Date('2024-01-01T12:00:00Z'),
-  source: 'openclaw',
-  sessionId: 'session-1',
-  sessionLabel: 'Test Session',
-});
-
 store.close();
 
 after(() => {
   rmSync(dbPath, { force: true });
 });
 
-test('prints human-readable status with fact count and raw log count', async () => {
+test('prints human-readable status with fact count', async () => {
   // Capture console output
   const originalLog = console.log;
   const logs: string[] = [];
@@ -57,9 +47,7 @@ test('prints human-readable status with fact count and raw log count', async () 
     const fullOutput = logs.join('\n');
 
     assert.ok(fullOutput.includes('Plumb Memory — Local Store'), 'Should have header');
-    assert.ok(fullOutput.includes('Facts:'), 'Should show fact count');
-    assert.ok(fullOutput.includes('Raw log:'), 'Should show raw log count');
-    assert.ok(fullOutput.includes('Last ingestion:'), 'Should show last ingestion time');
+    assert.ok(fullOutput.includes('Memory facts:'), 'Should show fact count');
     assert.ok(fullOutput.includes('Storage:'), 'Should show storage size');
   } finally {
     console.log = originalLog;
@@ -78,7 +66,6 @@ test('prints JSON output when --json flag is set', async () => {
     const parsed = JSON.parse(fullOutput);
 
     assert.ok(typeof parsed.factCount === 'number', 'Should have factCount');
-    assert.ok(typeof parsed.rawLogCount === 'number', 'Should have rawLogCount');
     assert.ok(parsed.lastIngestion === null || typeof parsed.lastIngestion === 'string', 'Should have lastIngestion');
     assert.ok(typeof parsed.storageBytes === 'number', 'Should have storageBytes');
     assert.ok(typeof parsed.mcpServer === 'object', 'Should have mcpServer object');
