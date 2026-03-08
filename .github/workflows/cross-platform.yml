@@ -106,6 +106,7 @@ jobs:
       - name: Install deps + build plugin
         run: |
           pnpm install --frozen-lockfile
+          pnpm --filter @getplumb/core build
           pnpm --filter @getplumb/plumb build
 
       - name: Pack plugin tarball
