@@ -5,7 +5,7 @@ import { join, dirname } from 'node:path';
 import { openDb, type WasmDb } from './wasm-db.js';
 import { applySchema } from './schema.js';
 import type { MemoryStore } from './store.js';
-import type { IngestResult, MessageExchange, StoreStatus, IngestMemoryFactInput, Fact, SearchResult } from './types.js';
+import type { IngestResult, MessageExchange, StoreStatus, IngestMemoryFactInput } from './types.js';
 import { embed, warmEmbedder, warmReranker } from './embedder.js';
 import { formatExchange } from './chunker.js';
 import { searchRawLog, type RawLogSearchResult } from './raw-log-search.js';
@@ -523,15 +523,18 @@ export class LocalStore implements MemoryStore {
   /**
    * Ingest a curated memory fact (T-118).
    * Facts are stored as single chunks (no splitting) with embed_status='pending'.
+   * Accepts optional confidence (0–1) and decayRate ('slow'|'medium'|'fast').
    */
   async ingestMemoryFact(input: IngestMemoryFactInput): Promise<{ factId: string }> {
     const factId = crypto.randomUUID();
     const tagsJson = input.tags ? JSON.stringify(input.tags) : null;
+    const confidence = input.confidence ?? 0.95;
+    const decayRate = input.decayRate ?? 'slow';
 
     const stmt = this.#db.prepare(`
       INSERT INTO memory_facts
-        (id, user_id, content, source_session_id, tags, created_at, embed_status)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+        (id, user_id, content, source_session_id, tags, confidence, decay_rate, created_at, embed_status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     stmt.bind([
       factId,
@@ -539,6 +542,8 @@ export class LocalStore implements MemoryStore {
       input.content,
       input.sourceSessionId,
       tagsJson,
+      confidence,
+      decayRate,
       new Date().toISOString(),
       'pending',
     ]);
@@ -582,43 +587,6 @@ export class LocalStore implements MemoryStore {
 
 
   /**
-   * Store a domain Fact into memory_facts (Layer 2).
-   * Returns the UUID of the inserted fact.
-   * Accepts an optional `context` field (stored in content for extra context).
-   */
-  async store(fact: Fact & { context?: string }): Promise<string> {
-    const factId = (fact as { id?: string }).id ?? crypto.randomUUID();
-    const baseContent = `${fact.subject} ${fact.predicate} ${fact.object}`;
-    const content = fact.context ? `${baseContent} — ${fact.context}` : baseContent;
-
-    const stmt = this.#db.prepare(`
-      INSERT OR REPLACE INTO memory_facts
-        (id, user_id, content, subject, predicate, object, confidence, decay_rate,
-         source_session_id, source_session_label, tags, created_at, embed_status)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-    stmt.bind([
-      factId,
-      this.#userId,
-      content,
-      fact.subject,
-      fact.predicate,
-      fact.object,
-      fact.confidence,
-      fact.decayRate,
-      fact.sourceSessionId,
-      fact.sourceSessionLabel ?? null,
-      null, // tags
-      fact.timestamp.toISOString(),
-      'pending',
-    ]);
-    stmt.step();
-    stmt.finalize();
-
-    return factId;
-  }
-
-  /**
    * Soft-delete a memory fact by id (sets deleted_at timestamp).
    * Soft-deleted facts are excluded from search results.
    */
@@ -629,65 +597,6 @@ export class LocalStore implements MemoryStore {
     stmt.bind([new Date().toISOString(), factId, this.#userId]);
     stmt.step();
     stmt.finalize();
-  }
-
-  /**
-   * Search memory_facts using keyword (LIKE) matching on content (Layer 2).
-   * Returns SearchResult[] with full Fact objects reconstructed from stored data.
-   *
-   * Note: T-119 will add vector search for memory_facts. For now, LIKE search
-   * is sufficient for tests and basic use.
-   */
-  async search(query: string, limit = 10): Promise<readonly SearchResult[]> {
-    const likePattern = `%${query}%`;
-
-    const stmt = this.#db.prepare(`
-      SELECT id, content, subject, predicate, object, confidence, decay_rate,
-             source_session_id, source_session_label, created_at
-      FROM memory_facts
-      WHERE user_id = ? AND content LIKE ? AND deleted_at IS NULL
-      ORDER BY created_at DESC
-      LIMIT ?
-    `);
-    stmt.bind([this.#userId, likePattern, limit]);
-
-    type MemFactRow = {
-      id: string;
-      content: string;
-      subject: string | null;
-      predicate: string | null;
-      object: string | null;
-      confidence: number | null;
-      decay_rate: string | null;
-      source_session_id: string;
-      source_session_label: string | null;
-      created_at: string;
-    };
-
-    const rows: MemFactRow[] = [];
-    while (stmt.step()) {
-      rows.push(stmt.get({}) as MemFactRow);
-    }
-    stmt.finalize();
-
-    return rows.map((row) => {
-      const fact: Fact = {
-        id: row.id,
-        subject: row.subject ?? row.content,
-        predicate: row.predicate ?? 'contains',
-        object: row.object ?? '',
-        confidence: row.confidence ?? 0.9,
-        decayRate: (row.decay_rate ?? 'slow') as Fact['decayRate'],
-        timestamp: new Date(row.created_at),
-        sourceSessionId: row.source_session_id,
-        ...(row.source_session_label !== null
-          ? { sourceSessionLabel: row.source_session_label }
-          : {}),
-      };
-      const ageInDays =
-        (Date.now() - fact.timestamp.getTime()) / (1_000 * 60 * 60 * 24);
-      return { fact, score: 1.0, ageInDays };
-    });
   }
 
   /**

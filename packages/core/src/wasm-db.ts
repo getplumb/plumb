@@ -1,8 +1,8 @@
 /**
- * SQLite database wrapper using @sqlite.org/sqlite-wasm.
+ * SQLite database wrapper using better-sqlite3.
  *
- * Pure WebAssembly implementation — zero native compilation required.
- * Works on all platforms (Windows, macOS, Linux) without node-gyp, MSVC Build Tools, or Python.
+ * Replaces the previous @sqlite.org/sqlite-wasm implementation which cannot
+ * open real filesystem paths (paths outside /tmp) in a Node.js/Emscripten environment.
  *
  * Exposes a WasmDb-compatible interface so local-store.ts and schema.ts
  * require no changes:
@@ -13,8 +13,7 @@
  *   - db.close()
  */
 
-import sqlite3InitModule from '@sqlite.org/sqlite-wasm/sqlite-wasm/jswasm/sqlite3-node.mjs';
-import type { Database, Statement } from '@sqlite.org/sqlite-wasm';
+import Database from 'better-sqlite3';
 
 type ExecOptions = {
   sql: string;
@@ -23,41 +22,77 @@ type ExecOptions = {
 };
 
 /**
- * Thin statement wrapper that adapts the sqlite-wasm oo1 Statement API
- * to match the interface expected by local-store.ts and schema.ts.
+ * Thin statement wrapper that adapts better-sqlite3's synchronous API
+ * to match the wasm oo1 Statement interface expected by local-store.ts and schema.ts.
+ *
+ * The wasm oo1 API is cursor-based: bind() → step() → get() → finalize().
+ * better-sqlite3 is all-at-once: prepare() → .all() or .run().
+ *
+ * We lazily detect on first step() whether this is a SELECT (has columns) or
+ * DML (INSERT/UPDATE/DELETE, no result set) and route accordingly.
  */
 class CompatStatement {
-  readonly #stmt: Statement;
+  readonly #stmt: Database.Statement;
+  #params: unknown[] = [];
+  #rows: Record<string, unknown>[] | null = null;
+  #rowIndex = 0;
+  #isDml = false;
 
-  constructor(stmt: Statement) {
+  constructor(stmt: Database.Statement) {
     this.#stmt = stmt;
   }
 
   bind(params: unknown[]): void {
-    this.#stmt.bind(params);
+    this.#params = params;
   }
 
   step(): boolean {
-    return this.#stmt.step();
+    if (this.#rows === null && !this.#isDml) {
+      // First call — determine if this is DML or SELECT
+      if (this.#stmt.reader) {
+        // SELECT — get all rows up front
+        this.#rows = this.#stmt.all(...this.#params) as Record<string, unknown>[];
+        this.#rowIndex = 0;
+      } else {
+        // DML (INSERT/UPDATE/DELETE) — run it once
+        this.#stmt.run(...this.#params);
+        this.#isDml = true;
+        return false; // No rows to iterate
+      }
+    }
+    if (this.#rows !== null && this.#rowIndex < this.#rows.length) {
+      this.#rowIndex++;
+      return true;
+    }
+    return false;
   }
 
   get(colOrObj: number | Record<string, unknown>): unknown {
-    return this.#stmt.get(colOrObj);
+    if (!this.#rows || this.#rowIndex === 0) return undefined;
+    const row = this.#rows[this.#rowIndex - 1] ?? {};
+    if (typeof colOrObj === 'number') {
+      return Object.values(row)[colOrObj];
+    }
+    // Object form — populate the passed object with row values
+    for (const [key, val] of Object.entries(row)) {
+      colOrObj[key] = val;
+    }
+    return colOrObj;
   }
 
   finalize(): void {
-    this.#stmt.finalize();
+    // better-sqlite3 statements don't need explicit finalization
   }
 }
 
 /**
- * Thin database wrapper for @sqlite.org/sqlite-wasm oo1 API.
+ * Thin database wrapper for better-sqlite3.
  * Provides a WasmDb-compatible interface for local-store.ts and schema.ts.
  */
 class WasmDbImpl {
-  readonly #db: Database;
+  readonly #db: Database.Database;
 
-  constructor(db: Database) {
+  constructor(db: Database.Database) {
     this.#db = db;
   }
 
@@ -71,9 +106,9 @@ class WasmDbImpl {
       this.#db.exec(sqlOrOpts);
       return;
     }
-
-    // Object form — run as query and return rows
-    return this.#db.exec(sqlOrOpts);
+    // Object form — run as query and return row objects
+    const stmt = this.#db.prepare(sqlOrOpts.sql);
+    return stmt.all() as unknown[];
   }
 
   prepare(sql: string): CompatStatement {
@@ -85,7 +120,10 @@ class WasmDbImpl {
    * Execute a single-value query and return the first column of the first row.
    */
   selectValue(sql: string): unknown {
-    return this.#db.selectValue(sql);
+    const stmt = this.#db.prepare(sql);
+    const row = stmt.get() as Record<string, unknown> | undefined;
+    if (row === undefined || row === null) return undefined;
+    return Object.values(row)[0];
   }
 
   close(): void {
@@ -96,12 +134,12 @@ class WasmDbImpl {
 export type WasmDb = WasmDbImpl;
 
 /**
- * Open a SQLite database file.
+ * Open a SQLite database file using better-sqlite3.
  * Creates the file if it doesn't exist.
- * Uses @sqlite.org/sqlite-wasm for pure WASM SQLite (zero native dependencies).
+ * Uses native SQLite bindings (better-sqlite3) for real filesystem access.
  */
 export async function openDb(path: string): Promise<WasmDb> {
-  const sqlite3 = await sqlite3InitModule();
-  const db = new sqlite3.oo1.DB(path, 'c');
+  const db = new Database(path);
+  db.pragma('journal_mode = WAL');
   return new WasmDbImpl(db);
 }

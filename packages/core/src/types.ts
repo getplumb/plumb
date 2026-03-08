@@ -1,45 +1,3 @@
-/**
- * Decay rate enum for domain Fact objects.
- * Controls the lambda used in exponential decay scoring.
- *   slow   → lambda = 0.003  (stays relevant for ~1 year)
- *   medium → lambda = 0.012  (decays over ~3–6 months)
- *   fast   → lambda = 0.05   (decays over weeks)
- */
-export const DecayRate = {
-  slow: 'slow',
-  medium: 'medium',
-  fast: 'fast',
-} as const;
-
-export type DecayRate = (typeof DecayRate)[keyof typeof DecayRate];
-
-/**
- * Domain-level Fact — a single scored memory fact with provenance.
- * Distinct from MemoryFact (the raw DB row); this is the live, scored object
- * used by the read path and scorer.
- */
-export interface Fact {
-  readonly id: string;
-  readonly subject: string;
-  readonly predicate: string;
-  readonly object: string;
-  readonly confidence: number;
-  readonly decayRate: DecayRate;
-  readonly timestamp: Date;
-  readonly sourceSessionId: string;
-  readonly sourceSessionLabel?: string;
-}
-
-/**
- * A fact returned from store.search(), paired with a store-side score and age.
- */
-export interface SearchResult {
-  readonly fact: Fact;
-  /** Store-side relevance score (e.g. BM25 or vector similarity). */
-  readonly score: number;
-  readonly ageInDays: number;
-}
-
 export interface MessageExchange {
   readonly userMessage: string;
   readonly agentResponse: string;
@@ -84,4 +42,8 @@ export interface IngestMemoryFactInput {
   readonly content: string;
   readonly sourceSessionId: string;
   readonly tags?: readonly string[];
+  /** Stored confidence value (0–1). Defaults to 0.95 if omitted. */
+  readonly confidence?: number;
+  /** Decay rate for time-based score decay. Defaults to 'slow' if omitted. */
+  readonly decayRate?: 'slow' | 'medium' | 'fast';
 }
