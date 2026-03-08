@@ -12,7 +12,7 @@ This is the official OpenClaw memory plugin from Plumb (plumb.run). It assigns i
 
 Open a chat with your OpenClaw agent and paste this exactly:
 
-> Run these steps to install the Plumb memory plugin. Do not ask questions — just run the steps and report back.
+> Install the Plumb memory plugin by running these steps in order. Report back when done or if a step fails.
 > 
 > 1. `openclaw plugins install @getplumb/plumb`
 > 2. `openclaw config set plugins.slots.memory plumb`
@@ -27,7 +27,7 @@ Open a chat with your OpenClaw agent and paste this exactly:
 > - Set `plugins.slots.memory` to `"plumb"` in openclaw.json
 > - Restart the gateway
 > 
-> Once done, confirm the gateway is running and Plumb is active. Do not configure anything else.
+> Once done, confirm the gateway is running and Plumb is active.
 
 ### Manual install
 
