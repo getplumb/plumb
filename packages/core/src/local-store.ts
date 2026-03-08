@@ -85,8 +85,8 @@ export class LocalStore implements MemoryStore {
 
     const db = await openDb(dbPath);
 
-    // Enable WAL mode and foreign keys
-    db.exec('PRAGMA journal_mode = WAL');
+    // WAL mode and busy_timeout are set inside openDb.
+    // Enable foreign keys (not set by default in SQLite).
     db.exec('PRAGMA foreign_keys = ON');
 
     applySchema(db);

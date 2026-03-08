@@ -141,5 +141,10 @@ export type WasmDb = WasmDbImpl;
 export async function openDb(path: string): Promise<WasmDb> {
   const db = new Database(path);
   db.pragma('journal_mode = WAL');
+  // Retry for up to 5s on SQLITE_BUSY instead of throwing immediately.
+  // WAL mode allows concurrent readers but only one writer at a time — without
+  // a busy timeout, two writers colliding (e.g. embed drain + ingest hook)
+  // immediately throw "database is locked". 5s covers any realistic write burst.
+  db.pragma('busy_timeout = 5000');
   return new WasmDbImpl(db);
 }
