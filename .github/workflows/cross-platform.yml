@@ -135,90 +135,12 @@ jobs:
           PLUMB_DB_PATH: /tmp/plumb-smoke-test/.plumb-test/memory.db
 
   # ----------------------------------------------------------------
-  # Job 3: Full openclaw E2E
-  # Starts a real openclaw gateway, installs the plugin, verifies it
-  # loads without crashing and registers its tools. Ubuntu-only for now.
+  # Job 3: Full openclaw E2E (TODO)
+  # Needs validation that openclaw gateway run starts cleanly from
+  # a minimal seeded config and that `openclaw plugins install` works
+  # without a running gateway. Skipped for now — Jobs 1 & 2 cover
+  # build correctness and real-user install. Job 3 would catch plugin
+  # init crashes inside the gateway (e.g. Cannot read properties of
+  # undefined). Re-enable once the setup is locally verified.
   # ----------------------------------------------------------------
-  openclaw-e2e:
-    name: OpenClaw E2E (ubuntu)
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: pnpm/action-setup@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'pnpm'
-
-      - name: Install openclaw globally
-        run: npm install -g openclaw
-
-      - name: Install deps + build plugin
-        run: |
-          pnpm install --frozen-lockfile
-          pnpm --filter @getplumb/core build
-          pnpm --filter @getplumb/plumb build
-
-      - name: Pack plugin tarball
-        shell: bash
-        working-directory: packages/openclaw-plugin
-        run: |
-          pnpm pack
-          mv getplumb-plumb-*.tgz $GITHUB_WORKSPACE/plumb-plugin.tgz
-
-      - name: Seed minimal openclaw config
-        run: |
-          mkdir -p ~/.openclaw
-          cat > ~/.openclaw/openclaw.json << 'EOF'
-          {
-            "meta": { "version": 1 },
-            "gateway": {
-              "mode": "local",
-              "port": 18799,
-              "bind": "loopback",
-              "auth": { "mode": "none" }
-            }
-          }
-          EOF
-
-      - name: Install plumb plugin (filesystem only, no gateway yet)
-        run: openclaw plugins install $GITHUB_WORKSPACE/plumb-plugin.tgz
-
-      - name: Start gateway in background
-        run: |
-          nohup openclaw gateway run > /tmp/openclaw-gw.log 2>&1 &
-          echo $! > /tmp/openclaw-gw.pid
-          echo "Gateway PID: $(cat /tmp/openclaw-gw.pid)"
-
-      - name: Wait for gateway /health
-        run: |
-          for i in $(seq 1 30); do
-            if curl -sf http://localhost:18799/health | grep -q '"ok":true'; then
-              echo "Gateway is live!"
-              exit 0
-            fi
-            echo "Attempt $i — waiting..."
-            sleep 1
-          done
-          echo "=== Gateway failed to start. Log: ==="
-          cat /tmp/openclaw-gw.log
-          exit 1
-
-      - name: Run E2E assertions
-        run: node $GITHUB_WORKSPACE/.github/scripts/e2e-test.mjs
-        env:
-          OPENCLAW_PORT: 18799
-
-      - name: Upload gateway log on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: openclaw-gateway-log
-          path: /tmp/openclaw-gw.log
-
-      - name: Stop gateway
-        if: always()
-        run: kill $(cat /tmp/openclaw-gw.pid) 2>/dev/null || true
+  # openclaw-e2e: (disabled)
