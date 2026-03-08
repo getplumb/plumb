@@ -91,11 +91,6 @@ jobs:
             node: '18'
           - os: macos-latest
             node: '18'
-          # ubuntu node 18 excluded: @getplumb/core@0.4.8 (npm) uses
-          # crypto.randomUUID() which is Node 19+ global. Fix lands in
-          # next @getplumb/core publish; Build & Unit already covers Node 18.
-          - os: ubuntu-latest
-            node: '18'
 
     steps:
       - uses: actions/checkout@v4
