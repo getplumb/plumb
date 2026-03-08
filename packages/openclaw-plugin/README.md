@@ -8,19 +8,45 @@ This is the official OpenClaw memory plugin from Plumb (plumb.run). It replaces 
 
 ## Install
 
+### Recommended: agent-assisted install
+
+The easiest way to install Plumb is to let your OpenClaw agent handle it. Open a chat with your agent and paste:
+
+> Install and activate the Plumb memory plugin from npm (`@getplumb/plumb`). After installing, set `plugins.slots.memory` to `"plumb"` in openclaw.json and restart the gateway.
+
+Your agent will download the package, patch the config, and restart the gateway for you.
+
+### Manual install
+
+If you prefer to do it yourself:
+
+**1. Install the plugin:**
 ```bash
 openclaw plugins install @getplumb/plumb
 ```
 
-Then restart the gateway to activate:
+> **Note on security warning:** OpenClaw may warn about shell command execution in the plugin. This is expected — Plumb downloads a native SQLite binary on first run (since OpenClaw installs with `--ignore-scripts`). No code runs at install time; the download happens when the plugin activates. You can safely proceed.
 
+**2. Assign the memory slot** — this step is required. Open your `openclaw.json` and add:
+```json
+"plugins": {
+  "slots": {
+    "memory": "plumb"
+  }
+}
+```
+
+Or via CLI:
+```bash
+openclaw config set plugins.slots.memory plumb
+```
+
+**3. Restart the gateway:**
 ```bash
 openclaw gateway restart
 ```
 
-That's it. Plumb starts learning from your conversations immediately.
-
-> **Note on security warning:** OpenClaw may show a warning about "environment variable access combined with network send." This is expected — Plumb reads your configured LLM API key and uses it to extract memory facts from conversations. No credentials are sent anywhere except the LLM provider you configure. You can safely proceed past this warning.
+Plumb starts learning from your conversations immediately.
 
 ## What it does
 
