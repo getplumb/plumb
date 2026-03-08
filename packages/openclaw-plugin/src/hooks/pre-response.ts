@@ -2,6 +2,7 @@ import { buildMemoryContext, formatContextBlock } from '@getplumb/core';
 import type { LocalStore } from '@getplumb/core';
 import Database from 'better-sqlite3';
 import { OrientationManager } from '../orientation.js';
+import { patchWorkspaceFiles } from '../workspace-patcher.js';
 
 // Define types inline since they aren't re-exported from openclaw/plugin-sdk
 type PluginHookBeforePromptBuildEvent = {
@@ -77,6 +78,11 @@ export function createPreResponseHook(
           orientationText = orientationManager.getOrientationText(dbPath);
           orientationManager.recordOrientation(db);
           console.debug('[plumb] First activation — orientation injected');
+
+          // T-125: Patch workspace files on first activation (fire-and-forget)
+          void patchWorkspaceFiles(ctx.workspaceDir, console).catch(() => {
+            // Errors are caught internally in patchWorkspaceFiles
+          });
         }
 
         db.close();
