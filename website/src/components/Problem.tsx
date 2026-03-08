@@ -6,39 +6,39 @@ import { useRef } from "react";
 import { X, Check, TrendingDown, TrendingUp } from "lucide-react";
 
 const OLD_MEMORY_LINES = [
-  { text: "# MEMORY.md — Clay's Long-Term Memory", class: "text-text-muted" },
+  { text: "# MEMORY.md — Agent Long-Term Memory", class: "text-text-muted" },
   { text: "", class: "" },
   { text: "## Critical Operational Rules", class: "text-text-muted" },
   { text: "- Primary channel: Slack. Telegram = fallback", class: "text-red-400 line-through decoration-red-500/60", waste: true },
-  { text: "- Reminders: Slack #reminders (C0AHAMP6ZLN)", class: "text-red-400 line-through decoration-red-500/60", waste: true },
-  { text: "- CC claywaters13@gmail.com on external emails", class: "text-red-400 line-through decoration-red-500/60", waste: true },
+  { text: "- Reminders: post to #reminders channel", class: "text-red-400 line-through decoration-red-500/60", waste: true },
+  { text: "- CC team@example.com on external emails", class: "text-red-400 line-through decoration-red-500/60", waste: true },
   { text: "- LinkedIn: NEVER send without explicit approval", class: "text-red-400 line-through decoration-red-500/60", waste: true },
   { text: "", class: "" },
   { text: "## Sub-Agent Defaults", class: "text-text-muted" },
   { text: "- Timeout: 600s (900s for browser tasks)", class: "text-red-400 line-through decoration-red-500/60", waste: true },
-  { text: "- Model: Claude Haiku 4.5 for sub-agents", class: "text-red-400 line-through decoration-red-500/60", waste: true },
+  { text: "- Model: claude-haiku-4-5 for sub-agents", class: "text-red-400 line-through decoration-red-500/60", waste: true },
   { text: "- Default: anthropic/claude-haiku-4-5", class: "text-red-400 line-through decoration-red-500/60", waste: true },
   { text: "", class: "" },
   { text: "## Key Tool Locations", class: "text-text-muted" },
   { text: "- Notion task DB: a50b0f76-4900...", class: "text-red-400 line-through decoration-red-500/60", waste: true },
-  { text: "- Career facts: clay_career_facts.md", class: "text-red-400 line-through decoration-red-500/60", waste: true },
+  { text: "- Career facts: career_facts.md", class: "text-red-400 line-through decoration-red-500/60", waste: true },
   { text: "- Full memory: memory/MEMORY_FULL_BACKUP.md", class: "text-red-400 line-through decoration-red-500/60", waste: true },
   { text: "... 847 more lines ...", class: "text-text-muted italic" },
 ];
 
-const NEW_FACTS = [
-  { subject: "agent.channel", predicate: "primary", object: "slack", score: 0.99, tag: "RULE" },
-  { subject: "subagent.timeout", predicate: "default_ms", object: "600000", score: 0.99, tag: "CONFIG" },
-  { subject: "subagent.model", predicate: "default", object: "claude-haiku-4-5", score: 0.97, tag: "CONFIG" },
-  { subject: "email.cc_rule", predicate: "external_mail", object: "claywaters13@gmail.com", score: 0.99, tag: "RULE" },
-  { subject: "notion.tasks_db", predicate: "id", object: "a50b0f76-4900-431e", score: 0.95, tag: "TOOL" },
-  { subject: "linkedin", predicate: "send_policy", object: "require_explicit_approval", score: 0.99, tag: "RULE" },
+const PLUMB_FACTS = [
+  { tier: "HIGH", session: "main-session", age: "2 days ago", fact: "Primary comms channel is Slack, not Telegram" },
+  { tier: "HIGH", session: "main-session", age: "2 days ago", fact: "Sub-agent default timeout is 600 seconds" },
+  { tier: "HIGH", session: "main-session", age: "3 days ago", fact: "CC team@example.com on all outbound emails" },
+  { tier: "MED",  session: "setup",        age: "5 days ago", fact: "LinkedIn messages require explicit approval" },
+  { tier: "MED",  session: "setup",        age: "5 days ago", fact: "Notion tasks DB id: a50b0f76-4900-431e" },
+  { tier: "LOW",  session: "setup",        age: "6 days ago", fact: "Default sub-agent model: claude-haiku-4-5" },
 ];
 
-const TAG_COLORS: Record<string, string> = {
-  RULE: "text-[#f97316] bg-[#f9731612]",
-  CONFIG: "text-accent bg-accent-dim",
-  TOOL: "text-purple-400 bg-purple-400/10",
+const TIER_COLORS: Record<string, string> = {
+  HIGH: "text-green-400 bg-green-400/10",
+  MED: "text-accent bg-accent-dim",
+  LOW: "text-text-muted bg-surface-2",
 };
 
 export default function Problem() {
@@ -58,7 +58,7 @@ export default function Problem() {
         >
           <p className="font-mono text-xs tracking-[0.2em] text-accent uppercase mb-3">The Problem</p>
           <h2 className="text-3xl font-bold text-text-primary md:text-4xl">
-            Flat files don't scale. Knowledge graphs do.
+            Flat files don't scale. Smart retrieval does.
           </h2>
           <p className="mt-4 text-text-secondary max-w-xl mx-auto">
             Every token you spend loading stale context is a token you can't spend solving the actual problem.
@@ -126,32 +126,28 @@ export default function Problem() {
             {/* Fact rows */}
             <div className="bg-surface divide-y divide-border">
               {/* Column headers */}
-              <div className="grid grid-cols-[1fr_1fr_1fr_72px_64px] gap-2 px-5 py-2 text-[11px] font-mono text-text-muted uppercase tracking-wider">
-                <span>Subject</span>
-                <span>Predicate</span>
-                <span>Object</span>
-                <span>Tag</span>
-                <span className="text-right">Score</span>
+              <div className="grid grid-cols-[52px_88px_76px_1fr] gap-2 px-5 py-2 text-[11px] font-mono text-text-muted uppercase tracking-wider">
+                <span>Tier</span>
+                <span>Session</span>
+                <span>Age</span>
+                <span>Fact</span>
               </div>
-              {NEW_FACTS.map((fact, i) => (
+              {PLUMB_FACTS.map((fact, i) => (
                 <motion.div
                   key={i}
                   initial={{ opacity: 0, x: 10 }}
                   animate={inView ? { opacity: 1, x: 0 } : {}}
                   transition={{ duration: 0.3, delay: 0.3 + i * 0.07 }}
-                  className="grid grid-cols-[1fr_1fr_1fr_72px_64px] gap-2 px-5 py-3 font-mono text-[12px] hover:bg-surface-2 transition-colors"
+                  className="grid grid-cols-[52px_88px_76px_1fr] gap-2 px-5 py-3 font-mono text-[12px] hover:bg-surface-2 transition-colors"
                 >
-                  <span className="text-text-primary truncate">{fact.subject}</span>
-                  <span className="text-text-muted truncate">{fact.predicate}</span>
-                  <span className="text-accent truncate">{fact.object}</span>
                   <span>
-                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${TAG_COLORS[fact.tag]}`}>
-                      {fact.tag}
+                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${TIER_COLORS[fact.tier.trim()]}`}>
+                      {fact.tier.trim()}
                     </span>
                   </span>
-                  <span className={`text-right font-semibold ${fact.score >= 0.97 ? "text-green-500" : "text-text-secondary"}`}>
-                    {(fact.score * 100).toFixed(0)}%
-                  </span>
+                  <span className="text-text-muted truncate">{fact.session}</span>
+                  <span className="text-text-muted truncate">{fact.age}</span>
+                  <span className="text-text-primary truncate">{fact.fact}</span>
                 </motion.div>
               ))}
             </div>

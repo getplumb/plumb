@@ -16,7 +16,7 @@ const FEATURES = [
   {
     icon: DollarSign,
     title: "Stop paying to read your own chat logs.",
-    body: "Injecting flat files destroys your context window and spikes API costs. Plumb passively extracts high-signal facts and injects only what's necessary — semantic search, not grep.",
+    body: "Injecting flat files destroys your context window and spikes API costs. Plumb writes high-signal facts as your agent works and injects only what's necessary — semantic search, not grep.",
     accent: "text-yellow-400",
     glow: "group-hover:shadow-[0_0_20px_#facc1508]",
   },
@@ -30,14 +30,14 @@ const FEATURES = [
   {
     icon: Zap,
     title: "Zero-friction, high-fidelity recall.",
-    body: "Stop typing \"write this down.\" Plumb listens in the background and builds a structured knowledge graph automatically. Your agent learns as it works.",
+    body: "Stop typing \"write this down.\" Your agent writes facts to Plumb as it works — and retrieves exactly the right ones before each response. No flat files. No token bloat.",
     accent: "text-purple-400",
     glow: "group-hover:shadow-[0_0_20px_#a855f708]",
   },
   {
     icon: Server,
     title: "Stateless agents. Stateful memory.",
-    body: "Nuke your local OpenClaw instance. Your context is decoupled from your compute. Run one command to restore your agent's brain on any machine, anywhere.",
+    body: "Your memory lives in a portable SQLite database — not baked into your config files. Back it up, move it, or upgrade to Plumb Cloud for zero-setup cross-device sync.",
     accent: "text-green-400",
     glow: "group-hover:shadow-[0_0_20px_#22c55e08]",
   },
@@ -51,7 +51,7 @@ const FEATURES = [
   {
     icon: Database,
     title: "Structured like a DB. Readable like a file.",
-    body: "View, edit, and delete any extracted memory via our CLI or local UI. Subject → Predicate → Object triples are human-readable by design. You are always in complete control.",
+    body: "View, edit, and delete any stored memory via our CLI or local UI. Facts are plain-text and human-readable by design. You are always in complete control.",
     accent: "text-pink-400",
     glow: "group-hover:shadow-[0_0_20px_#ec489908]",
   },
