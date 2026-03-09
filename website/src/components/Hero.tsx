@@ -4,9 +4,7 @@ import { motion } from "framer-motion";
 import { useState, useEffect } from "react";
 import { ArrowRight, BookOpen, Copy, Check as CheckIcon } from "lucide-react";
 import { PLUGIN_VERSION, displayVersion } from "@/lib/version";
-
-const INSTALL_PROMPT =
-  "Install the Plumb memory plugin by running these steps in order. Report back when done or if a step fails.\n\n1. `openclaw plugins install @getplumb/plumb`\n2. `openclaw config set plugins.slots.memory plumb`\n3. `openclaw gateway restart`";
+import { INSTALL_PROMPT, DOCS_URL } from "@/lib/constants";
 
 const CHAT_MESSAGES = [
   {
@@ -100,7 +98,7 @@ function ChatWindow() {
         <span className="w-3 h-3 rounded-full bg-[#ff5f57]" />
         <span className="w-3 h-3 rounded-full bg-[#febc2e]" />
         <span className="w-3 h-3 rounded-full bg-[#28c840]" />
-        <span className="ml-3 text-xs text-text-muted font-mono">openclaw — terra-chat</span>
+        <span className="ml-3 text-xs text-text-muted font-mono">openclaw — OpenClaw Chat</span>
       </div>
       {/* Chat body */}
       <div className="bg-[#0a0a0a] px-5 py-5 text-sm min-h-[260px] flex flex-col gap-4">
@@ -150,6 +148,15 @@ function ChatWindow() {
 }
 
 export default function Hero() {
+  const [heroCopied, setHeroCopied] = useState(false);
+
+  const handleHeroCopy = () => {
+    navigator.clipboard.writeText(INSTALL_PROMPT).then(() => {
+      setHeroCopied(true);
+      setTimeout(() => setHeroCopied(false), 2000);
+    });
+  };
+
   return (
     <section
       id="install"
@@ -176,7 +183,7 @@ export default function Hero() {
         >
           <span className="h-1.5 w-1.5 rounded-full bg-accent animate-pulse" />
           <span className="font-mono text-xs text-accent tracking-wider">
-            {displayVersion(PLUGIN_VERSION)} · OpenClaw plugin · MCP-native
+            {displayVersion(PLUGIN_VERSION)} · OpenClaw plugin · MCP coming soon
           </span>
         </motion.div>
 
@@ -213,15 +220,26 @@ export default function Hero() {
           className="mt-10 flex flex-col items-center gap-6"
         >
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-            <a
-              href="#install"
+            <button
+              onClick={handleHeroCopy}
               className="group flex items-center gap-2 rounded-lg bg-accent px-6 py-3 text-sm font-semibold text-background transition-all hover:bg-accent-hover hover:shadow-accent-md"
             >
-              Add to OpenClaw
-              <ArrowRight size={16} className="transition-transform group-hover:translate-x-0.5" />
-            </a>
+              {heroCopied ? (
+                <>
+                  <CheckIcon size={16} />
+                  Copied!
+                </>
+              ) : (
+                <>
+                  Add to OpenClaw
+                  <ArrowRight size={16} className="transition-transform group-hover:translate-x-0.5" />
+                </>
+              )}
+            </button>
             <a
-              href="/docs"
+              href={DOCS_URL}
+              target="_blank"
+              rel="noopener noreferrer"
               className="flex items-center gap-2 rounded-lg border border-border bg-surface px-6 py-3 text-sm font-medium text-text-secondary transition-all hover:border-border hover:text-text-primary hover:bg-surface-2"
             >
               <BookOpen size={16} />
