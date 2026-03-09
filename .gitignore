@@ -11,3 +11,10 @@ chroma_db/
 *.db
 *.db-shm
 *.db-wal
+*.tgz
+eval/
+seed-from-memory-result.md
+seed-from-memory.ts
+seed-extra-files.ts
+seed-dev.mjs
+seed-dev-full.mjs
