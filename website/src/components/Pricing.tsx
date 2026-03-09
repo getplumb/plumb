@@ -26,7 +26,7 @@ const TIERS = [
       "CLI interface (plumb list, plumb wipe, etc.)",
       "Auto-seed from MEMORY.md on first activation",
       "OpenClaw plugin (memory slot, before_prompt_build)",
-      "100% private — zero telemetry",
+      "Your memory never leaves your machine",
     ],
   },
   {
