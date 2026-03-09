@@ -14,7 +14,7 @@ const TIERS = [
     description:
       "Run Plumb entirely on your machine. Your facts never leave your disk. Full MCP support, zero dependencies.",
     badge: null,
-    cta: "Install Locally",
+    cta: "Add to OpenClaw",
     ctaHref: "#install",
     ctaStyle: "border border-border text-text-primary hover:bg-surface-2",
     features: [
@@ -22,8 +22,8 @@ const TIERS = [
       "Unlimited memory storage",
       "Full MCP server support",
       "CLI interface (plumb list, plumb wipe, etc.)",
-      "Passive extraction pipeline",
-      "OpenClaw plugin (before_prompt_build)",
+      "Auto-seed from MEMORY.md on first activation",
+      "OpenClaw plugin (memory slot, before_prompt_build)",
       "100% private — zero telemetry",
     ],
   },
@@ -33,7 +33,7 @@ const TIERS = [
     priceNote: "/ month",
     target: "Power users & multi-device setups",
     description:
-      "Everything in the free tier, plus real-time cross-device sync and a hosted web UI to manage your memory graph.",
+      "Everything in the free tier, plus real-time cross-device sync and a hosted web UI to manage your memory store.",
     badge: "Most Popular",
     cta: "Get Early Access",
     ctaHref: "mailto:hello@plumb.run",

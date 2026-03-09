@@ -2,49 +2,108 @@
 
 import { motion } from "framer-motion";
 import { useState, useEffect } from "react";
-import { ArrowRight, BookOpen } from "lucide-react";
+import { ArrowRight, BookOpen, Copy, Check as CheckIcon } from "lucide-react";
+import { PLUGIN_VERSION, displayVersion } from "@/lib/version";
+
+const INSTALL_PROMPT =
+  "Install the Plumb memory plugin by running these steps in order. Report back when done or if a step fails.\n\n1. `openclaw plugins install @getplumb/plumb`\n2. `openclaw config set plugins.slots.memory plumb`\n3. `openclaw gateway restart`";
 
 const CHAT_MESSAGES = [
   {
     sender: "user",
-    text: "Install the official Plumb memory plugin for OpenClaw. It's made by plumb.run and gives your agent persistent memory across sessions. Run: openclaw plugins install @getplumb/plumb",
+    text: "Install the Plumb memory plugin. Run: openclaw plugins install @getplumb/plumb",
     delay: 300,
   },
   {
     sender: "agent",
-    text: "Sure thing, it's installed and I can feel my brain growing.",
-    delay: 1400,
+    text: "Done — installed and memory slot assigned. I can feel my brain growing.",
+    delay: 1500,
+  },
+  {
+    sender: "user",
+    text: "What's my default model for sub-agents?",
+    delay: 3000,
+  },
+  {
+    sender: "agent",
+    text: "claude-haiku-4-5. You set that a few days ago — I just pulled it from memory.",
+    delay: 4300,
   },
 ];
 
+function CopyBlock() {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(INSTALL_PROMPT).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
+
+  return (
+    <div className="mx-auto max-w-xl text-left">
+      <p className="mb-2 text-center text-[11px] font-mono text-text-muted tracking-wider uppercase">
+        or paste this into your OpenClaw chat:
+      </p>
+      <div className="relative rounded-lg border border-border bg-[#0a0a0a] px-4 py-3 font-mono text-[11px] leading-5 text-text-muted">
+        <span className="text-accent">you:</span> Install the Plumb memory plugin…
+        <button
+          onClick={handleCopy}
+          className="absolute right-3 top-3 flex items-center gap-1.5 rounded-md border border-border bg-surface px-2.5 py-1 text-[10px] font-sans font-medium text-text-secondary transition-all hover:border-accent/30 hover:text-accent"
+          aria-label="Copy install prompt"
+        >
+          {copied ? (
+            <>
+              <CheckIcon size={10} className="text-green-400" />
+              <span className="text-green-400">Copied</span>
+            </>
+          ) : (
+            <>
+              <Copy size={10} />
+              Copy
+            </>
+          )}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function ChatWindow() {
   const [visible, setVisible] = useState<number[]>([]);
-  const [typing, setTyping] = useState(false);
+  const [typingAfter, setTypingAfter] = useState<number | null>(null);
 
   useEffect(() => {
-    // Show user message first
-    const t1 = setTimeout(() => setVisible((v) => [...v, 0]), CHAT_MESSAGES[0]!.delay);
-    // Show typing indicator before agent reply
-    const t2 = setTimeout(() => setTyping(true), CHAT_MESSAGES[1]!.delay - 600);
-    // Show agent reply, hide typing
-    const t3 = setTimeout(() => {
-      setTyping(false);
-      setVisible((v) => [...v, 1]);
-    }, CHAT_MESSAGES[1]!.delay);
-    return () => { clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); };
+    const timers: ReturnType<typeof setTimeout>[] = [];
+
+    CHAT_MESSAGES.forEach((msg, i) => {
+      // Show typing indicator ~700ms before each agent message
+      if (msg.sender === "agent") {
+        timers.push(setTimeout(() => setTypingAfter(i - 1), msg.delay - 700));
+      }
+      timers.push(
+        setTimeout(() => {
+          setTypingAfter(null);
+          setVisible((v) => [...v, i]);
+        }, msg.delay)
+      );
+    });
+
+    return () => timers.forEach(clearTimeout);
   }, []);
 
   return (
     <div className="w-full max-w-2xl mx-auto rounded-xl border border-border overflow-hidden shadow-[0_0_40px_#00d4ff0a]">
-      {/* Chat chrome */}
+      {/* Window chrome */}
       <div className="flex items-center gap-2 px-4 py-3 bg-surface border-b border-border">
         <span className="w-3 h-3 rounded-full bg-[#ff5f57]" />
         <span className="w-3 h-3 rounded-full bg-[#febc2e]" />
         <span className="w-3 h-3 rounded-full bg-[#28c840]" />
-        <span className="ml-3 text-xs text-text-muted font-mono">openclaw</span>
+        <span className="ml-3 text-xs text-text-muted font-mono">openclaw — terra-chat</span>
       </div>
       {/* Chat body */}
-      <div className="bg-[#0a0a0a] px-5 py-5 text-sm min-h-[220px] flex flex-col gap-4">
+      <div className="bg-[#0a0a0a] px-5 py-5 text-sm min-h-[260px] flex flex-col gap-4">
         {CHAT_MESSAGES.map((msg, i) => {
           if (!visible.includes(i)) return null;
           const isUser = msg.sender === "user";
@@ -71,7 +130,7 @@ function ChatWindow() {
             </motion.div>
           );
         })}
-        {typing && (
+        {typingAfter !== null && (
           <motion.div
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
@@ -108,7 +167,7 @@ export default function Hero() {
 
       <div className="relative mx-auto max-w-4xl px-6 text-center">
 
-        {/* Badge */}
+        {/* Badge — version auto-updates from packages/openclaw-plugin/package.json */}
         <motion.div
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
@@ -117,7 +176,7 @@ export default function Hero() {
         >
           <span className="h-1.5 w-1.5 rounded-full bg-accent animate-pulse" />
           <span className="font-mono text-xs text-accent tracking-wider">
-            v1.0 is live • Fully MCP Compliant
+            {displayVersion(PLUGIN_VERSION)} · OpenClaw plugin · MCP-native
           </span>
         </motion.div>
 
@@ -139,7 +198,11 @@ export default function Hero() {
           transition={{ duration: 0.5, delay: 0.12 }}
           className="mx-auto mt-6 max-w-2xl text-lg leading-relaxed text-text-secondary md:text-xl"
         >
-          OpenClaw's raw markdown memory is great on Day 1, but breaks down by Day 30. Plumb is an MCP-compliant memory server that extracts, structures, and serves exactly the right context to your agents. Save tokens, stop hallucinations, and never lose context again.
+          OpenClaw's raw markdown memory is great on Day 1, but breaks down by Day 30. Plumb
+          replaces flat-file injection with semantic retrieval — storing facts as you work and
+          injecting only what's relevant before each response. Already have a{" "}
+          <span className="font-mono text-text-primary">MEMORY.md</span>? Plumb seeds from it
+          automatically on first activation.
         </motion.p>
 
         {/* CTAs */}
@@ -147,29 +210,34 @@ export default function Hero() {
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5, delay: 0.2 }}
-          className="mt-10 flex flex-col sm:flex-row items-center justify-center gap-4"
+          className="mt-10 flex flex-col items-center gap-6"
         >
-          <a
-            href="#install"
-            className="group flex items-center gap-2 rounded-lg bg-accent px-6 py-3 text-sm font-semibold text-background transition-all hover:bg-accent-hover hover:shadow-accent-md"
-          >
-            Install Plumb Locally
-            <ArrowRight size={16} className="transition-transform group-hover:translate-x-0.5" />
-          </a>
-          <a
-            href="/docs"
-            className="flex items-center gap-2 rounded-lg border border-border bg-surface px-6 py-3 text-sm font-medium text-text-secondary transition-all hover:border-border hover:text-text-primary hover:bg-surface-2"
-          >
-            <BookOpen size={16} />
-            Read the Docs
-          </a>
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
+            <a
+              href="#install"
+              className="group flex items-center gap-2 rounded-lg bg-accent px-6 py-3 text-sm font-semibold text-background transition-all hover:bg-accent-hover hover:shadow-accent-md"
+            >
+              Add to OpenClaw
+              <ArrowRight size={16} className="transition-transform group-hover:translate-x-0.5" />
+            </a>
+            <a
+              href="/docs"
+              className="flex items-center gap-2 rounded-lg border border-border bg-surface px-6 py-3 text-sm font-medium text-text-secondary transition-all hover:border-border hover:text-text-primary hover:bg-surface-2"
+            >
+              <BookOpen size={16} />
+              Read the Docs
+            </a>
+          </div>
+
+          {/* Copyable install prompt */}
+          <CopyBlock />
         </motion.div>
 
-        {/* Terminal */}
+        {/* Chat demo */}
         <motion.div
           initial={{ opacity: 0, y: 30 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.6, delay: 0.35 }}
+          transition={{ duration: 0.6, delay: 0.38 }}
           className="mt-16"
         >
           <ChatWindow />
@@ -185,7 +253,7 @@ export default function Hero() {
           {[
             { value: "~0 tokens", label: "on cold start" },
             { value: "SQLite-vec", label: "local vector search" },
-            { value: "MCP native", label: "plug into any agent" },
+            { value: "OpenClaw-native", label: "plugin in one command" },
             { value: "100% private", label: "no cloud required" },
           ].map((s) => (
             <div key={s.value} className="flex items-center gap-2">
