@@ -5,6 +5,7 @@ import { useInView } from "framer-motion";
 import { useRef, useState } from "react";
 import { Check } from "lucide-react";
 import { INSTALL_PROMPT } from "@/lib/constants";
+import posthog from "posthog-js";
 
 const TIERS = [
   {
@@ -59,6 +60,7 @@ export default function Pricing() {
   const handleCopy = () => {
     navigator.clipboard.writeText(INSTALL_PROMPT).then(() => {
       setCopied(true);
+      posthog.capture("add_to_openclaw_clicked", { location: "pricing" });
       setTimeout(() => setCopied(false), 2000);
     });
   };

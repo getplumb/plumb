@@ -5,6 +5,7 @@ import { useState, useEffect } from "react";
 import { ArrowRight, BookOpen, Copy, Check as CheckIcon } from "lucide-react";
 import { PLUGIN_VERSION, displayVersion } from "@/lib/version";
 import { INSTALL_PROMPT, DOCS_URL } from "@/lib/constants";
+import posthog from "posthog-js";
 
 const CHAT_MESSAGES = [
   {
@@ -35,6 +36,7 @@ function CopyBlock() {
   const handleCopy = () => {
     navigator.clipboard.writeText(INSTALL_PROMPT).then(() => {
       setCopied(true);
+      posthog.capture("add_to_openclaw_clicked", { location: "hero_install_block" });
       setTimeout(() => setCopied(false), 2000);
     });
   };
@@ -153,6 +155,7 @@ export default function Hero() {
   const handleHeroCopy = () => {
     navigator.clipboard.writeText(INSTALL_PROMPT).then(() => {
       setHeroCopied(true);
+      posthog.capture("add_to_openclaw_clicked", { location: "hero_cta" });
       setTimeout(() => setHeroCopied(false), 2000);
     });
   };
