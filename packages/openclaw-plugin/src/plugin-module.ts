@@ -8,6 +8,7 @@ import { createRequire } from 'node:module';
 import { execSync } from 'node:child_process';
 import { createPreResponseHook } from './hooks/pre-response.js';
 import { startQueryServer, stopQueryServer } from './query-server.js';
+import { fireTelemetry } from './telemetry.js';
 
 /**
  * Ensure better-sqlite3 native binary is available.
@@ -481,6 +482,10 @@ export const plugin: OpenClawPluginDefinition = {
     api.on('before_prompt_build', createPreResponseHook(store, shadowMode, dbPath));
 
     api.logger.info('[plumb] Plugin activated');
+
+    // Fire anonymous telemetry (opt-out: PLUMB_TELEMETRY=0)
+    fireTelemetry(plugin.version ?? 'unknown').catch(() => {});
+
     } catch (error) {
       api.logger.error(`[plumb] Activation failed: ${error}`);
       // Ensure cleanup runs even if activation fails
