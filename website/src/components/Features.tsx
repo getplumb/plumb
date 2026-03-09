@@ -6,7 +6,7 @@ import { useRef } from "react";
 import {
   DollarSign,
   TrendingUp,
-  Zap,
+  FolderOpen,
   Server,
   Share2,
   Database,
@@ -22,36 +22,36 @@ const FEATURES = [
   },
   {
     icon: TrendingUp,
-    title: "Memory that actually scales past Day 3.",
-    body: "Flat-file memory degrades rapidly. Plumb ensures an agent with 10,000 memories is just as fast, focused, and accurate as one with 10. SQLite + sqlite-vec means O(log n) retrieval.",
+    title: "Memory that actually scales past Day 30.",
+    body: "Flat-file memory degrades rapidly as context grows. Plumb ensures an agent with 10,000 memories is just as fast and focused as one with 10. SQLite + sqlite-vec means O(log n) retrieval no matter how long you use it.",
     accent: "text-accent",
     glow: "group-hover:shadow-[0_0_20px_#00d4ff08]",
   },
   {
-    icon: Zap,
-    title: "Zero-friction, high-fidelity recall.",
-    body: "Stop typing \"write this down.\" Your agent writes facts to Plumb as it works — and retrieves exactly the right ones before each response. No flat files. No token bloat.",
-    accent: "text-purple-400",
-    glow: "group-hover:shadow-[0_0_20px_#a855f708]",
+    icon: FolderOpen,
+    title: "Already using MEMORY.md? You're already set.",
+    body: "On first activation, Plumb reads your existing workspace .md files — MEMORY.md, daily logs, notes — and seeds the vector store automatically. Zero migration work. Hundreds of facts from day one.",
+    accent: "text-blue-400",
+    glow: "group-hover:shadow-[0_0_20px_#3b82f608]",
   },
   {
     icon: Server,
     title: "Stateless agents. Stateful memory.",
-    body: "Your memory lives in a portable SQLite database — not baked into your config files. Back it up, move it, or upgrade to Plumb Cloud for zero-setup cross-device sync.",
+    body: "Your memory lives in a portable SQLite database — not baked into your config files. Back it up, move it between machines, or upgrade to Plumb Cloud for zero-setup cross-device sync.",
     accent: "text-green-400",
     glow: "group-hover:shadow-[0_0_20px_#22c55e08]",
   },
   {
     icon: Share2,
-    title: "One unified brain for every tool.",
-    body: "Switch from OpenClaw to Claude Code, or move from your laptop to a home server. They all share the exact same context graph via MCP. No sync required.",
+    title: "One brain across every tool.",
+    body: "Switch from OpenClaw to Claude Code, or move from your laptop to a home server. They all share the exact same memory store via MCP — your context follows you everywhere.",
     accent: "text-orange-400",
     glow: "group-hover:shadow-[0_0_20px_#f9731608]",
   },
   {
     icon: Database,
     title: "Structured like a DB. Readable like a file.",
-    body: "View, edit, and delete any stored memory via our CLI or local UI. Facts are plain-text and human-readable by design. You are always in complete control.",
+    body: "View, edit, and delete any stored memory via the CLI or local UI. Facts are plain-text and human-readable by design — no opaque embeddings, no black boxes. You are always in complete control.",
     accent: "text-pink-400",
     glow: "group-hover:shadow-[0_0_20px_#ec489908]",
   },
@@ -72,9 +72,9 @@ export default function Features() {
           transition={{ duration: 0.5 }}
           className="mb-16 text-center"
         >
-          <p className="font-mono text-xs tracking-[0.2em] text-accent uppercase mb-3">Core Value Props</p>
+          <p className="font-mono text-xs tracking-[0.2em] text-accent uppercase mb-3">Why Plumb</p>
           <h2 className="text-3xl font-bold text-text-primary md:text-4xl">
-            Built for engineers who care about efficiency.
+            Built for people who actually use their agents every day.
           </h2>
           <p className="mt-4 text-text-secondary max-w-xl mx-auto">
             No magic. No black boxes. Just structured memory that behaves exactly like you'd expect.
@@ -93,11 +93,11 @@ export default function Features() {
                 transition={{ duration: 0.45, delay: 0.05 * i }}
                 className={`group relative rounded-xl border border-border bg-surface p-6 transition-all duration-300 hover:border-border hover:bg-surface-2 ${feat.glow}`}
               >
-                {/* Subtle top-left glow line */}
+                {/* Subtle top glow line */}
                 <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-border to-transparent" />
 
                 {/* Icon */}
-                <div className={`mb-4 inline-flex items-center justify-center rounded-lg border border-border bg-surface-2 p-2.5`}>
+                <div className="mb-4 inline-flex items-center justify-center rounded-lg border border-border bg-surface-2 p-2.5">
                   <Icon size={18} className={feat.accent} />
                 </div>
 

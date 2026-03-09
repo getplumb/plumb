@@ -3,49 +3,58 @@
 import { motion } from "framer-motion";
 import { useInView } from "framer-motion";
 import { useRef } from "react";
-import { MessageSquare, Cpu, SearchCode, Plug } from "lucide-react";
+import { MessageSquare, BrainCircuit, SearchCode, Plug } from "lucide-react";
 
 const STEPS = [
   {
     num: "01",
     icon: Plug,
     title: "Install once",
-    body: "One command. That's it.",
-    code: `openclaw: Install the official Plumb memory
-plugin. Run:
+    body: "Paste the install prompt into your OpenClaw chat. Your agent handles the rest — download, config, and gateway restart. One conversation, done.",
+    code: `you: Install the Plumb memory plugin.
+
+openclaw: Running:
   openclaw plugins install @getplumb/plumb
+  openclaw config set plugins.slots.memory plumb
+  openclaw gateway restart
 
-you: Sure thing.
-
-openclaw: ✓ Installed. I can feel my brain growing.`,
+✓ Installed. I can feel my brain growing.`,
   },
   {
     num: "02",
-    icon: Cpu,
-    title: "Facts are written as you work",
-    body: "Your agent writes facts to Plumb using a single lightweight tool call. Plumb handles embedding and indexing in the background — no extra prompting, no workflow changes.",
-    code: `→ plumb_remember("Primary comms channel is Slack")
-   embedding...
-   ✓ stored
-   [HIGH] ready for retrieval`,
+    icon: BrainCircuit,
+    title: "Your agent writes facts as it works",
+    body: "No prompting required. As your agent learns things worth keeping, it calls plumb_remember() — Plumb handles embedding and indexing in the background. It can also search its own memory mid-conversation with plumb_search().",
+    code: `# Writing a new fact:
+→ plumb_remember("Primary comms channel is Slack",
+                  confidence="high")
+   ✓ stored · [HIGH] ready for retrieval
+
+# Searching mid-conversation:
+→ plumb_search("sub-agent model")
+   ← Default sub-agent model: claude-haiku-4-5
+      [HIGH] · 3 days ago`,
   },
   {
     num: "03",
     icon: SearchCode,
-    title: "Semantic retrieval before each prompt",
-    body: "Before your agent's next call, Plumb queries the vector store for relevant facts and injects them as a compact, structured block — never the full file.",
+    title: "Relevant facts injected before each prompt",
+    body: "Before every response, Plumb queries the vector store for facts relevant to the current conversation and injects them as a compact block — never the whole file.",
     code: `[PLUMB MEMORY — 6 facts, 340 tokens]
-agent.channel.primary = slack
-subagent.timeout.default = 600s
+[HIGH] Primary comms channel is Slack
+[HIGH] Sub-agent timeout default: 600s
+[MED]  Default model: claude-haiku-4-5
 ...`,
   },
   {
     num: "04",
     icon: MessageSquare,
-    title: "Your agent just got smarter",
-    body: "Your agent responds normally. It just has context it didn't have before. No new tools, no changed workflow — it's simply better.",
-    code: `# no changes needed
-# your agent already knows`,
+    title: "Your agent just knows",
+    body: "No new tools. No workflow changes. Your agent simply has context it didn't have before — including things you mentioned in sessions weeks ago.",
+    code: `you: what channel should I post the alert to?
+
+openclaw: Slack — specifically #alerts.
+          You set that up a couple weeks ago.`,
   },
 ];
 
@@ -69,7 +78,8 @@ export default function HowItWorks() {
             Invisible until you need it.
           </h2>
           <p className="mt-4 text-text-secondary max-w-xl mx-auto">
-            Plumb runs entirely in the background. Install once, forget it exists, then wonder why your agents suddenly got smarter.
+            Plumb runs entirely in the background. Install once, forget it exists, then wonder why
+            your agent suddenly remembers everything.
           </p>
         </motion.div>
 
@@ -89,7 +99,7 @@ export default function HowItWorks() {
                   transition={{ duration: 0.45, delay: 0.08 * i }}
                   className="relative"
                 >
-                  {/* Step number bubble */}
+                  {/* Icon + number */}
                   <div className="relative mb-5 flex items-center gap-3">
                     <div className="z-10 flex h-14 w-14 shrink-0 items-center justify-center rounded-xl border border-accent/30 bg-accent-dim shadow-accent-sm">
                       <Icon size={22} className="text-accent" />
@@ -101,7 +111,7 @@ export default function HowItWorks() {
                   <h3 className="mb-2 text-[15px] font-semibold text-text-primary">{step.title}</h3>
                   <p className="mb-4 text-sm leading-relaxed text-text-secondary">{step.body}</p>
 
-                  {/* Inline code snippet */}
+                  {/* Code snippet */}
                   <div className="rounded-lg border border-border bg-[#0a0a0a] p-3 font-mono text-[11px] leading-5 text-text-muted whitespace-pre">
                     {step.code}
                   </div>

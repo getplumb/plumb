@@ -72,7 +72,7 @@ export default function Nav() {
             href="#install"
             className="rounded-md border border-accent bg-accent-dim px-4 py-2 text-sm font-medium text-accent transition-all hover:bg-accent-glow hover:shadow-accent-sm"
           >
-            Install Locally
+            Add to OpenClaw
           </a>
         </nav>
 
@@ -122,7 +122,7 @@ export default function Nav() {
               className="w-full rounded-md border border-accent bg-accent-dim px-4 py-2.5 text-center text-sm font-medium text-accent"
               onClick={() => setOpen(false)}
             >
-              Install Locally
+              Add to OpenClaw
             </a>
           </nav>
         </div>
