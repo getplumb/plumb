@@ -22,7 +22,7 @@ Every exchange gets ingested automatically. Plumb runs two layers in parallel:
 
 **Layer 2 — Fact graph:** Structured facts extracted via LLM from conversations. Each fact is confidence-scored, timestamped, and time-decayed. Facts include topics, preferences, decisions, and entity relationships.
 
-At retrieval time, both layers are queried (semantic search on raw logs, topic + recency ranking on facts) and merged into a concise `[MEMORY CONTEXT]` block that gets injected into the agent's system prompt before each response.
+At retrieval time, both layers are queried (semantic search on raw logs, topic + recency ranking on facts) and merged into a concise `[PLUMB MEMORY]` block that gets injected into the agent's system prompt before each response.
 
 ```
 ┌─────────────┐
@@ -30,16 +30,22 @@ At retrieval time, both layers are queried (semantic search on raw logs, topic +
 │  Exchange   │
 └──────┬──────┘
        │
-       ├───────────────────┬──────────────────┐
-       │                   │                  │
-       ▼                   ▼                  ▼
- ┌──────────┐      ┌──────────────┐   ┌──────────┐
- │ Raw Log  │      │  Extraction  │   │ Fact     │
- │ (hybrid  │      │  (LLM-based) │──▶│ Graph    │
- │  search) │      └──────────────┘   │ (scored) │
- └────┬─────┘                         └────┬─────┘
-      │                                    │
-      └──────────┬─────────────────────────┘
+       ├───────────────────────────────┐
+       │                               │
+       ▼                               ▼
+ ┌──────────┐                  ┌──────────────┐
+ │ Raw Log  │                  │  Extraction  │
+ │ (hybrid  │                  │  (LLM-based) │
+ │  search) │                  └──────┬───────┘
+ └────┬─────┘                         │
+      │                               ▼
+      │                        ┌──────────┐
+      │                        │ Fact     │
+      │                        │ Graph    │
+      │                        │ (scored) │
+      │                        └────┬─────┘
+      │                             │
+      └──────────┬──────────────────┘
                  ▼
           ┌─────────────┐
           │   Retrieval │
@@ -47,7 +53,7 @@ At retrieval time, both layers are queried (semantic search on raw logs, topic +
           └──────┬──────┘
                  │
                  ▼
-       [MEMORY CONTEXT] block
+       [PLUMB MEMORY] block
        injected into system prompt
 ```
 
@@ -60,7 +66,7 @@ At retrieval time, both layers are queried (semantic search on raw logs, topic +
 Install the Plumb plugin — memory ingestion and retrieval happen automatically:
 
 ```bash
-openclaw plugins install openclaw-plugin-plumb
+openclaw plugins install @getplumb/plumb
 ```
 
 That's it. No MCP config required. Plumb hooks into OpenClaw's exchange lifecycle and injects memory into every turn.
@@ -76,14 +82,13 @@ npm install -g @getplumb/mcp-server
 Add Plumb to your MCP config:
 
 ```json
-// ~/.config/Claude/claude_desktop_config.json (macOS)
+// ~/Library/Application Support/Claude/claude_desktop_config.json (macOS)
 // %APPDATA%\Claude\claude_desktop_config.json (Windows)
 // .cursor/mcp.json (Cursor)
 {
   "mcpServers": {
     "plumb": {
-      "command": "npx",
-      "args": ["-y", "@getplumb/mcp-server"]
+      "command": "plumb-mcp"
     }
   }
 }
@@ -101,7 +106,7 @@ This is a monorepo. All packages under `packages/` are MIT licensed. Hosted infr
 |---|---|---|
 | [`@getplumb/core`](./packages/core) | MemoryStore interface, types, LocalStore, fact extraction, search | MIT |
 | [`@getplumb/mcp-server`](./packages/mcp-server) | Self-hostable MCP server (stdio) | MIT |
-| [`@getplumb/openclaw-plugin`](./packages/openclaw-plugin) | OpenClaw agent plugin — auto-ingest + memory injection | MIT |
+| [`@getplumb/plumb`](./packages/openclaw-plugin) | OpenClaw agent plugin — auto-ingest + memory injection | MIT |
 | [`plumb-memory`](./packages/cli) | CLI tool — init, status, export, reprocess | MIT |
 | `@getplumb/cloud-store` (hosted) | Postgres/pgvector CloudStore driver | BSL 1.1 |
 | `@getplumb/api-server` (hosted) | Hosted MCP endpoint | BSL 1.1 |
@@ -118,9 +123,17 @@ To run the hosted MCP endpoint yourself:
 3. Set up Postgres with pgvector (Supabase works well)
 4. Point your MCP config to your deployed endpoint
 
-See [`hosted/api-server/README.md`](./hosted/api-server/README.md) for deployment instructions.
-
 ---
+
+## Telemetry
+
+The Plumb OpenClaw plugin sends anonymous usage events to help us understand how many people are using it and which versions are active.
+
+**What is sent:** plugin version, OS platform (`linux`/`darwin`/`win32`), CPU architecture. Nothing else — no file paths, no memory content, no user data.
+
+**When:** once on first install (`plugin_installed`) and once per gateway activation (`plugin_activated`).
+
+**Opt out:** set `PLUMB_TELEMETRY=0` in your environment and nothing will ever be sent.
 
 ## License
 
@@ -138,8 +151,7 @@ BSL 1.1 converts to MIT after 4 years.
 ## Links
 
 - **Docs:** [docs.getplumb.dev](https://docs.getplumb.dev)
-- **Hosted tier:** [getplumb.dev](https://getplumb.dev) ($9/mo — Postgres + pgvector, cross-device sync, backups)
-- **Roadmap:** See [`ROADMAP.md`](./ROADMAP.md)
+- **Hosted tier:** [plumb.run](https://plumb.run) ($9/mo — Postgres + pgvector, cross-device sync, backups)
 
 ---
 
