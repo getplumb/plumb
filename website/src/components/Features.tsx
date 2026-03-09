@@ -3,6 +3,7 @@
 import { motion } from "framer-motion";
 import { useInView } from "framer-motion";
 import { useRef } from "react";
+import React from "react";
 import {
   DollarSign,
   TrendingUp,
@@ -12,7 +13,7 @@ import {
   Database,
 } from "lucide-react";
 
-const FEATURES = [
+const FEATURES: { icon: React.ElementType; title: string; body: string; accent: string; glow: string; badge?: string }[] = [
   {
     icon: DollarSign,
     title: "Stop paying to read your own chat logs.",
@@ -43,10 +44,11 @@ const FEATURES = [
   },
   {
     icon: Share2,
-    title: "One brain across every tool.",
-    body: "Switch from OpenClaw to Claude Code, or move from your laptop to a home server. They all share the exact same memory store via MCP — your context follows you everywhere.",
+    title: "One brain across every tool. (Coming soon)",
+    body: "Switch from OpenClaw to Claude Code, or move between machines — all sharing the same memory store via MCP. Cross-tool sync is on the roadmap as a Plumb Cloud feature.",
     accent: "text-orange-400",
     glow: "group-hover:shadow-[0_0_20px_#f9731608]",
+    badge: "Plumb Cloud",
   },
   {
     icon: Database,
@@ -97,8 +99,15 @@ export default function Features() {
                 <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-border to-transparent" />
 
                 {/* Icon */}
-                <div className="mb-4 inline-flex items-center justify-center rounded-lg border border-border bg-surface-2 p-2.5">
-                  <Icon size={18} className={feat.accent} />
+                <div className="mb-4 flex items-center gap-2">
+                  <div className="inline-flex items-center justify-center rounded-lg border border-border bg-surface-2 p-2.5">
+                    <Icon size={18} className={feat.accent} />
+                  </div>
+                  {feat.badge && (
+                    <span className="rounded-full border border-orange-400/30 bg-orange-400/10 px-2 py-0.5 text-[10px] font-semibold text-orange-400">
+                      {feat.badge}
+                    </span>
+                  )}
                 </div>
 
                 {/* Title */}

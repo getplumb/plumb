@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { cn } from "@/lib/cn";
+import { DOCS_URL } from "@/lib/constants";
 
 function PlumbLogo() {
   return (
@@ -40,7 +41,6 @@ export default function Nav() {
   }, []);
 
   const links = [
-    { label: "Docs", href: "/docs" },
     { label: "GitHub", href: "https://github.com/getplumb/plumb" },
     { label: "Pricing", href: "#pricing" },
   ];
@@ -63,6 +63,8 @@ export default function Nav() {
             <a
               key={l.label}
               href={l.href}
+              target={l.href.startsWith("http") ? "_blank" : undefined}
+              rel={l.href.startsWith("http") ? "noopener noreferrer" : undefined}
               className="text-sm text-text-secondary transition-colors hover:text-text-primary"
             >
               {l.label}

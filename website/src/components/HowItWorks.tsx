@@ -104,7 +104,7 @@ export default function HowItWorks() {
                     <div className="z-10 flex h-14 w-14 shrink-0 items-center justify-center rounded-xl border border-accent/30 bg-accent-dim shadow-accent-sm">
                       <Icon size={22} className="text-accent" />
                     </div>
-                    <span className="font-mono text-3xl font-bold text-border select-none">{step.num}</span>
+                    <span className="relative z-10 font-mono text-3xl font-bold text-border select-none bg-background px-1 rounded">{step.num}</span>
                   </div>
 
                   {/* Title + body */}
@@ -112,7 +112,7 @@ export default function HowItWorks() {
                   <p className="mb-4 text-sm leading-relaxed text-text-secondary">{step.body}</p>
 
                   {/* Code snippet */}
-                  <div className="rounded-lg border border-border bg-[#0a0a0a] p-3 font-mono text-[11px] leading-5 text-text-muted whitespace-pre">
+                  <div className="rounded-lg border border-border bg-[#0a0a0a] p-3 font-mono text-[11px] leading-5 text-text-muted whitespace-pre-wrap overflow-hidden break-words">
                     {step.code}
                   </div>
                 </motion.div>

@@ -2,8 +2,9 @@
 
 import { motion } from "framer-motion";
 import { useInView } from "framer-motion";
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import { Check } from "lucide-react";
+import { INSTALL_PROMPT } from "@/lib/constants";
 
 const TIERS = [
   {
@@ -34,7 +35,7 @@ const TIERS = [
     target: "Power users & multi-device setups",
     description:
       "Everything in the free tier, plus real-time cross-device sync and a hosted web UI to manage your memory store.",
-    badge: "Most Popular",
+    badge: "Early Access",
     cta: "Get Early Access",
     ctaHref: "mailto:hello@plumb.run",
     ctaStyle: "bg-accent text-background hover:bg-accent-hover hover:shadow-accent-md",
@@ -53,6 +54,14 @@ const TIERS = [
 export default function Pricing() {
   const ref = useRef(null);
   const inView = useInView(ref, { once: true, amount: 0.2 });
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(INSTALL_PROMPT).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
 
   return (
     <section id="pricing" ref={ref} className="py-24 md:py-32 border-t border-border">
@@ -113,12 +122,21 @@ export default function Pricing() {
               <p className="mb-8 text-sm leading-relaxed text-text-secondary">{tier.description}</p>
 
               {/* CTA */}
-              <a
-                href={tier.ctaHref}
-                className={`block w-full rounded-lg px-5 py-3 text-center text-sm font-semibold transition-all duration-200 ${tier.ctaStyle}`}
-              >
-                {tier.cta}
-              </a>
+              {tier.cta === "Add to OpenClaw" ? (
+                <button
+                  onClick={handleCopy}
+                  className={`block w-full rounded-lg px-5 py-3 text-center text-sm font-semibold transition-all duration-200 ${tier.ctaStyle}`}
+                >
+                  {copied ? "Copied!" : "Add to OpenClaw"}
+                </button>
+              ) : (
+                <a
+                  href={tier.ctaHref}
+                  className={`block w-full rounded-lg px-5 py-3 text-center text-sm font-semibold transition-all duration-200 ${tier.ctaStyle}`}
+                >
+                  {tier.cta}
+                </a>
+              )}
 
               {/* Divider */}
               <div className="my-8 border-t border-border" />
