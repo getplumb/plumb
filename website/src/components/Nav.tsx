@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import posthog from "posthog-js";
 import { cn } from "@/lib/cn";
 import { INSTALL_PROMPT } from "@/lib/constants";
 
@@ -38,6 +39,7 @@ export default function Nav() {
   const handleCopy = () => {
     navigator.clipboard.writeText(INSTALL_PROMPT).then(() => {
       setCopied(true);
+      posthog.capture("add_to_openclaw_clicked", { location: "nav" });
       setTimeout(() => setCopied(false), 2000);
     });
   };
