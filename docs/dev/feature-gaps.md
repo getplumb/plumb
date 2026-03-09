@@ -68,7 +68,7 @@ Output format:
 
 ## Remembered facts
 [HIGH] Never restart prod gateway without Clay's approval
-[HIGH] Clay uses Tailscale URL http://127.0.0.1 for terra-chat links
+[HIGH] Clay uses a Tailscale URL for terra-chat links
 [MED]  Plumb dev DB is at ~/.plumb-dev/memory.db
 
 ## Related conversations
