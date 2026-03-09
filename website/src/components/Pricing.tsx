@@ -127,7 +127,7 @@ export default function Pricing() {
                   onClick={handleCopy}
                   className={`block w-full rounded-lg px-5 py-3 text-center text-sm font-semibold transition-all duration-200 ${tier.ctaStyle}`}
                 >
-                  {copied ? "Copied!" : "Add to OpenClaw"}
+                  {copied ? "Copied! Paste in OpenClaw to install." : "Add to OpenClaw"}
                 </button>
               ) : (
                 <a

@@ -227,7 +227,7 @@ export default function Hero() {
               {heroCopied ? (
                 <>
                   <CheckIcon size={16} />
-                  Copied!
+                  Copied! Paste in OpenClaw to install.
                 </>
               ) : (
                 <>
