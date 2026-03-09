@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { cn } from "@/lib/cn";
-import { DOCS_URL } from "@/lib/constants";
+import { INSTALL_PROMPT } from "@/lib/constants";
 
 function PlumbLogo() {
   return (
@@ -33,6 +33,14 @@ function PlumbLogo() {
 export default function Nav() {
   const [open, setOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(INSTALL_PROMPT).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 20);
@@ -70,12 +78,12 @@ export default function Nav() {
               {l.label}
             </a>
           ))}
-          <a
-            href="#install"
+          <button
+            onClick={handleCopy}
             className="rounded-md border border-accent bg-accent-dim px-4 py-2 text-sm font-medium text-accent transition-all hover:bg-accent-glow hover:shadow-accent-sm"
           >
-            Add to OpenClaw
-          </a>
+            {copied ? "Copied! Paste in OpenClaw to install." : "Add to OpenClaw"}
+          </button>
         </nav>
 
         {/* Mobile hamburger */}
@@ -119,13 +127,12 @@ export default function Nav() {
                 {l.label}
               </a>
             ))}
-            <a
-              href="#install"
+            <button
+              onClick={() => { handleCopy(); setOpen(false); }}
               className="w-full rounded-md border border-accent bg-accent-dim px-4 py-2.5 text-center text-sm font-medium text-accent"
-              onClick={() => setOpen(false)}
             >
-              Add to OpenClaw
-            </a>
+              {copied ? "Copied! Paste in OpenClaw to install." : "Add to OpenClaw"}
+            </button>
           </nav>
         </div>
       )}
