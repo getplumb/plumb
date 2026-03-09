@@ -87,7 +87,7 @@ Adjust tone to match Plumb's existing voice. Keep it factual and brief.
 ## Verify command
 
 ```bash
-bash -c 'export PATH="$PATH:~/..npm-global/bin"; cd ~/..openclaw/workspace/plumb && pnpm install && pnpm build && pnpm --filter @plumb/openclaw-plugin test && grep -q "OrientationManager" packages/openclaw-plugin/src/orientation.ts && grep -q "plumb_remember" packages/openclaw-plugin/src/orientation.ts && grep -q "plumb_search" packages/openclaw-plugin/src/orientation.ts && echo "orientation checks passed"'
+pnpm install && pnpm build && pnpm --filter @getplumb/openclaw-plugin test && grep -q "OrientationManager" packages/openclaw-plugin/src/orientation.ts && grep -q "plumb_remember" packages/openclaw-plugin/src/orientation.ts && grep -q "plumb_search" packages/openclaw-plugin/src/orientation.ts && echo "orientation checks passed"
 ```
 
 ---
