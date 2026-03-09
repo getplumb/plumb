@@ -1,0 +1,32 @@
+# Gitleaks config for getplumb/plumb
+# Built-in rules cover API keys, tokens, etc.
+# These extend with project-specific / personal PII patterns.
+
+title = "gitleaks config"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "personal-email"
+description = "Personal email addresses"
+regex = '''claywaters13@gmail\.com|claywaters391@gmail\.com'''
+tags = ["pii", "email"]
+
+[[rules]]
+id = "tailscale-ip"
+description = "Known personal Tailscale IP"
+regex = '''100\.117\.241\.51'''
+tags = ["pii", "ip"]
+
+[[rules]]
+id = "home-address"
+description = "Home address"
+regex = '''(?i)332\s+casper|casper\s+drive.*lafayette|lafayette.*CO.*80026'''
+tags = ["pii", "address"]
+
+[[rules]]
+id = "home-username"
+description = "Local machine username path"
+regex = '''/home/openclaw-host/'''
+tags = ["pii", "path"]
