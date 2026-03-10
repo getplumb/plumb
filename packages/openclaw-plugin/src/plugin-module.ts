@@ -280,11 +280,17 @@ export const plugin: OpenClawPluginDefinition = {
 
     // FIX 1: Register cleanup handlers IMMEDIATELY (synchronously) before async work
     let storeInitialized = false;
+    let cleanupCalled = false; // Guard: ensure cleanup is idempotent
     const cleanup = async () => {
       if (!storeInitialized) {
         api.logger.debug?.('[plumb] Cleanup called but store not initialized');
         return;
       }
+      if (cleanupCalled) {
+        api.logger.debug?.('[plumb] Cleanup already called, skipping');
+        return;
+      }
+      cleanupCalled = true;
       try {
         if (queryServer) {
           await stopQueryServer(queryServer);
@@ -299,8 +305,11 @@ export const plugin: OpenClawPluginDefinition = {
       }
     };
 
-    // Register session_end handler BEFORE async work starts (critical for graceful shutdown)
-    api.on('session_end', cleanup);
+    // gateway_stop fires when the gateway is shutting down — the right lifecycle event for
+    // plugin-level teardown. session_end fires per-session (every time a chat session closes),
+    // which is NOT the right place to close the DB — doing so caused "database connection is
+    // not open" errors on plumb_remember after the first session ends. (Bug fixed 2026-03-10)
+    api.on('gateway_stop', cleanup);
 
     // Process-level signal handlers (critical for SIGTERM/SIGINT when systemd stops service)
     const signalHandler = () => {
