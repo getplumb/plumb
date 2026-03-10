@@ -1,7 +1,8 @@
 import { Github, Twitter, MessageCircle } from "lucide-react";
+import { DOCS_URL } from "@/lib/constants";
 
 const NAV_LINKS = [
-  { label: "Docs", href: "/docs" },
+  { label: "Docs", href: DOCS_URL },
   { label: "GitHub", href: "https://github.com/getplumb/plumb" },
   { label: "Pricing", href: "#pricing" },
   { label: "Privacy", href: "/privacy" },
@@ -100,7 +101,9 @@ export default function Footer() {
             © {new Date().getFullYear()} Plumb. Open source under MIT License.
           </p>
           <a
-            href="/docs"
+            href={DOCS_URL}
+            target="_blank"
+            rel="noopener noreferrer"
             className="font-mono text-xs text-text-muted transition-colors hover:text-accent underline underline-offset-2"
           >
             → Read the Docs
