@@ -1,4 +1,4 @@
-// Footer — plumb.run
+// Footer — plumb.run (v2)
 import { Github, Twitter, MessageCircle } from "lucide-react";
 import { DOCS_URL } from "@/lib/constants";
 
