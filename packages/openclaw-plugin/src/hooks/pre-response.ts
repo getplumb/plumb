@@ -28,18 +28,33 @@ const MAX_PENDING_PROMPTS = 1000;
 
 /**
  * Extracts the text content of the last user message from a messages array.
- * Handles both string content and multimodal (array) content.
+ *
+ * Handles both string content and array content. OpenClaw's session messages use
+ * two formats: plain string content, or an array of blocks where each block has a
+ * `.text` field (mirroring OpenClaw's internal extractMessageText logic). Both cases
+ * are handled here — no `type` field check needed on the block.
+ *
  * Returns null if no user message is found.
  */
 function extractLastUserMessage(messages: unknown[]): string | null {
   for (let i = messages.length - 1; i >= 0; i--) {
     const msg = messages[i] as any;
     if (!msg || msg.role !== 'user') continue;
-    if (typeof msg.content === 'string') return msg.content;
-    // Handle multimodal content arrays (e.g. [{type: "text", text: "..."}])
+    // Plain string content
+    if (typeof msg.content === 'string') {
+      const trimmed = msg.content.trim();
+      if (trimmed) return trimmed;
+    }
+    // Array content — extract .text from each block (OpenClaw internal format)
     if (Array.isArray(msg.content)) {
-      const textPart = msg.content.find((p: any) => p?.type === 'text');
-      if (textPart?.text) return String(textPart.text);
+      const parts: string[] = [];
+      for (const block of msg.content) {
+        if (block && typeof block === 'object' && typeof (block as any).text === 'string') {
+          const t = (block as any).text.trim();
+          if (t) parts.push(t);
+        }
+      }
+      if (parts.length > 0) return parts.join(' ');
     }
   }
   return null;
