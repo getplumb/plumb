@@ -27,12 +27,50 @@ const INJECTION_TIMEOUT_MS = 800;
 const MAX_PENDING_PROMPTS = 1000;
 
 /**
+ * Strip [PLUMB MEMORY]...[/PLUMB MEMORY] blocks from text.
+ *
+ * On subsequent turns, OpenClaw bakes the injected memory block into the user message
+ * content (since it was prepended via prependContext). If we use that contaminated text
+ * as the retrieval query, we get a self-referential feedback loop where the search keeps
+ * returning the same memories. Stripping these blocks ensures we search on the user's
+ * actual question.
+ */
+function stripPlumbBlocks(text: string): string {
+  return text.replace(/\[PLUMB MEMORY\][\s\S]*?\[\/PLUMB MEMORY\]/g, '').trim();
+}
+
+/**
+ * Extract the user's actual message from event.prompt on the first turn.
+ *
+ * On a fresh session (messages.length === 0), OpenClaw passes the inbound message as
+ * event.prompt with metadata envelope prepended:
+ *
+ *   Sender (untrusted metadata):\n```json\n{...}\n```\n\nActual user message here
+ *
+ * This function strips the metadata envelope and returns just the user's message.
+ * Returns null if no meaningful content remains after stripping.
+ */
+function extractFromPromptEnvelope(prompt: string): string | null {
+  // Strip "Sender (untrusted metadata):" followed by a JSON code block
+  const stripped = prompt
+    .replace(/^Sender\s*\(untrusted metadata\)\s*:\s*```json[\s\S]*?```\s*/i, '')
+    .trim();
+  // Also strip standalone "[timestamp] [channel]" prefix lines
+  const withoutTimestamp = stripped
+    .replace(/^\[.*?\]\s*\[.*?\]\s*\n?/, '')
+    .trim();
+  return withoutTimestamp || null;
+}
+
+/**
  * Extracts the text content of the last user message from a messages array.
  *
  * Handles both string content and array content. OpenClaw's session messages use
  * two formats: plain string content, or an array of blocks where each block has a
  * `.text` field (mirroring OpenClaw's internal extractMessageText logic). Both cases
  * are handled here — no `type` field check needed on the block.
+ *
+ * Automatically strips [PLUMB MEMORY] blocks to avoid feedback-loop contamination.
  *
  * Returns null if no user message is found.
  */
@@ -42,7 +80,7 @@ function extractLastUserMessage(messages: unknown[]): string | null {
     if (!msg || msg.role !== 'user') continue;
     // Plain string content
     if (typeof msg.content === 'string') {
-      const trimmed = msg.content.trim();
+      const trimmed = stripPlumbBlocks(msg.content);
       if (trimmed) return trimmed;
     }
     // Array content — extract .text from each block (OpenClaw internal format)
@@ -54,7 +92,9 @@ function extractLastUserMessage(messages: unknown[]): string | null {
           if (t) parts.push(t);
         }
       }
-      if (parts.length > 0) return parts.join(' ');
+      const joined = parts.join(' ');
+      const cleaned = stripPlumbBlocks(joined);
+      if (cleaned) return cleaned;
     }
   }
   return null;
@@ -88,12 +128,22 @@ export function createPreResponseHook(
     event: PluginHookBeforePromptBuildEvent,
     ctx: PluginHookAgentContext
   ): Promise<PluginHookBeforePromptBuildResult | void> => {
-    // Resolve the best query signal: prefer the incoming user message over the system prompt.
-    // This is the Tier 2 fix: on fresh sessions, event.messages contains the user's first
-    // message which has strong semantic signal. event.prompt is the static system prompt
-    // and provides poor retrieval quality in cold-start scenarios.
+    // Resolve the best query signal for memory retrieval.
+    //
+    // Priority chain:
+    //   1. Last user message from event.messages (with [PLUMB MEMORY] blocks stripped)
+    //   2. User's actual message extracted from event.prompt envelope (first turn only:
+    //      on fresh sessions, event.messages is empty and event.prompt contains the
+    //      inbound message wrapped in a metadata envelope)
+    //   3. Raw event.prompt as last resort
+    //
+    // Bug fixes addressed:
+    //   - First message: event.messages is empty, so we parse the envelope from event.prompt
+    //   - Subsequent messages: user content is contaminated with injected [PLUMB MEMORY]
+    //     blocks from the previous turn, so we strip them before using as search query
     const userMessage = extractLastUserMessage(event.messages);
-    const queryText = userMessage ?? event.prompt;
+    const envelopeMessage = userMessage ? null : extractFromPromptEnvelope(event.prompt);
+    const queryText = userMessage ?? envelopeMessage ?? event.prompt;
 
     // Store the resolved query in pendingPrompts BEFORE the store guard so that even when
     // store is null the prompt is available to the post-exchange hook.

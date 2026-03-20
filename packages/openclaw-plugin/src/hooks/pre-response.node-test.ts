@@ -30,6 +30,49 @@ function makeEmptyStore(): LocalStore {
 }
 
 describe('createPreResponseHook — pendingPrompts wiring', () => {
+  test('first turn: extracts user message from prompt envelope when messages is empty', async () => {
+    const store = makeEmptyStore();
+    const pendingPrompts = new Map<string, string>();
+
+    const hook = createPreResponseHook(store, null, false, pendingPrompts);
+    const event: PluginHookBeforePromptBuildEvent = {
+      prompt: 'Sender (untrusted metadata):\n```json\n{"channel":"webchat"}\n```\n\nCan you tell me about Chee Chew?',
+      messages: [],
+    };
+    const ctx: PluginHookAgentContext = { sessionId: 'session-first' };
+
+    await hook(event, ctx);
+
+    assert.equal(
+      pendingPrompts.get('session-first'),
+      'Can you tell me about Chee Chew?',
+      'extracts user message from envelope'
+    );
+  });
+
+  test('subsequent turn: strips [PLUMB MEMORY] blocks from user message', async () => {
+    const store = makeEmptyStore();
+    const pendingPrompts = new Map<string, string>();
+
+    const hook = createPreResponseHook(store, null, false, pendingPrompts);
+    const event: PluginHookBeforePromptBuildEvent = {
+      prompt: 'system prompt here',
+      messages: [
+        { role: 'assistant', content: 'Hello!' },
+        { role: 'user', content: '[PLUMB MEMORY]\n## Remembered facts\nsome old memory\n[/PLUMB MEMORY]\n\nWhat is the weather like?' },
+      ],
+    };
+    const ctx: PluginHookAgentContext = { sessionId: 'session-sub' };
+
+    await hook(event, ctx);
+
+    assert.equal(
+      pendingPrompts.get('session-sub'),
+      'What is the weather like?',
+      'strips PLUMB MEMORY and uses actual user question'
+    );
+  });
+
   test('stores prompt in pendingPrompts map keyed by ctx.sessionId', async () => {
     const store = makeEmptyStore();
     const pendingPrompts = new Map<string, string>();
