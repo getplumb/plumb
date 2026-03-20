@@ -278,6 +278,10 @@ export const plugin: OpenClawPluginDefinition = {
     const userId = (api.pluginConfig?.userId as string | undefined) ?? 'default';
     const shadowMode = (api.pluginConfig?.shadowMode as boolean | undefined) ?? false;
 
+    // Shared map: pre-response hook stores the user's query here so the post-exchange
+    // hook can associate it with the LLM response during ingestion (Tier 2 / T-pendingPrompts)
+    const pendingPrompts = new Map<string, string>();
+
     // FIX 1: Register cleanup handlers IMMEDIATELY (synchronously) before async work
     let storeInitialized = false;
     let cleanupCalled = false; // Guard: ensure cleanup is idempotent
@@ -488,7 +492,8 @@ export const plugin: OpenClawPluginDefinition = {
     }));
 
     // Register the before_prompt_build hook for memory injection
-    api.on('before_prompt_build', createPreResponseHook(store, shadowMode, dbPath));
+    // Parameter order: (store, dbPath, shadowMode, pendingPrompts)
+    api.on('before_prompt_build', createPreResponseHook(store, dbPath, shadowMode, pendingPrompts));
 
     api.logger.info('[plumb] Plugin activated');
 

@@ -24,29 +24,73 @@ type PluginHookAgentContext = {
 };
 
 const INJECTION_TIMEOUT_MS = 800;
+const MAX_PENDING_PROMPTS = 1000;
+
+/**
+ * Extracts the text content of the last user message from a messages array.
+ * Handles both string content and multimodal (array) content.
+ * Returns null if no user message is found.
+ */
+function extractLastUserMessage(messages: unknown[]): string | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i] as any;
+    if (!msg || msg.role !== 'user') continue;
+    if (typeof msg.content === 'string') return msg.content;
+    // Handle multimodal content arrays (e.g. [{type: "text", text: "..."}])
+    if (Array.isArray(msg.content)) {
+      const textPart = msg.content.find((p: any) => p?.type === 'text');
+      if (textPart?.text) return String(textPart.text);
+    }
+  }
+  return null;
+}
 
 /**
  * Creates a hook handler that retrieves and injects memory context before each agent response.
  *
- * The hook queries the store with the incoming user message, formats the retrieved memories
- * into a [PLUMB MEMORY] block, and prepends it to the system prompt.
+ * The hook queries the store with the incoming user message (extracted from event.messages),
+ * falling back to event.prompt if no user message is present. This ensures fresh sessions
+ * get query-relevant memories injected on the very first message (Tier 2 fix).
+ *
+ * Also stores the resolved query text in the pendingPrompts map (keyed by sessionId) so the
+ * post-exchange hook can associate the user's question with the LLM's response for ingestion.
  *
  * On the very first call (fresh database), injects a one-time orientation block before normal memory.
  *
  * @param store LocalStore instance for memory retrieval
- * @param shadowMode If true, retrieves and logs what would be injected but doesn't actually inject
  * @param dbPath Path to the Plumb database for orientation check
+ * @param shadowMode If true, retrieves and logs what would be injected but doesn't actually inject
+ * @param pendingPrompts Shared map for passing the resolved query to the post-exchange hook
  * @returns Hook handler for before_prompt_build event
  */
 export function createPreResponseHook(
   store: LocalStore | null,
+  dbPath?: string | null,
   shadowMode = false,
-  dbPath?: string
+  pendingPrompts?: Map<string, string>
 ) {
   return async (
     event: PluginHookBeforePromptBuildEvent,
     ctx: PluginHookAgentContext
   ): Promise<PluginHookBeforePromptBuildResult | void> => {
+    // Resolve the best query signal: prefer the incoming user message over the system prompt.
+    // This is the Tier 2 fix: on fresh sessions, event.messages contains the user's first
+    // message which has strong semantic signal. event.prompt is the static system prompt
+    // and provides poor retrieval quality in cold-start scenarios.
+    const userMessage = extractLastUserMessage(event.messages);
+    const queryText = userMessage ?? event.prompt;
+
+    // Store the resolved query in pendingPrompts BEFORE the store guard so that even when
+    // store is null the prompt is available to the post-exchange hook.
+    if (pendingPrompts && ctx.sessionId && queryText) {
+      // Evict the oldest entry if at capacity (insertion-order eviction via Map)
+      if (pendingPrompts.size >= MAX_PENDING_PROMPTS) {
+        const firstKey = pendingPrompts.keys().next().value;
+        if (firstKey !== undefined) pendingPrompts.delete(firstKey);
+      }
+      pendingPrompts.set(ctx.sessionId, queryText);
+    }
+
     if (!store) {
       return;
     }
@@ -81,7 +125,7 @@ export function createPreResponseHook(
     try {
       // Race between retrieval and timeout
       const memoryContext = await Promise.race([
-        buildMemoryContext(event.prompt, store),
+        buildMemoryContext(queryText, store),
         new Promise<never>((_, reject) =>
           setTimeout(() => reject(new Error('timeout')), INJECTION_TIMEOUT_MS)
         ),
