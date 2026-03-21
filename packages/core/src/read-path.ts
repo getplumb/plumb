@@ -33,7 +33,7 @@ export interface MemoryContext {
 }
 
 export interface ReadPathOptions {
-  /** Max memory facts returned. Default: 5. */
+  /** Max memory facts returned. Default: 8. */
   maxMemoryFacts?: number;
 }
 
@@ -63,7 +63,7 @@ export async function buildMemoryContext(
   store: ReadPathStore,
   options?: ReadPathOptions,
 ): Promise<MemoryContext> {
-  const maxMemoryFacts = options?.maxMemoryFacts ?? 5;
+  const maxMemoryFacts = options?.maxMemoryFacts ?? 8;
 
   const memoryCandidateLimit = maxMemoryFacts * 2;
 

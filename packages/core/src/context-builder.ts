@@ -55,7 +55,7 @@ export function formatAge(ageInDays: number): string {
 
 function formatMemoryLine(memory: MemoryFactChunk): string {
   const tier = scoreFactTier(memory.score);
-  const excerpt = memory.content.slice(0, 200);
+  const excerpt = memory.content;
   const sessionLabel = memory.sourceSessionLabel ?? memory.sourceSessionId;
   const ageInDays = (Date.now() - memory.timestamp.getTime()) / (1_000 * 60 * 60 * 24);
   const age = formatAge(ageInDays);
