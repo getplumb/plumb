@@ -23,7 +23,7 @@ import { scoreMemoryFact, computeDecay } from './scorer.js';
 
 // Lambda values per decay_rate tier.
 const DECAY_LAMBDAS: Record<string, number> = {
-  slow: 0.010,
+  slow: 0.005,
   medium: 0.050,
   fast: 0.100,
 };
@@ -33,7 +33,7 @@ function decayLambda(decayRate: string): number {
 }
 
 // RRF constant (standard k=60; higher = less weight on top-1 rank).
-const RRF_K = 60;
+const RRF_K = 30;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
