@@ -1,0 +1,59 @@
+name: PII & Secrets Scan
+
+on:
+  push:
+    branches: [main, production]
+  pull_request:
+    branches: [main, production]
+
+jobs:
+  gitleaks:
+    name: Gitleaks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # .gitleaks.toml is gitignored (contains PII patterns)
+          # Default gitleaks rules still catch API keys, tokens, etc.
+
+  pii-grep:
+    name: PII Pattern Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Scan for known PII patterns
+        run: |
+          FAILED=0
+
+          # Patterns to block (add new ones here as needed)
+          PATTERNS=(
+            "claywaters391@gmail\.com"
+            "100\.117\.241\.51"
+            "/home/openclaw-host/"
+            "332.*[Cc]asper"
+            "[Cc]asper.*[Dd]rive.*[Ll]afayette"
+            "Lafayette.*CO.*80026"
+          )
+
+          for pattern in "${PATTERNS[@]}"; do
+            MATCHES=$(grep -rInP "$pattern" --include='*.ts' --include='*.tsx' --include='*.js' --include='*.json' --include='*.md' --include='*.mdx' --include='*.toml' --include='*.yaml' --include='*.yml' --include='*.txt' --include='*.html' . 2>/dev/null | grep -v 'node_modules/' | grep -v '.git/' | grep -v 'pii-scan.yml' || true)
+            if [ -n "$MATCHES" ]; then
+              echo "❌ Found PII pattern: $pattern"
+              echo "$MATCHES"
+              FAILED=1
+            fi
+          done
+
+          if [ "$FAILED" -eq 1 ]; then
+            echo ""
+            echo "🚫 PII detected in tracked files. Remove before pushing."
+            exit 1
+          else
+            echo "✅ No PII patterns found."
+          fi
