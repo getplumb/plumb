@@ -6,8 +6,9 @@
  *   2. KNN vector search via JS cosine similarity
  *   3. Reciprocal Rank Fusion (RRF, k=60) merges both ranked lists
  *   4. Apply MEMORY_FACT_BOOST (2.0×) to RRF scores
- *   5. Apply recency decay based on decay_rate and created_at
- *      (slow: λ=0.01 ≈ 70-day half-life, medium: λ=0.05, fast: λ=0.1)
+ *   5. Apply recency decay with adaptive adjustment based on query temporal intent
+ *      (slow: λ=0.005 ≈ 140-day half-life, medium: λ=0.05, fast: λ=0.1)
+ *   5b. Keyword overlap reranking of top 100 candidates (E56 — pool=100 vs prior top-20)
  *   6. Return top-k by final score
  *
  * Search is cross-session: no session filter is applied.
@@ -193,18 +194,61 @@ export async function searchMemoryFacts(
   // ── 4. RRF merge ────────────────────────────────────────────────────────
   const rrfScores = rrf(vecRanked, bm25Ranked);
 
-  // ── 5. Apply MEMORY_FACT_BOOST × recency decay ───────────────────────────
+  // ── 5. Apply MEMORY_FACT_BOOST × recency decay (with adaptive decay) ────
+  // Adaptive decay (E40/E56): tighten decay for recency queries ("current",
+  // "latest", "now"), disable for historical queries ("first", "originally").
+  // Tuned via benchmark — improves Jordan TEMPORAL_RECENCY category significantly.
   const now = Date.now();
+  const lowerQuery = query.toLowerCase();
+  let effectiveDecayLambdas = DECAY_LAMBDAS;
+  if (/\b(current|now|latest|recently|today)\b/.test(lowerQuery)) {
+    // Recency query: aggressive decay — surface only recent facts
+    effectiveDecayLambdas = { slow: 0.05, medium: 0.05, fast: 0.05 };
+  } else if (/\b(first|originally|ever|history|used\s+to)\b/.test(lowerQuery)) {
+    // Historical query: disable decay — treat all facts as equally current
+    effectiveDecayLambdas = { slow: 0, medium: 0, fast: 0 };
+  }
+
   const boostedScores: Array<[string, number]> = [];
   for (const [id, rrfScore] of rrfScores) {
     const row = idToRow.get(id)!;
     const ageDays = (now - new Date(row.created_at).getTime()) / (1000 * 60 * 60 * 24);
-    const lambda = decayLambda(row.decay_rate);
+    const lambda = effectiveDecayLambdas[row.decay_rate] ?? effectiveDecayLambdas['slow']!;
     const finalScore = scoreMemoryFact(rrfScore) * computeDecay(lambda, ageDays);
     boostedScores.push([id, finalScore]);
   }
   boostedScores.sort((a, b) => b[1] - a[1]);
 
+  // ── 5b. Keyword overlap reranking of top 100 ─────────────────────────────
+  // Lightweight cross-encoder proxy: blend 70% pipeline score + 30% keyword
+  // overlap to promote facts that share content terms with the query.
+  // Pool expanded from 20 → 100 (E56) for significantly better Jordan recall.
+  // (Tuned via benchmark E24/E25/E56 experiments.)
+  {
+    const reRankStop = new Set([
+      'a', 'an', 'the', 'is', 'was', 'are', 'were', 'be', 'been', 'being',
+      'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could',
+      'should', 'may', 'might', 'can', 'what', 'where', 'when', 'who', 'how',
+      'why', 'which', 'it', 'its', 'this', 'that', 'in', 'on', 'at', 'to',
+      'for', 'of', 'with', 'by', 'from', 'and', 'or', 'but', 'not', 'i',
+    ]);
+    const queryTokens = (query.toLowerCase().match(/\b[a-z0-9]+\b/g) ?? [])
+      .filter(w => !reRankStop.has(w));
+    const uniqueQueryTokens = [...new Set(queryTokens)];
+
+    if (uniqueQueryTokens.length > 0 && boostedScores.length > 0) {
+      const top100 = boostedScores.slice(0, 100);
+      const reranked = top100.map(([id, score]) => {
+        const row = idToRow.get(id)!;
+        const factText = row.content.toLowerCase();
+        const matchCount = uniqueQueryTokens.filter(w => factText.includes(w)).length;
+        const overlapScore = matchCount / uniqueQueryTokens.length;
+        return [id, score * 0.7 + overlapScore * 0.3] as [string, number];
+      });
+      reranked.sort((a, b) => b[1] - a[1]);
+      boostedScores.splice(0, top100.length, ...reranked);
+    }
+  }
   // ── 6. Build output ─────────────────────────────────────────────────────
   return boostedScores.slice(0, limit).map(([id, finalScore]) => {
     const row = idToRow.get(id)!;
