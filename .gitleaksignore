@@ -1,0 +1,18 @@
+# .gitleaksignore — fingerprints for known-safe findings
+# These are NOT real secrets. Each entry is explained below.
+
+# pii-scan.yml references the home address as a regex pattern (by design — that's the scanner)
+6f054d1ad175cdf1e7ff291b8df1dc27b0b189f4:.github/workflows/pii-scan.yml:home-address:41
+
+# auth.test.ts uses obviously fake placeholder keys (plumb_0123456789abcdef...)
+c5c242283eeac975d7893746a3b308c36b74dc09:hosted/api-server/src/routes/auth.test.ts:generic-api-key:75
+c5c242283eeac975d7893746a3b308c36b74dc09:hosted/api-server/src/routes/auth.test.ts:generic-api-key:84
+c5c242283eeac975d7893746a3b308c36b74dc09:hosted/api-server/src/routes/auth.test.ts:generic-api-key:85
+
+# PostHog public analytics key — client-side by design, not a secret
+7d986dc37ea617048d7beadd80b609b08e57125d:website/src/app/providers.tsx:generic-api-key:7
+362585872ce32c868819cbe3213f3f266c517ca5:packages/openclaw-plugin/src/telemetry.ts:generic-api-key:21
+
+# claywaters13@gmail.com in Problem.tsx — already removed in f84a5b1, historical commit only
+67893c626a1c5137e974a6979fa08d38f56c3548:website/src/components/Problem.tsx:personal-email:14
+67893c626a1c5137e974a6979fa08d38f56c3548:website/src/components/Problem.tsx:personal-email:33
