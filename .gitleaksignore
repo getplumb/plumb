@@ -9,10 +9,13 @@ c5c242283eeac975d7893746a3b308c36b74dc09:hosted/api-server/src/routes/auth.test.
 c5c242283eeac975d7893746a3b308c36b74dc09:hosted/api-server/src/routes/auth.test.ts:generic-api-key:84
 c5c242283eeac975d7893746a3b308c36b74dc09:hosted/api-server/src/routes/auth.test.ts:generic-api-key:85
 
-# PostHog public analytics key — client-side by design, not a secret
+# PostHog public analytics key — historical commits; key moved to env var in current source
 7d986dc37ea617048d7beadd80b609b08e57125d:website/src/app/providers.tsx:generic-api-key:7
 362585872ce32c868819cbe3213f3f266c517ca5:packages/openclaw-plugin/src/telemetry.ts:generic-api-key:21
 
-# claywaters13@gmail.com in Problem.tsx — already removed in f84a5b1, historical commit only
+# .gitleaksignore commit 8db582c had email in a comment — now removed; suppressing that commit
+8db582cc7f1998ef029beae7d970bd04549e4bc6:.gitleaksignore:personal-email:16
+
+# Personal email used as example data in website component — removed in f84a5b1, historical only
 67893c626a1c5137e974a6979fa08d38f56c3548:website/src/components/Problem.tsx:personal-email:14
 67893c626a1c5137e974a6979fa08d38f56c3548:website/src/components/Problem.tsx:personal-email:33
