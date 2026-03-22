@@ -14,11 +14,21 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # .gitleaks.toml is gitignored (contains PII patterns)
-          # Default gitleaks rules still catch API keys, tokens, etc.
+      - name: Install gitleaks
+        run: |
+          GITLEAKS_VERSION=8.24.3
+          curl -sSLf "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            | tar -xz -C /usr/local/bin gitleaks
+          gitleaks version
+
+      - name: Run gitleaks
+        run: |
+          # .gitleaksignore is auto-detected by gitleaks (fingerprint format for known-safe historical commits)
+          gitleaks git \
+            --redact \
+            --verbose \
+            --exit-code 1 \
+            || (echo ""; echo "🚫 Secrets detected. Add fingerprint to .gitleaksignore if this is a known false positive."; exit 1)
 
   pii-grep:
     name: PII Pattern Check
