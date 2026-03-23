@@ -267,7 +267,7 @@ function splitOnHeadings(content: string): string[] {
 export const plugin: OpenClawPluginDefinition = {
   id: 'plumb',
   name: 'Plumb Memory',
-  version: '0.1.0',
+  version: '0.4.21',
   kind: 'memory',
 
   activate(api: OpenClawPluginApi) {

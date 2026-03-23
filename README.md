@@ -2,59 +2,46 @@
 
 **Persistent memory for AI agents.**
 
-Plumb gives your AI agents a two-layer memory system: a raw conversation log and an automatically-extracted fact graph. No "remember this" commands. No manual tagging. Just context that sticks — across sessions, across tools.
+Plumb gives your AI agents a cross-session memory store with fast hybrid retrieval. Store high-signal facts, get the right ones injected automatically before every response — across sessions, across tools.
 
 ---
 
 ## Why Plumb?
 
-- **Zero-config for OpenClaw users:** Install the plugin, memory just works. No MCP config required.
-- **Two-layer architecture:** Raw logs (full fidelity) + fact graph (structured knowledge). Both layers queried on every turn.
-- **Automatic ingestion:** Every exchange is logged and extracted. No manual commands, no "please remember this."
+- **Zero-config for OpenClaw users:** Install the plugin, memory injection happens automatically. No MCP config required.
+- **Hybrid retrieval:** BM25 + vector search + RRF fusion + recency decay + reranking. Retrieval quality is the product.
+- **Local and private:** SQLite on your machine. No cloud, no external embedding API, no telemetry beyond anonymous usage counts.
 
 ---
 
 ## How it works
 
-Every exchange gets ingested automatically. Plumb runs two layers in parallel:
-
-**Layer 1 — Raw log:** Full conversation history stored with hybrid semantic + keyword search. Preserves exact wording, context, and nuance.
-
-**Layer 2 — Fact graph:** Structured facts extracted via LLM from conversations. Each fact is confidence-scored, timestamped, and time-decayed. Facts include topics, preferences, decisions, and entity relationships.
-
-At retrieval time, both layers are queried (semantic search on raw logs, topic + recency ranking on facts) and merged into a concise `[PLUMB MEMORY]` block that gets injected into the agent's system prompt before each response.
+You store facts with `plumb_remember`. Plumb embeds them locally and retrieves the most relevant ones at query time using a multi-stage hybrid pipeline.
 
 ```
-┌─────────────┐
-│   Agent     │
-│  Exchange   │
-└──────┬──────┘
-       │
-       ├───────────────────────────────┐
-       │                               │
-       ▼                               ▼
- ┌──────────┐                  ┌──────────────┐
- │ Raw Log  │                  │  Extraction  │
- │ (hybrid  │                  │  (LLM-based) │
- │  search) │                  └──────┬───────┘
- └────┬─────┘                         │
-      │                               ▼
-      │                        ┌──────────┐
-      │                        │ Fact     │
-      │                        │ Graph    │
-      │                        │ (scored) │
-      │                        └────┬─────┘
-      │                             │
-      └──────────┬──────────────────┘
-                 ▼
-          ┌─────────────┐
-          │   Retrieval │
-          │   (merged)  │
-          └──────┬──────┘
-                 │
-                 ▼
-       [PLUMB MEMORY] block
-       injected into system prompt
+┌─────────────────────────┐
+│  plumb_remember(fact)   │
+│  Session seed from      │
+│  memory files           │
+└──────────┬──────────────┘
+           │
+           ▼
+    ┌──────────────┐
+    │ Memory Store │
+    │  (SQLite +   │
+    │  embeddings) │
+    └──────┬───────┘
+           │
+           ▼
+    ┌──────────────────────────┐
+    │  Retrieval Pipeline      │
+    │  BM25 + KNN → RRF →      │
+    │  Recency decay → Rerank  │
+    └──────┬───────────────────┘
+           │
+           ▼
+    [PLUMB MEMORY] block
+    injected into system prompt
 ```
 
 ---

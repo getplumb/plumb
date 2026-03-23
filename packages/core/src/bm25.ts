@@ -13,9 +13,27 @@
 const K1 = 1.5;
 const B = 0.75;
 
-/** Tokenize text to lowercase alphanumeric tokens. */
+/** Common English stop words removed from BM25 tokenization to improve signal. */
+const STOP_WORDS = new Set([
+  'a', 'an', 'the', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for',
+  'of', 'with', 'by', 'from', 'is', 'was', 'are', 'were', 'be', 'been',
+  'being', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would',
+  'could', 'should', 'may', 'might', 'shall', 'can', 'need', 'dare',
+  'ought', 'used', 'it', 'its', 'he', 'she', 'they', 'them', 'their',
+  'his', 'her', 'we', 'us', 'our', 'you', 'your', 'i', 'me', 'my',
+  'this', 'that', 'these', 'those', 'what', 'which', 'who', 'whom',
+  'where', 'when', 'why', 'how', 'not', 'no', 'nor', 'if', 'then',
+  'than', 'too', 'very', 'just', 'about', 'above', 'after', 'again',
+  'all', 'also', 'am', 'any', 'because', 'before', 'below', 'between',
+  'both', 'each', 'few', 'further', 'get', 'got', 'here', 'into',
+  'more', 'most', 'other', 'out', 'over', 'own', 'same', 'so', 'some',
+  'such', 'there', 'through', 'under', 'until', 'up', 'while',
+]);
+
+/** Tokenize text to lowercase alphanumeric tokens with stop word removal. */
 export function tokenize(text: string): string[] {
-  return text.toLowerCase().match(/\b[a-z0-9]+\b/g) ?? [];
+  const tokens = text.toLowerCase().match(/\b[a-z0-9]+\b/g) ?? [];
+  return tokens.filter(t => !STOP_WORDS.has(t));
 }
 
 export class Bm25 {

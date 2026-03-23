@@ -21,3 +21,7 @@ seed-dev-full.mjs
 
 # Gitleaks config — contains PII patterns, never commit
 .gitleaks.toml
+
+# Internal planning docs — not for public repo
+docs/ideas/
+future-improvements.md

@@ -18,7 +18,8 @@ import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 
-const POSTHOG_KEY = 'phc_zODHLfFXk0LZXbOn98Wd0i1BMg8QJT3P5LIortpGyut';
+// Injected at build time via esbuild define — see esbuild.config.mjs
+const POSTHOG_KEY = process.env.POSTHOG_KEY as string;
 const POSTHOG_HOST = 'https://us.i.posthog.com';
 const SENTINEL_DIR = join(homedir(), '.plumb');
 const SENTINEL_FILE = join(SENTINEL_DIR, '.telemetry-id');

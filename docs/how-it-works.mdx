@@ -1,290 +1,183 @@
 ---
 title: 'How It Works'
-description: 'Two-layer memory architecture explained'
+description: 'Plumb memory architecture and retrieval pipeline explained'
 ---
 
 # How Plumb Works
 
-Plumb uses a two-layer architecture to balance verbatim accuracy with structured intelligence. Layer 1 stores raw conversation history. Layer 2 extracts and scores facts.
+Plumb is a persistent memory layer for AI agents. It stores high-signal facts across sessions and injects the most relevant ones into every prompt — so your agent remembers context, preferences, and decisions without you having to re-explain them.
 
 ## Architecture Overview
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  User ↔ AI Conversation                                      │
+│  User ↔ Agent Conversation                                   │
 └───────────────────────────┬─────────────────────────────────┘
                             │
                             ▼
-                    ┌───────────────┐
-                    │  Plumb Core   │
-                    └───────┬───────┘
-                            │
-              ┌─────────────┴─────────────┐
-              ▼                           ▼
-    ┌─────────────────┐         ┌─────────────────┐
-    │   Layer 1       │         │   Layer 2       │
-    │   Raw Log       │         │   Facts         │
-    ├─────────────────┤         ├─────────────────┤
-    │ - Full exchanges│         │ - SPO triples   │
-    │ - BM25 index    │         │ - Confidence    │
-    │ - Vector embed  │         │ - Decay rate    │
-    │ - Append-only   │         │ - Source ref    │
-    └─────────────────┘         └─────────────────┘
-              │                           │
-              └─────────────┬─────────────┘
-                            ▼
-                    ┌───────────────┐
-                    │  Search Query │
-                    └───────┬───────┘
-                            │
-              ┌─────────────┴─────────────┐
-              ▼                           ▼
-    ┌─────────────────┐         ┌─────────────────┐
-    │ BM25 + Vector   │         │ Fact Search     │
-    │ KNN             │         │ (confidence ≥   │
-    │                 │         │  threshold)     │
-    └─────────────────┘         └─────────────────┘
-              │                           │
-              └─────────────┬─────────────┘
-                            ▼
-                    ┌───────────────┐
-                    │  RRF Fusion   │
-                    │  + Rerank     │
-                    └───────┬───────┘
-                            ▼
-              ┌─────────────────────────┐
-              │  [PLUMB MEMORY] Block   │
-              │  Injected in Prompt     │
-              └─────────────────────────┘
+              ┌─────────────────────────────┐
+              │       Memory Store          │
+              │   (SQLite + embeddings)     │
+              │                             │
+              │  plumb_remember → ingest    │
+              │  Session seed at startup    │
+              └──────────────┬──────────────┘
+                             │
+                             ▼
+              ┌─────────────────────────────┐
+              │      Retrieval Pipeline     │
+              ├─────────────────────────────┤
+              │  1. BM25 keyword search      │
+              │  2. Vector KNN (cosine)      │
+              │  3. RRF fusion (k=30)        │
+              │  4. Recency decay            │
+              │  5. Keyword-overlap rerank   │
+              └──────────────┬──────────────┘
+                             │
+                             ▼
+              ┌─────────────────────────────┐
+              │   [PLUMB MEMORY] Block      │
+              │   Injected before prompt    │
+              └─────────────────────────────┘
 ```
 
-## Layer 1: Raw Log
+## Memory Storage
 
-Every conversation exchange is stored verbatim in the raw log. Nothing is summarized, compressed, or discarded.
+Facts are stored as plain text strings with metadata. Each fact contains:
 
-### What Gets Stored
+- **Content** — the fact itself, as a plain text string
+- **Timestamp** — when it was stored
+- **Session ID** — which conversation it came from
+- **User ID** — for multi-user setups
+- **Vector embedding** — computed locally for semantic search
 
-Each exchange contains:
-- User message text
-- AI response text (if available)
-- Timestamp
-- Session ID (groups related exchanges)
-- Source label (human-readable session name)
-- User ID (for multi-user setups)
+Facts are written in two ways:
 
-### Indexing
+**1. `plumb_remember` tool call**
 
-Two search indexes are built:
-
-1. **BM25 (keyword search)**: SQLite FTS5 full-text index
-   - Fast lexical matching
-   - Handles exact phrase searches
-   - Works well for rare or technical terms
-
-2. **Vector embeddings**: sqlite-vec with sentence embeddings
-   - Semantic similarity search
-   - Captures meaning beyond keywords
-   - Uses OpenAI `text-embedding-3-small` by default
-
-### Search Process
-
-When you query Layer 1:
-
-1. Text split into chunks (~500 tokens)
-2. BM25 scores computed for each chunk
-3. Vector KNN search finds semantically similar chunks
-4. Results fused using Reciprocal Rank Fusion (RRF)
-5. Top results returned with final scores
-
-**Use case**: "Show me the conversation where we discussed the deployment bug"
-
-## Layer 2: Fact Extraction
-
-The AI analyzes raw log entries and extracts structured facts. Facts are subject-predicate-object (SPO) triples with metadata.
-
-### Fact Structure
-
-```typescript
-{
-  subject: "user",              // What the fact is about
-  predicate: "prefers_editor",  // The relationship
-  object: "vim",                // The value
-  confidence: 0.95,             // 0.0-1.0 score
-  decayRate: "medium",          // slow | medium | fast
-  timestamp: "2026-03-06T...",  // When extracted
-  sourceSessionId: "sess_abc",  // Where it came from
-  context: "I always use vim"   // Original text
-}
-```
-
-### Confidence Scoring
-
-Confidence is computed based on:
-
-**Explicitness**: Direct statements score higher than inferred context
-- "I prefer pnpm" → 0.95
-- "Let's use pnpm for this" → 0.7
-
-**Repetition**: Facts mentioned multiple times gain confidence
-- First mention: base score
-- Second mention: +0.1
-- Third mention: +0.05
-
-**Recency**: Recent facts start with higher confidence
-- Last 7 days: full confidence
-- 7-30 days: -0.1
-- 30+ days: -0.2 (then decay continues)
-
-**Contradiction**: New facts can lower confidence of conflicting facts
-- "I prefer npm now" → reduces confidence of "user prefers_package_manager pnpm"
-
-### Recency Decay
-
-All facts decay over time unless reinforced. The decay function:
+The agent (or you) explicitly stores a fact. This is the primary write path.
 
 ```
-confidence(t) = confidence₀ × 0.5^(t / half_life)
+plumb_remember("Clay prefers pnpm over npm")
+plumb_remember("The deploy target is production-us-east-1")
+plumb_remember("Clay's timezone is America/Denver")
 ```
 
-**Default half-life**: 30 days
+**2. Session seeding at startup**
 
-**Decay rates**:
-- `slow`: half-life = 60 days (long-term preferences)
-- `medium`: half-life = 30 days (project context)
-- `fast`: half-life = 7 days (temporary context)
+On first activation, Plumb seeds facts from local memory files (e.g. `MEMORY.md`, dated daily notes in `memory/`). This bootstraps context from structured notes you already have without re-entering them manually.
 
-**Minimum confidence**: Facts never drop below 0.1
+---
 
-**Reinforcement**: Mentioning a fact again resets decay timer and boosts confidence
+## Retrieval Pipeline
 
-### Extraction Process
+When a query arrives (either from prompt injection or an explicit `plumb_search` call), Plumb runs a five-stage hybrid retrieval:
 
-Facts are extracted asynchronously:
+### Stage 1 — BM25 Keyword Search
 
-1. Raw log entry stored (Layer 1)
-2. Extraction job queued
-3. LLM analyzes the exchange and extracts 0-N facts
-4. Each fact scored for confidence
-5. Facts written to Layer 2 with source reference
+BM25 (Robertson-Walker variant) with stop word filtering and IDF weighting. Handles exact phrase lookups, names, identifiers, and rare technical terms well.
 
-**LLM prompt**: The extractor uses a system prompt that defines SPO structure and confidence guidelines. Facts must be:
-- Explicit or strongly implied
-- Not speculative
-- Referencing stable attributes, not transient state
+### Stage 2 — Vector KNN Search
 
-### Search Process
+Semantic similarity using local sentence embeddings (Xenova/bge-small-en-v1.5, 384 dimensions). Embeddings are computed in-process via WASM — no external embedding API required. KNN search uses cosine similarity over all stored embeddings.
 
-When you query Layer 2:
+### Stage 3 — RRF Fusion
 
-1. Vector embedding of query computed
-2. KNN search in fact embeddings
-3. Filter by minimum confidence threshold (default: 0.5)
-4. Apply recency decay to scores
-5. Sort by final score (embedding similarity × confidence)
-6. Return top N facts
+Results from BM25 and vector search are merged using Reciprocal Rank Fusion (RRF, k=30). RRF rewards facts that rank well in both keyword and semantic lists, without requiring score normalization between the two.
 
-**Use case**: "What package manager does the user prefer?"
+### Stage 4 — Recency Decay
 
-## Hybrid Search (Layer 1 + Layer 2)
+Each candidate's fused score is multiplied by a decay factor based on age:
 
-The `memory_search` MCP tool queries both layers in parallel and fuses results:
+```
+decay = e^(-λ × age_in_days)
+```
 
-1. Layer 1 search: BM25 + vector hybrid
-2. Layer 2 search: fact vector search with confidence weighting
-3. Results tagged with `layer: "raw_log"` or `layer: "facts"`
-4. Ranked by final score
-5. Top N returned (default: 20 total)
+Default λ = 0.005, giving a half-life of approximately 140 days. Recent facts rank higher than older ones at equal similarity. This means a closely matching fact from last week naturally scores above the same content from six months ago.
 
-### Ranking
+### Stage 5 — Keyword Overlap Reranking
 
-Final ranking considers:
-- **Vector similarity**: How semantically close is this result?
-- **BM25 score**: Does it match query keywords?
-- **Confidence**: How certain are we about this fact?
-- **Recency**: When was this learned?
-- **Layer preference**: Facts slightly weighted higher (less noise)
+The top candidates receive a final reranking pass that blends the RRF+decay score (70%) with a keyword overlap score between the query and fact content (30%). This improves recall for cases where semantically relevant content uses different phrasing than the query.
 
-## Context Injection
+### Output
 
-In OpenClaw (plugin mode), Plumb automatically injects memory into every AI prompt:
+The top-k facts (default: 8) are returned, sorted by final score, and formatted as the `[PLUMB MEMORY]` block.
+
+---
+
+## Context Injection (OpenClaw Plugin)
+
+In OpenClaw, Plumb runs as a plugin and injects memory automatically before every agent response:
 
 1. User sends a message
-2. Before AI sees it, Plumb runs `memory_search` with the message as query
-3. Top results formatted as a `[PLUMB MEMORY]` block
-4. Block prepended to the AI's system prompt
-5. AI responds with memory context available
+2. Plumb intercepts before the model sees it
+3. The retrieval pipeline runs with the user message as query
+4. Top facts are formatted as a `[PLUMB MEMORY]` block
+5. Block is prepended to the system prompt
+6. Agent responds with memory context available
 
-**Example injection**:
+**Example injection:**
 
 ```
 [PLUMB MEMORY]
-Relevant facts from past conversations:
-- user prefers_package_manager pnpm (confidence: 0.92, 3 days ago)
-- project uses_bundler vite (confidence: 0.85, 1 week ago)
-- user stated "always use strict TypeScript" (2 days ago)
 
-[END PLUMB MEMORY]
+## Remembered facts
+Clay prefers pnpm over npm (3 days ago)
+Deploy target is production-us-east-1 (1 week ago)
+Clay's timezone is America/Denver (2 weeks ago)
+
+[/PLUMB MEMORY]
 ```
 
-In MCP mode (Claude Desktop, etc.), the AI decides when to call `memory_search` explicitly.
+The injection runs within an 800ms budget. If retrieval takes longer, the prompt proceeds without injection rather than delaying the response.
+
+---
+
+## Explicit Search (plumb_search)
+
+The agent can also run retrieval on demand using `plumb_search`. This uses the same pipeline as auto-injection but lets the agent ask for specific context before acting on something:
+
+```
+plumb_search("what package manager does Clay prefer?")
+plumb_search("deploy configuration for the API service")
+```
+
+In MCP mode (Claude Desktop, Cursor, etc.), the agent decides when to call `plumb_search` explicitly rather than receiving automatic injection.
+
+---
 
 ## Storage
 
-All data stored in SQLite:
+All data is stored in SQLite (WASM build — no native extensions, no install scripts required):
 
-**Database path**: `~/.plumb/memory.db` (default)
+**Database path**: `~/.plumb/memory.db` (default, configurable via `dbPath`)
 
 **Tables**:
-- `facts`: Layer 2 (SPO triples, confidence, decay rate)
-- `raw_log_chunks`: Layer 1 (chunked exchanges with session refs)
-- `sessions`: Session metadata (labels, timestamps)
-- `vec_facts`: Virtual table for fact vector search
-- `vec_raw_log`: Virtual table for raw log vector search
+- `memory_facts` — stored facts (content, timestamp, session ID, user ID)
+- `vec_raw_log` — vector embeddings for facts
+- `nudge_log` — internal event log
 
-**Extensions**:
-- `sqlite-vec`: Vector similarity search
-- `fts5`: Full-text search
+**Performance at typical scale**:
+- Embedding generation: 100–400ms per query (WASM, cold on first query)
+- KNN cosine search: ~10ms over thousands of facts (pure JS in-memory loop)
+- End-to-end retrieval: 150–500ms at normal DB sizes
 
-**Performance**:
-- 10K facts: ~5 MB
-- 100K facts: ~50 MB
-- Search latency: 10-50ms (depends on index size)
-
-## Fact Extraction Cost
-
-Layer 2 requires LLM calls for extraction:
-
-**Cost per exchange** (using GPT-4o-mini):
-- Input tokens: ~200 (prompt + exchange text)
-- Output tokens: ~50 (extracted facts)
-- Cost: ~$0.0001 per exchange
-
-**Cost per exchange** (using Claude Haiku 4.5):
-- Input tokens: ~200
-- Output tokens: ~50
-- Cost: ~$0.00005 per exchange
-
-For 1000 exchanges/month:
-- GPT-4o-mini: ~$0.10/month
-- Claude Haiku: ~$0.05/month
-
-You can disable fact extraction and use Layer 1 only if cost is a concern (set `PLUMB_DISABLE_EXTRACTION=true`).
+---
 
 ## Privacy
 
-All memory stored locally. No cloud APIs required except:
-- LLM for fact extraction (you control the provider)
-- Embedding model (defaults to OpenAI, can use local with Ollama)
+All memory and embeddings are stored locally on your machine. No cloud access required for normal use:
 
-You can run Plumb 100% offline by:
-1. Using Ollama for fact extraction
-2. Using a local embedding model
-3. Self-hosting the MCP server
+- **Search** — fully local, no API calls
+- **Embeddings** — computed in-process via WASM model
+- **Storage** — SQLite at `~/.plumb/memory.db`
 
-See [Self-Hosting](/self-hosting) for details.
+You can run Plumb fully offline by using `plumb_remember` for all writes. No LLM API key is needed for the core retrieval and injection pipeline.
+
+---
 
 ## Next Steps
 
-- [MCP Tools](/mcp-tools) — Reference for all 4 tools
-- [CLI Reference](/cli) — Export, status, reprocess commands
-- [OpenClaw Plugin](/openclaw-plugin) — Auto-injection setup
+- [MCP Tools](/mcp-tools) — Reference for `plumb_remember` and `plumb_search`
+- [CLI Reference](/cli) — Status, export, and maintenance commands
+- [OpenClaw Plugin](/openclaw-plugin) — Auto-injection setup and configuration

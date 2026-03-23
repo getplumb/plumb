@@ -22,6 +22,7 @@ import { knnSearch, deserializeEmbedding } from './vector-search.js';
 import { scoreMemoryFact, computeDecay } from './scorer.js';
 
 // Lambda values per decay_rate tier.
+// slow: λ=0.005 ≈ 140-day half-life (tuned via benchmark E8 sweep)
 const DECAY_LAMBDAS: Record<string, number> = {
   slow: 0.005,
   medium: 0.050,
