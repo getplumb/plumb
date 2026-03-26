@@ -30,7 +30,7 @@ test('T-118: backlog processor embeds memory_facts rows', { timeout: 60_000 }, a
   // Wait for embedding to complete (poll until embed_status is 'done')
   let embedStatus = 'pending';
   let attempts = 0;
-  const maxAttempts = 50; // 5 seconds max
+  const maxAttempts = 300; // 30 seconds max (Windows CI can be slow on first ONNX load)
 
   while (embedStatus === 'pending' && attempts < maxAttempts) {
     await new Promise(resolve => setTimeout(resolve, 100));
@@ -65,7 +65,7 @@ test('T-118: backlog processor embeds memory_facts rows', { timeout: 60_000 }, a
     }
   }
 
-  assert.equal(embedStatus, 'done', 'embedding should complete within 5 seconds');
+  assert.equal(embedStatus, 'done', 'embedding should complete within 30 seconds');
 
   // Stop backlog processor
   await store.stopBacklogProcessor();

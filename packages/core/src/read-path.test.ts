@@ -211,7 +211,7 @@ describe.skipIf(process.platform === 'win32')('Cross-session integration', () =>
     store.startBacklogProcessor();
 
     // Wait for embedding to complete (poll until facts are embedded)
-    for (let i = 0; i < 50; i++) {
+    for (let i = 0; i < 300; i++) {
       await new Promise(resolve => setTimeout(resolve, 100));
       const ctx = await buildMemoryContext('dark mode', store, { maxMemoryFacts: 10 });
       if (ctx.relatedMemories.length > 0) {
@@ -226,7 +226,7 @@ describe.skipIf(process.platform === 'win32')('Cross-session integration', () =>
     }
 
     await store.stopBacklogProcessor();
-    assert.fail('Facts were not embedded within timeout');
+    assert.fail('Facts were not embedded within 30 seconds');
   });
 
   test('buildMemoryContext + formatContextBlock: full pipeline smoke test', async () => {
