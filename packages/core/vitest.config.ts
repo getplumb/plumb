@@ -6,5 +6,14 @@ export default defineConfig({
     // run (Xenova/bge-small-en-v1.5 download + WASM init) which can take >5s
     // in CI. Give it enough headroom without masking genuine hangs.
     testTimeout: 60_000,
+    // Run tests sequentially in a single fork. Multiple forks each loading
+    // the ~130MB ONNX embedding model causes OOM/worker crashes on
+    // memory-constrained CI runners (Windows GHA in particular).
+    pool: 'forks',
+    poolOptions: {
+      forks: {
+        singleFork: true,
+      },
+    },
   },
 });
