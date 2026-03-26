@@ -1,6 +1,6 @@
 {
   "name": "@getplumb/core",
-  "version": "0.4.12",
+  "version": "0.4.13",
   "description": "Plumb memory engine — storage abstraction, types, and local SQLite driver",
   "license": "MIT",
   "author": "Clay Waters <hello@plumb.run>",

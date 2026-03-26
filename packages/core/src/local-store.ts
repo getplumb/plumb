@@ -168,6 +168,10 @@ export class LocalStore implements MemoryStore {
     stmt.step();
     stmt.finalize();
 
+    // Restart the embed drain loop if it stopped (e.g. after idle timeout).
+    // startBacklogProcessor() is idempotent — safe to call on every write.
+    this.startBacklogProcessor();
+
     return { factId };
   }
 
