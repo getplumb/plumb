@@ -77,8 +77,8 @@ test('T-118: applySchema is idempotent', { timeout: 30_000 }, async () => {
   assert.ok(columnNames.includes('vec_rowid'), 'should have vec_rowid column');
 });
 
-after(() => {
+after(async () => {
   if (store) {
-    store.close();
+    await store.close();
   }
 });

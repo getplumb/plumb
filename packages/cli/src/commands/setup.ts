@@ -195,7 +195,7 @@ async function persistEnv(result: SetupResult): Promise<void> {
       confidence: 0.95,
       decayRate: 'slow',
     });
-    store.close();
+    await store.close();
     dbSpinner.succeed('Memory database ready');
   } catch (err: unknown) {
     // Non-fatal: DB will be created on first ingest
@@ -253,7 +253,7 @@ async function seedUserContext(): Promise<void> {
       confidence: 0.95,
       decayRate: 'slow',
     });
-    store.close();
+    await store.close();
   } catch (err: unknown) {
     // Non-fatal: context will be captured on first real conversation
     console.log('\n⚠️  Could not store personalization context — it will be captured on first use.');

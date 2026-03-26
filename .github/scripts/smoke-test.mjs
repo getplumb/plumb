@@ -99,7 +99,7 @@ async function main() {
 
   // --- 6. Cleanup ---
   try {
-    store.close();
+    await store.close();
     rmSync(dbPath.replace(/[/\\][^/\\]+$/, ''), { recursive: true, force: true });
     assert('Cleanup test DB', true);
   } catch (err) {

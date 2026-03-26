@@ -73,7 +73,6 @@ test('T-118: backlog processor embeds memory_facts rows', { timeout: 60_000 }, a
 
 after(async () => {
   if (store) {
-    await store.stopBacklogProcessor();
-    store.close();
+    await store.close();
   }
 });

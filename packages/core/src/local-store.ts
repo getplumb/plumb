@@ -368,7 +368,8 @@ export class LocalStore implements MemoryStore {
   }
 
   /** Close the database connection. Call when done (e.g. in tests). */
-  close(): void {
+  async close(): Promise<void> {
+    await this.stopBacklogProcessor();
     this.#db.close();
   }
 }

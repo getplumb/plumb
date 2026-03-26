@@ -84,7 +84,7 @@ export async function statusCommand(options: StatusOptions): Promise<void> {
   // Open LocalStore and gather status data.
   const store = await LocalStore.create({ dbPath, userId });
   const status = await store.status();
-  store.close();
+  await store.close();
 
   // Check MCP server installation.
   const mcpServerPath = checkMcpServer();

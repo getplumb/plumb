@@ -300,9 +300,7 @@ export const plugin: OpenClawPluginDefinition = {
           await stopQueryServer(queryServer);
           api.logger.debug?.('[plumb] Query server stopped');
         }
-        await store.stopBacklogProcessor();
-        api.logger.debug?.('[plumb] Backlog processor stopped');
-        store.close();
+        await store.close();
         api.logger.debug?.('[plumb] Store closed');
       } catch (e) {
         api.logger.error(`[plumb] Cleanup error: ${e}`);

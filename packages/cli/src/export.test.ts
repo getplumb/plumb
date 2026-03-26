@@ -24,7 +24,7 @@ await store.ingestMemoryFact({
   sourceSessionId: 'session-2',
 });
 
-store.close();
+await store.close();
 
 after(() => {
   rmSync(dbPath, { force: true });

@@ -192,8 +192,8 @@ describe.skipIf(process.platform === 'win32')('Cross-session integration', () =>
     store = await LocalStore.create({ dbPath: testDbPath, userId: 'test-user' });
   });
 
-  after(() => {
-    store.close();
+  after(async () => {
+    await store.close();
     try {
       rmSync(testDbPath, { force: true });
     } catch {}

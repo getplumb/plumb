@@ -15,8 +15,8 @@ before(async () => {
   store = await LocalStore.create({ dbPath, userId: 'test-user' });
 });
 
-after(() => {
-  store.close();
+after(async () => {
+  await store.close();
   rmSync(dbPath, { force: true });
 });
 
@@ -48,7 +48,7 @@ test('ingestMemoryFact() fact is counted in status()', async () => {
     const after = await fresh.status();
     assert.equal(after.factCount, 1);
   } finally {
-    fresh.close();
+    await fresh.close();
   }
 });
 
@@ -74,7 +74,7 @@ test('delete() soft-deletes a fact (sets deleted_at, excludes from searchMemoryF
     const afterDelete = await fresh.status();
     assert.equal(afterDelete.factCount, 0, 'soft-deleted fact should not appear in count');
   } finally {
-    fresh.close();
+    await fresh.close();
   }
 });
 
@@ -99,6 +99,6 @@ test('status() returns accurate factCount', async () => {
     assert.equal(afterFact.factCount, 1);
     assert.ok(afterFact.lastIngestion !== null, 'lastIngestion should be set after ingest');
   } finally {
-    fresh.close();
+    await fresh.close();
   }
 });
