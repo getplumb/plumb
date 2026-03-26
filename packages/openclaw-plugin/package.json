@@ -1,6 +1,6 @@
 {
   "name": "@getplumb/plumb",
-  "version": "0.4.22",
+  "version": "0.4.23",
   "description": "Plumb OpenClaw plugin — auto-ingest and memory injection for OpenClaw",
   "license": "MIT",
   "type": "module",
