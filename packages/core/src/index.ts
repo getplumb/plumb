@@ -11,3 +11,12 @@ export { formatContextBlock, formatAge } from './context-builder.js';
 export { openDb } from './wasm-db.js';
 export type { WasmDb } from './wasm-db.js';
 export { serializeEmbedding, deserializeEmbedding } from './vector-search.js';
+export {
+  applyWikiSchema,
+  WikiStore,
+  CREATE_WIKI_PAGES_TABLE,
+  CREATE_WIKI_CHUNKS_TABLE,
+  CREATE_WIKI_LINKS_TABLE,
+  CREATE_WIKI_CHANGELOG_TABLE,
+} from './wiki-schema.js';
+export type { WikiStoreOptions } from './wiki-schema.js';
