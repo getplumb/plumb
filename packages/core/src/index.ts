@@ -35,3 +35,5 @@ export {
   archivePage,
 } from './wiki-fs.js';
 export type { WikiFrontmatter, WikiPage } from './wiki-fs.js';
+export { runWikiEmbed, chunkText } from './wiki-embedder.js';
+export type { WikiEmbedderOptions, WikiEmbedStats } from './wiki-embedder.js';

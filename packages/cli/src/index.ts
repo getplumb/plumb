@@ -10,6 +10,7 @@ import { connectCommand } from './commands/connect.js';
 import { setupCommand } from './commands/setup.js';
 import { uninstallCommand } from './commands/uninstall.js';
 import { healthCommand } from './commands/health.js';
+import { wikiEmbedCommand } from './commands/wiki-embed.js';
 
 // Read version from package.json
 const __filename = fileURLToPath(import.meta.url);
@@ -91,6 +92,25 @@ program
       db: options.db,
       json: options.json,
       userId: options.userId,
+    });
+  });
+
+// Wiki command group
+const wikiCmd = program
+  .command('wiki')
+  .description('Wiki management commands');
+
+wikiCmd
+  .command('embed')
+  .description('Embed all wiki pages into wiki.db for vector search')
+  .option('--wiki <path>', 'Wiki root directory (defaults to ~/.plumb/wiki)')
+  .option('--db <path>', 'Path to wiki.db (defaults to ~/.plumb/wiki.db)')
+  .option('--verbose', 'Print per-page progress')
+  .action(async (options) => {
+    await wikiEmbedCommand({
+      wiki: options.wiki,
+      db: options.db,
+      verbose: options.verbose,
     });
   });
 

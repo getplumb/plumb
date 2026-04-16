@@ -23,31 +23,33 @@ import { openDb, type WasmDb } from './wasm-db.js';
 /**
  * wiki_pages — one row per wiki markdown file.
  *
- * id:          Canonical slug, e.g. "people/dylan-sellberg"
- * path:        Relative filesystem path, e.g. "people/dylan-sellberg.md"
- * type:        Page type from §2 of SCHEMA.md
- * title:       H1 title of the page
- * created:     YYYY-MM-DD (from frontmatter; never changes)
- * updated:     YYYY-MM-DD (from frontmatter; updated on each write)
- * confidence:  high | medium | low
- * tags:        JSON array of lowercase-hyphenated strings
- * source_refs: JSON array of source reference strings
- * status:      active | archived
- * word_count:  Approximate word count for chunking decisions
+ * id:           Canonical slug, e.g. "people/dylan-sellberg"
+ * path:         Relative filesystem path, e.g. "people/dylan-sellberg.md"
+ * type:         Page type from §2 of SCHEMA.md
+ * title:        H1 title of the page
+ * created:      YYYY-MM-DD (from frontmatter; never changes)
+ * updated:      YYYY-MM-DD (from frontmatter; updated on each write)
+ * confidence:   high | medium | low
+ * tags:         JSON array of lowercase-hyphenated strings
+ * source_refs:  JSON array of source reference strings
+ * status:       active | archived
+ * word_count:   Approximate word count for chunking decisions
+ * content_hash: SHA-256 of raw file content for incremental re-embed detection
  */
 export const CREATE_WIKI_PAGES_TABLE = `
   CREATE TABLE IF NOT EXISTS wiki_pages (
-    id          TEXT    PRIMARY KEY,
-    path        TEXT    NOT NULL UNIQUE,
-    type        TEXT    NOT NULL,
-    title       TEXT    NOT NULL,
-    created     TEXT    NOT NULL,
-    updated     TEXT    NOT NULL,
-    confidence  TEXT    NOT NULL DEFAULT 'medium',
-    tags        TEXT,
-    source_refs TEXT,
-    status      TEXT    NOT NULL DEFAULT 'active',
-    word_count  INTEGER
+    id           TEXT    PRIMARY KEY,
+    path         TEXT    NOT NULL UNIQUE,
+    type         TEXT    NOT NULL,
+    title        TEXT    NOT NULL,
+    created      TEXT    NOT NULL,
+    updated      TEXT    NOT NULL,
+    confidence   TEXT    NOT NULL DEFAULT 'medium',
+    tags         TEXT,
+    source_refs  TEXT,
+    status       TEXT    NOT NULL DEFAULT 'active',
+    word_count   INTEGER,
+    content_hash TEXT
   )
 `;
 
@@ -66,6 +68,7 @@ export const CREATE_WIKI_PAGES_INDEXES = [
  * embed_status: pending | done | failed
  * embed_model:  Model name when embed_status = 'done'
  * vec_rowid:    Row in the shared vec_raw_log table (null until embedded)
+ * embedding:    JSON-serialized Float32Array embedding vector
  */
 export const CREATE_WIKI_CHUNKS_TABLE = `
   CREATE TABLE IF NOT EXISTS wiki_chunks (
@@ -77,6 +80,7 @@ export const CREATE_WIKI_CHUNKS_TABLE = `
     embed_error  TEXT,
     embed_model  TEXT,
     vec_rowid    INTEGER,
+    embedding    TEXT,
     UNIQUE (page_id, chunk_index)
   )
 `;
@@ -142,6 +146,7 @@ export const CREATE_WIKI_CHANGELOG_INDEXES = [
 /**
  * Apply the wiki schema to an open database connection.
  * Idempotent: uses CREATE IF NOT EXISTS throughout.
+ * Also runs ALTER TABLE migrations for columns added after initial schema creation.
  * Caller must have already run: PRAGMA foreign_keys = ON
  */
 export function applyWikiSchema(db: WasmDb): void {
@@ -156,6 +161,28 @@ export function applyWikiSchema(db: WasmDb): void {
 
   db.exec(CREATE_WIKI_CHANGELOG_TABLE);
   for (const idx of CREATE_WIKI_CHANGELOG_INDEXES) db.exec(idx);
+
+  // Migrations: add new columns to existing tables if they don't exist yet.
+  // This handles wiki.db files created before these columns were added.
+  const pagesColumns = db.exec({
+    sql: 'PRAGMA table_info(wiki_pages)',
+    rowMode: 'object',
+    returnValue: 'resultRows',
+  }) as Array<{ name: string }>;
+  const pagesColNames = new Set(pagesColumns.map((c) => c.name));
+  if (!pagesColNames.has('content_hash')) {
+    db.exec(`ALTER TABLE wiki_pages ADD COLUMN content_hash TEXT`);
+  }
+
+  const chunksColumns = db.exec({
+    sql: 'PRAGMA table_info(wiki_chunks)',
+    rowMode: 'object',
+    returnValue: 'resultRows',
+  }) as Array<{ name: string }>;
+  const chunksColNames = new Set(chunksColumns.map((c) => c.name));
+  if (!chunksColNames.has('embedding')) {
+    db.exec(`ALTER TABLE wiki_chunks ADD COLUMN embedding TEXT`);
+  }
 }
 
 // ---------------------------------------------------------------------------
