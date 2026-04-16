@@ -37,3 +37,5 @@ export {
 export type { WikiFrontmatter, WikiPage } from './wiki-fs.js';
 export { runWikiEmbed, chunkText } from './wiki-embedder.js';
 export type { WikiEmbedderOptions, WikiEmbedStats } from './wiki-embedder.js';
+export { WikiSearch } from './wiki-search.js';
+export type { WikiSearchResult, WikiSearchOptions } from './wiki-search.js';
