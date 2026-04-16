@@ -20,3 +20,18 @@ export {
   CREATE_WIKI_CHANGELOG_TABLE,
 } from './wiki-schema.js';
 export type { WikiStoreOptions } from './wiki-schema.js';
+export {
+  parseFrontmatter,
+  serializeFrontmatter,
+  parseSimpleYaml,
+  formatPage,
+  extractTitle,
+  readWikiPage,
+  writeWikiPage,
+  listWikiPages,
+  hashContent,
+  hashWikiPage,
+  isModifiedExternally,
+  archivePage,
+} from './wiki-fs.js';
+export type { WikiFrontmatter, WikiPage } from './wiki-fs.js';
