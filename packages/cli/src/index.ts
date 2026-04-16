@@ -12,6 +12,7 @@ import { uninstallCommand } from './commands/uninstall.js';
 import { healthCommand } from './commands/health.js';
 import { wikiEmbedCommand } from './commands/wiki-embed.js';
 import { wikiDreamScanCommand } from './commands/wiki-dream-scan.js';
+import { wikiDreamWriteCommand } from './commands/wiki-dream-write.js';
 
 // Read version from package.json
 const __filename = fileURLToPath(import.meta.url);
@@ -135,6 +136,24 @@ wikiCmd
       batchSize: options.batchSize,
       date: options.date,
       userId: options.userId,
+      dryRun: options.dryRun,
+    });
+  });
+
+wikiCmd
+  .command('dream-write')
+  .description('Nightly Sonnet write phase: create/update wiki pages from changeset, resolve contradictions, split oversized pages')
+  .option('--changeset <path>', 'Path to changeset JSON (defaults to /tmp/wiki-dream-changeset-<date>.json)')
+  .option('--wiki <path>', 'Wiki root directory (defaults to ~/.plumb/wiki)')
+  .option('--date <YYYY-MM-DD>', 'Date string (defaults to today)')
+  .option('--concurrency <n>', 'Max concurrent Sonnet calls (default 3)', parseInt)
+  .option('--dry-run', 'Skip writes and print what would happen')
+  .action(async (options) => {
+    await wikiDreamWriteCommand({
+      changeset: options.changeset,
+      wiki: options.wiki,
+      date: options.date,
+      concurrency: options.concurrency,
       dryRun: options.dryRun,
     });
   });
