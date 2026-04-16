@@ -11,6 +11,7 @@ import { setupCommand } from './commands/setup.js';
 import { uninstallCommand } from './commands/uninstall.js';
 import { healthCommand } from './commands/health.js';
 import { wikiEmbedCommand } from './commands/wiki-embed.js';
+import { wikiDreamScanCommand } from './commands/wiki-dream-scan.js';
 
 // Read version from package.json
 const __filename = fileURLToPath(import.meta.url);
@@ -111,6 +112,30 @@ wikiCmd
       wiki: options.wiki,
       db: options.db,
       verbose: options.verbose,
+    });
+  });
+
+wikiCmd
+  .command('dream-scan')
+  .description('Nightly Haiku scan: read today\'s facts and chat logs, produce a wiki changeset')
+  .option('--db <path>', 'Path to memory database (defaults to ~/.plumb/memory.db)')
+  .option('--wiki <path>', 'Wiki root directory (defaults to ~/.plumb/wiki)')
+  .option('--sessions <path>', 'OpenClaw sessions directory (defaults to ~/.openclaw/agents/main/sessions)')
+  .option('--out <path>', 'Output changeset path (defaults to /tmp/wiki-dream-changeset-<date>.json)')
+  .option('--batch-size <n>', 'Facts per Haiku request (default 50)', parseInt)
+  .option('--date <YYYY-MM-DD>', 'Date to scan (defaults to today)')
+  .option('--user-id <id>', 'User ID to filter facts by (defaults to "default")')
+  .option('--dry-run', 'Skip Haiku calls, print what would be sent')
+  .action(async (options) => {
+    await wikiDreamScanCommand({
+      db: options.db,
+      wiki: options.wiki,
+      sessions: options.sessions,
+      out: options.out,
+      batchSize: options.batchSize,
+      date: options.date,
+      userId: options.userId,
+      dryRun: options.dryRun,
     });
   });
 
