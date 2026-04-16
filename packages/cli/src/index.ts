@@ -13,6 +13,7 @@ import { healthCommand } from './commands/health.js';
 import { wikiEmbedCommand } from './commands/wiki-embed.js';
 import { wikiDreamScanCommand } from './commands/wiki-dream-scan.js';
 import { wikiDreamWriteCommand } from './commands/wiki-dream-write.js';
+import { wikiLintCommand } from './commands/wiki-lint.js';
 
 // Read version from package.json
 const __filename = fileURLToPath(import.meta.url);
@@ -154,6 +155,22 @@ wikiCmd
       wiki: options.wiki,
       date: options.date,
       concurrency: options.concurrency,
+      dryRun: options.dryRun,
+    });
+  });
+
+wikiCmd
+  .command('dream-lint')
+  .description('Nightly lint phase: detect orphan pages, broken wikilinks, stale pages, and frontmatter issues')
+  .option('--wiki <path>', 'Wiki root directory (defaults to ~/.plumb/wiki)')
+  .option('--sessions <path>', 'OpenClaw sessions directory (defaults to ~/.openclaw/agents/main/sessions)')
+  .option('--date <YYYY-MM-DD>', 'Date string (defaults to today)')
+  .option('--dry-run', 'Print report but do not write to log.md')
+  .action(async (options) => {
+    await wikiLintCommand({
+      wiki: options.wiki,
+      sessions: options.sessions,
+      date: options.date,
       dryRun: options.dryRun,
     });
   });
