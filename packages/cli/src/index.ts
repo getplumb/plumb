@@ -14,6 +14,7 @@ import { wikiEmbedCommand } from './commands/wiki-embed.js';
 import { wikiDreamScanCommand } from './commands/wiki-dream-scan.js';
 import { wikiDreamWriteCommand } from './commands/wiki-dream-write.js';
 import { wikiLintCommand } from './commands/wiki-lint.js';
+import { wikiDreamCommand } from './commands/wiki-dream.js';
 
 // Read version from package.json
 const __filename = fileURLToPath(import.meta.url);
@@ -172,6 +173,30 @@ wikiCmd
       sessions: options.sessions,
       date: options.date,
       dryRun: options.dryRun,
+    });
+  });
+
+wikiCmd
+  .command('dream')
+  .description('Nightly wiki dream orchestrator: scan → write → embed → lint → git commit + push')
+  .option('--wiki <path>', 'Wiki root directory (defaults to ~/.plumb/wiki)')
+  .option('--db <path>', 'Path to memory database (defaults to ~/.plumb/memory.db)')
+  .option('--sessions <path>', 'OpenClaw sessions directory (defaults to ~/.openclaw/agents/main/sessions)')
+  .option('--date <YYYY-MM-DD>', 'Date to run for (defaults to today)')
+  .option('--user-id <id>', 'User ID to filter facts by (defaults to "default")')
+  .option('--dry-run', 'Skip all writes, commits, and API calls')
+  .option('--skip-embed', 'Skip the re-embed phase')
+  .option('--register-cron', 'Register the dream cron job with OpenClaw at 2:00 AM MT daily and exit')
+  .action(async (options) => {
+    await wikiDreamCommand({
+      wiki: options.wiki,
+      db: options.db,
+      sessions: options.sessions,
+      date: options.date,
+      userId: options.userId,
+      dryRun: options.dryRun,
+      skipEmbed: options.skipEmbed,
+      registerCron: options.registerCron,
     });
   });
 
