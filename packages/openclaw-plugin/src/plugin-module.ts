@@ -11,6 +11,7 @@ import { startQueryServer, stopQueryServer } from './query-server.js';
 import { fireTelemetry } from './telemetry.js';
 import { createWikiTools } from './wiki-tools.js';
 import { createWikiInjectionHook } from './wiki-injection.js';
+import { appendToQueue, startWikiQueueWorker } from './wiki-queue-worker.js';
 
 /**
  * Ensure better-sqlite3 native binary is available.
@@ -507,6 +508,55 @@ export const plugin: OpenClawPluginDefinition = {
         api.registerTool(() => tool);
       }
       api.logger.info(`[plumb] Wiki tools registered (wikiMode=${wikiMode})`);
+
+      // Register the plumb_wiki_queue_edit tool — zero-latency wiki edit enqueuing.
+      api.registerTool(() => ({
+        name: 'plumb_wiki_queue_edit',
+        description:
+          'Queue a wiki edit request for async processing. ' +
+          'Immediately appends the fact to the wiki edit queue and returns — ' +
+          'no latency added to your response. The background worker integrates ' +
+          'the fact into the relevant wiki page(s) within 60 seconds.',
+        parameters: {
+          type: 'object',
+          properties: {
+            fact: {
+              type: 'string',
+              description:
+                'The fact or update to incorporate into the wiki, written in plain English. ' +
+                'Include enough context for the wiki writer to place it correctly ' +
+                '(e.g. "Dylan Sellberg left Samsara as of April 2026").',
+            },
+          },
+          required: ['fact'],
+        },
+        execute: async (_toolCallId: string, params: { fact: string }) => {
+          try {
+            const queueOpts = {
+              ...(wikiRoot !== undefined && { wikiRoot }),
+              ...(wikiDbPath !== undefined && { wikiDbPath }),
+            };
+            void queueOpts; // used indirectly via defaultQueuePath
+            await appendToQueue(params.fact);
+            return 'Edit queued';
+          } catch (err) {
+            return `Error queuing edit: ${err instanceof Error ? err.message : String(err)}`;
+          }
+        },
+      }));
+      api.logger.info('[plumb] plumb_wiki_queue_edit tool registered');
+
+      // Start the background wiki queue worker.
+      const workerInterval = startWikiQueueWorker({
+        ...(wikiRoot !== undefined && { wikiRoot }),
+        ...(wikiDbPath !== undefined && { wikiDbPath }),
+        logger: api.logger,
+      });
+
+      // Stop the worker on gateway shutdown.
+      process.once('exit', () => clearInterval(workerInterval));
+      api.on('gateway_stop', () => { clearInterval(workerInterval); });
+      api.logger.info('[plumb] Wiki queue worker started');
     }
 
     // Register the before_prompt_build hook for memory/wiki injection

@@ -46,3 +46,10 @@ export {
   getOutboundLinks,
   getInboundLinks,
 } from './wiki-links.js';
+export {
+  appendToQueue,
+  readQueue,
+  updateQueueItemStatus,
+  defaultQueuePath,
+} from './wiki-queue.js';
+export type { WikiQueueItem, WikiQueueItemStatus } from './wiki-queue.js';
