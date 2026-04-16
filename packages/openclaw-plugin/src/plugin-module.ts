@@ -9,6 +9,8 @@ import { execSync } from 'node:child_process';
 import { createPreResponseHook } from './hooks/pre-response.js';
 import { startQueryServer, stopQueryServer } from './query-server.js';
 import { fireTelemetry } from './telemetry.js';
+import { createWikiTools } from './wiki-tools.js';
+import { createWikiInjectionHook } from './wiki-injection.js';
 
 /**
  * Ensure better-sqlite3 native binary is available.
@@ -277,6 +279,9 @@ export const plugin: OpenClawPluginDefinition = {
     const dbPath = (api.pluginConfig?.dbPath as string | undefined) ?? DEFAULT_DB_PATH;
     const userId = (api.pluginConfig?.userId as string | undefined) ?? 'default';
     const shadowMode = (api.pluginConfig?.shadowMode as boolean | undefined) ?? false;
+    const wikiMode = ((api.pluginConfig?.wikiMode as string | undefined) ?? 'v1') as 'v1' | 'v2' | 'v2-shadow';
+    const wikiRoot = (api.pluginConfig?.wikiRoot as string | undefined);
+    const wikiDbPath = (api.pluginConfig?.wikiDbPath as string | undefined);
 
     // Shared map: pre-response hook stores the user's query here so the post-exchange
     // hook can associate it with the LLM response during ingestion (Tier 2 / T-pendingPrompts)
@@ -326,7 +331,7 @@ export const plugin: OpenClawPluginDefinition = {
     void (async () => {
     try {
     api.logger.info(
-      `[plumb] Activating with dbPath=${dbPath}, userId=${userId}, shadowMode=${shadowMode}`
+      `[plumb] Activating with dbPath=${dbPath}, userId=${userId}, shadowMode=${shadowMode}, wikiMode=${wikiMode}`
     );
 
     // Ensure native SQLite binary is present (OpenClaw installs with --ignore-scripts,
@@ -489,9 +494,41 @@ export const plugin: OpenClawPluginDefinition = {
       }
     }));
 
-    // Register the before_prompt_build hook for memory injection
-    // Parameter order: (store, dbPath, shadowMode, pendingPrompts)
-    api.on('before_prompt_build', createPreResponseHook(store, dbPath, shadowMode, pendingPrompts));
+    // Build wiki options (omit undefined values to satisfy exactOptionalPropertyTypes)
+    const wikiToolsOptions = {
+      ...(wikiRoot !== undefined && { wikiRoot }),
+      ...(wikiDbPath !== undefined && { wikiDbPath }),
+    };
+
+    // Register wiki tools (v2 and v2-shadow both get the tools)
+    if (wikiMode === 'v2' || wikiMode === 'v2-shadow') {
+      const wikiTools = createWikiTools(wikiToolsOptions);
+      for (const tool of wikiTools) {
+        api.registerTool(() => tool);
+      }
+      api.logger.info(`[plumb] Wiki tools registered (wikiMode=${wikiMode})`);
+    }
+
+    // Register the before_prompt_build hook for memory/wiki injection
+    if (wikiMode === 'v2') {
+      // v2: wiki injection replaces V1 memory injection
+      api.on(
+        'before_prompt_build',
+        createWikiInjectionHook({ ...wikiToolsOptions, wikiMode: 'v2' }),
+      );
+      api.logger.info('[plumb] Wiki injection hook registered (v2 — replaces V1 memory injection)');
+    } else if (wikiMode === 'v2-shadow') {
+      // v2-shadow: V1 memory injection runs normally; wiki injection runs in shadow (logs only)
+      api.on('before_prompt_build', createPreResponseHook(store, dbPath, shadowMode, pendingPrompts));
+      api.on(
+        'before_prompt_build',
+        createWikiInjectionHook({ ...wikiToolsOptions, wikiMode: 'v2-shadow' }),
+      );
+      api.logger.info('[plumb] V1 + wiki shadow hooks registered (v2-shadow)');
+    } else {
+      // v1 (default): memory injection only, no wiki
+      api.on('before_prompt_build', createPreResponseHook(store, dbPath, shadowMode, pendingPrompts));
+    }
 
     api.logger.info('[plumb] Plugin activated');
 
