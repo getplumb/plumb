@@ -39,3 +39,10 @@ export { runWikiEmbed, chunkText } from './wiki-embedder.js';
 export type { WikiEmbedderOptions, WikiEmbedStats } from './wiki-embedder.js';
 export { WikiSearch } from './wiki-search.js';
 export type { WikiSearchResult, WikiSearchOptions } from './wiki-search.js';
+export {
+  extractWikilinks,
+  syncWikiLinks,
+  resolveLinksToPage,
+  getOutboundLinks,
+  getInboundLinks,
+} from './wiki-links.js';
