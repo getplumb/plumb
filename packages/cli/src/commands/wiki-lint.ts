@@ -1,11 +1,12 @@
 /**
- * wiki-lint.ts — Lint phase of the nightly dream cron (spec §5.2, step 5).
+ * wiki-lint.ts — Lint phase of the nightly dream cron (T-239).
  *
  * Checks for:
  *   1. Orphan pages — pages with no inbound links from any other wiki page
  *   2. Broken wikilinks — [[Link]] targets that don't resolve to a file on disk
  *   3. Stale pages — pages with updated_at >30 days ago referenced in today's chat
  *   4. Frontmatter inconsistencies — missing required fields
+ *   5. Dead-letter queue items — facts that failed 3× and need human attention
  *
  * Appends a Lint Report section to log.md.
  * Does NOT auto-fix — lint is report-only.
@@ -13,7 +14,7 @@
  *
  * Usage:
  *   plumb wiki dream-lint [--wiki <path>] [--sessions <path>]
- *                         [--date <YYYY-MM-DD>] [--dry-run]
+ *                         [--dead-letter <path>] [--date <YYYY-MM-DD>] [--dry-run]
  */
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
@@ -50,6 +51,8 @@ export interface WikiLintOptions {
   wiki?: string;
   /** OpenClaw sessions directory. Defaults to ~/.openclaw/agents/main/sessions */
   sessions?: string;
+  /** Path to dead-letter queue file. Defaults to ~/.plumb/wiki-queue-dead.jsonl */
+  deadLetter?: string;
   /** Date string YYYY-MM-DD. Defaults to today */
   date?: string;
   /** If true, print report but do not write to log.md */
@@ -82,11 +85,20 @@ interface FrontmatterIssue {
   missingFields: string[];
 }
 
+interface DeadLetterItem {
+  id: string;
+  fact: string;
+  dead_lettered_at: string;
+  final_error: string;
+  retry_count: number;
+}
+
 interface LintReport {
   orphanPages: OrphanPage[];
   brokenLinks: BrokenLink[];
   stalePages: StalePage[];
   frontmatterIssues: FrontmatterIssue[];
+  deadLetterItems: DeadLetterItem[];
 }
 
 // ---------------------------------------------------------------------------
@@ -384,6 +396,30 @@ function detectFrontmatterIssues(pages: PageInfo[]): FrontmatterIssue[] {
     .map((p) => ({ path: p.relPath, missingFields: p.frontmatterMissing }));
 }
 
+/**
+ * Check 5: Dead-letter queue items — facts that failed 3× and need human attention.
+ * Reads ~/.plumb/wiki-queue-dead.jsonl directly (no wiki-worker import needed).
+ */
+async function readDeadLetterItems(deadLetterPath: string): Promise<DeadLetterItem[]> {
+  if (!existsSync(deadLetterPath)) return [];
+  try {
+    const raw = readFileSync(deadLetterPath, 'utf8');
+    const items: DeadLetterItem[] = [];
+    for (const line of raw.split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      try {
+        items.push(JSON.parse(trimmed) as DeadLetterItem);
+      } catch {
+        // skip malformed lines
+      }
+    }
+    return items;
+  } catch {
+    return [];
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Report formatting
 // ---------------------------------------------------------------------------
@@ -397,7 +433,8 @@ function formatReport(
     report.orphanPages.length +
     report.brokenLinks.length +
     report.stalePages.length +
-    report.frontmatterIssues.length;
+    report.frontmatterIssues.length +
+    report.deadLetterItems.length;
 
   const lines: string[] = [
     `\n## ${today}\n`,
@@ -439,6 +476,17 @@ function formatReport(
   if (report.frontmatterIssues.length > 0) {
     for (const f of report.frontmatterIssues) {
       lines.push(`- ${f.path}: missing fields: ${f.missingFields.join(', ')}`);
+    }
+  }
+  lines.push('');
+
+  // Dead-letter queue items
+  lines.push(`**Dead-letter queue** (failed 3×, need human review): ${report.deadLetterItems.length}`);
+  if (report.deadLetterItems.length > 0) {
+    for (const d of report.deadLetterItems) {
+      const ts = d.dead_lettered_at.slice(0, 10);
+      lines.push(`- [${ts}] ${d.fact.slice(0, 80)}${d.fact.length > 80 ? '…' : ''}`);
+      lines.push(`  Error: ${d.final_error.slice(0, 100)}`);
     }
   }
   lines.push('');
@@ -497,6 +545,8 @@ export async function wikiLintCommand(options: WikiLintOptions = {}): Promise<vo
   const wikiRoot = options.wiki ?? join(homedir(), '.plumb', 'wiki');
   const sessionsDir =
     options.sessions ?? join(homedir(), '.openclaw', 'agents', 'main', 'sessions');
+  const deadLetterPath =
+    options.deadLetter ?? join(homedir(), '.plumb', 'wiki-queue-dead.jsonl');
   const dryRun = options.dryRun ?? false;
   const timeStr = nowHHMM();
 
@@ -533,20 +583,33 @@ export async function wikiLintCommand(options: WikiLintOptions = {}): Promise<vo
   console.log('\nRunning lint checks…');
 
   const orphanPages = detectOrphans(pages, linkMap);
-  console.log(`  Orphan pages:     ${orphanPages.length}`);
+  console.log(`  Orphan pages:       ${orphanPages.length}`);
 
   const brokenLinks = detectBrokenLinks(linkMap, titleToPath, slugToPath);
-  console.log(`  Broken wikilinks: ${brokenLinks.length}`);
+  console.log(`  Broken wikilinks:   ${brokenLinks.length}`);
 
   const stalePages = detectStalePages(pages, chatText, today);
-  console.log(`  Stale pages:      ${stalePages.length}`);
+  console.log(`  Stale pages:        ${stalePages.length}`);
 
   const frontmatterIssues = detectFrontmatterIssues(pages);
   console.log(`  Frontmatter issues: ${frontmatterIssues.length}`);
 
-  const report: LintReport = { orphanPages, brokenLinks, stalePages, frontmatterIssues };
+  const deadLetterItems = await readDeadLetterItems(deadLetterPath);
+  console.log(`  Dead-letter items:  ${deadLetterItems.length}`);
+
+  const report: LintReport = {
+    orphanPages,
+    brokenLinks,
+    stalePages,
+    frontmatterIssues,
+    deadLetterItems,
+  };
   const totalIssues =
-    orphanPages.length + brokenLinks.length + stalePages.length + frontmatterIssues.length;
+    orphanPages.length +
+    brokenLinks.length +
+    stalePages.length +
+    frontmatterIssues.length +
+    deadLetterItems.length;
 
   // --- Format and display report ---
   const entry = formatReport(report, today, timeStr);

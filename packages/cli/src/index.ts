@@ -120,11 +120,11 @@ wikiCmd
 
 wikiCmd
   .command('dream-scan')
-  .description('Nightly Haiku scan: read today\'s facts and chat logs, produce a wiki changeset')
+  .description('Nightly Haiku catch-up scan: compare today\'s facts vs wiki, enqueue missed items')
   .option('--db <path>', 'Path to memory database (defaults to ~/.plumb/memory.db)')
   .option('--wiki <path>', 'Wiki root directory (defaults to ~/.plumb/wiki)')
   .option('--sessions <path>', 'OpenClaw sessions directory (defaults to ~/.openclaw/agents/main/sessions)')
-  .option('--out <path>', 'Output changeset path (defaults to /tmp/wiki-dream-changeset-<date>.json)')
+  .option('--queue <path>', 'Path to wiki-queue.jsonl (defaults to ~/.plumb/wiki-queue.jsonl)')
   .option('--batch-size <n>', 'Facts per Haiku request (default 50)', parseInt)
   .option('--date <YYYY-MM-DD>', 'Date to scan (defaults to today)')
   .option('--user-id <id>', 'User ID to filter facts by (defaults to "default")')
@@ -134,7 +134,7 @@ wikiCmd
       db: options.db,
       wiki: options.wiki,
       sessions: options.sessions,
-      out: options.out,
+      queue: options.queue,
       batchSize: options.batchSize,
       date: options.date,
       userId: options.userId,
@@ -178,24 +178,24 @@ wikiCmd
 
 wikiCmd
   .command('dream')
-  .description('Nightly wiki dream orchestrator: scan → write → embed → lint → git commit + push')
+  .description('Nightly wiki dream cron: catch-up(Haiku) → link-rebuild → lint → git commit + push')
   .option('--wiki <path>', 'Wiki root directory (defaults to ~/.plumb/wiki)')
   .option('--db <path>', 'Path to memory database (defaults to ~/.plumb/memory.db)')
+  .option('--wiki-db <path>', 'Path to wiki.db (defaults to ~/.plumb/wiki.db)')
   .option('--sessions <path>', 'OpenClaw sessions directory (defaults to ~/.openclaw/agents/main/sessions)')
   .option('--date <YYYY-MM-DD>', 'Date to run for (defaults to today)')
   .option('--user-id <id>', 'User ID to filter facts by (defaults to "default")')
   .option('--dry-run', 'Skip all writes, commits, and API calls')
-  .option('--skip-embed', 'Skip the re-embed phase')
   .option('--register-cron', 'Register the dream cron job with OpenClaw at 2:00 AM MT daily and exit')
   .action(async (options) => {
     await wikiDreamCommand({
       wiki: options.wiki,
       db: options.db,
+      wikiDb: options.wikiDb,
       sessions: options.sessions,
       date: options.date,
       userId: options.userId,
       dryRun: options.dryRun,
-      skipEmbed: options.skipEmbed,
       registerCron: options.registerCron,
     });
   });

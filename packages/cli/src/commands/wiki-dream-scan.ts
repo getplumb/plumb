@@ -1,74 +1,31 @@
 /**
- * wiki-dream-scan.ts — Haiku scan phase of the nightly dream cron (spec §5.2, steps 1-2).
+ * wiki-dream-scan.ts — Haiku catch-up scan phase of the nightly dream cron (T-239).
  *
  * Reads today's Plumb V1 facts from memory.db and today's OpenClaw chat logs,
- * feeds them to Claude Haiku in batches, and outputs a JSON changeset to
- * /tmp/wiki-dream-changeset-YYYY-MM-DD.json for the Sonnet write phase (T-210).
+ * compares against what is already reflected in the wiki and the in-band queue,
+ * and uses Claude Haiku to identify facts that have NOT been incorporated yet.
  *
- * Changeset schema:
- *   {
- *     date: "YYYY-MM-DD",
- *     entities_to_create: [{ name, type, facts }],
- *     pages_to_update:    [{ path, changes }],
- *     contradictions:     [{ path, field, old, new }]
- *   }
+ * Missed facts are ENQUEUED to wiki-queue.jsonl — they are NOT written directly.
+ * The normal wiki-worker pipeline picks them up on its next hourly tick.
+ *
+ * This keeps dream "detection-only": it finds gaps, the worker fills them.
  *
  * Usage:
  *   plumb wiki dream-scan [--db <path>] [--wiki <path>] [--sessions <path>]
- *                         [--out <path>] [--batch-size <n>] [--date <YYYY-MM-DD>]
+ *                         [--queue <path>] [--batch-size <n>] [--date <YYYY-MM-DD>]
  *                         [--dry-run]
+ *
+ * Returns usage stats (tokens_in, tokens_out) so the orchestrator can log cost.
  */
 
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { join } from 'node:path';
 import { homedir } from 'node:os';
-import { openDb } from '@getplumb/core';
+import { openDb, appendToQueue, readQueue, defaultQueuePath } from '@getplumb/core';
 import { getDefaultDbPath } from '../utils/db-path.js';
 
 // ---------------------------------------------------------------------------
 // Types
-// ---------------------------------------------------------------------------
-
-export interface EntityToCreate {
-  /** Canonical entity name */
-  name: string;
-  /** Entity type */
-  type: 'person' | 'company' | 'project' | 'concept';
-  /** Relevant fact snippets that establish this entity */
-  facts: string[];
-}
-
-export interface PageUpdate {
-  /** Wiki-relative path, e.g. "people/alice-johnson.md" */
-  path: string;
-  /** Human-readable description of what changed */
-  changes: string[];
-}
-
-export interface Contradiction {
-  /** Wiki-relative path */
-  path: string;
-  /** Which field / attribute contradicts */
-  field: string;
-  /** What the wiki currently says */
-  old: string;
-  /** What today's facts say instead */
-  new: string;
-}
-
-export interface DreamChangeset {
-  /** Scan date, YYYY-MM-DD */
-  date: string;
-  /** New wiki pages to create */
-  entities_to_create: EntityToCreate[];
-  /** Existing pages that need content updates */
-  pages_to_update: PageUpdate[];
-  /** Facts that contradict existing wiki content */
-  contradictions: Contradiction[];
-}
-
-// ---------------------------------------------------------------------------
-// Options
 // ---------------------------------------------------------------------------
 
 export interface WikiDreamScanOptions {
@@ -78,8 +35,8 @@ export interface WikiDreamScanOptions {
   wiki?: string;
   /** OpenClaw sessions directory. Defaults to ~/.openclaw/agents/main/sessions */
   sessions?: string;
-  /** Output changeset path. Defaults to /tmp/wiki-dream-changeset-<date>.json */
-  out?: string;
+  /** Path to wiki-queue.jsonl. Defaults to defaultQueuePath() */
+  queue?: string;
   /** Facts per Haiku request. Defaults to 50 */
   batchSize?: number;
   /** Date to scan (YYYY-MM-DD). Defaults to today */
@@ -88,6 +45,17 @@ export interface WikiDreamScanOptions {
   dryRun?: boolean;
   /** User ID to filter facts by. Defaults to 'default' */
   userId?: string;
+}
+
+export interface WikiDreamScanResult {
+  /** How many facts were examined */
+  factsExamined: number;
+  /** How many items were enqueued for the worker to process */
+  enqueuedCount: number;
+  /** Total input tokens consumed by Haiku */
+  tokensIn: number;
+  /** Total output tokens consumed by Haiku */
+  tokensOut: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -117,9 +85,7 @@ async function withRetry<T>(
         throw err;
       }
       const delay = baseDelayMs * Math.pow(2, attempt - 1);
-      console.error(
-        `  Rate-limited (attempt ${attempt}/${maxAttempts}). Retrying in ${delay}ms…`,
-      );
+      console.error(`  Rate-limited (attempt ${attempt}/${maxAttempts}). Retrying in ${delay}ms…`);
       await sleep(delay);
     }
   }
@@ -135,9 +101,6 @@ interface MemoryFact {
   created_at: string;
 }
 
-/**
- * Load today's facts from memory.db, filtered by created_at date prefix.
- */
 async function loadTodaysFacts(
   dbPath: string,
   userId: string,
@@ -166,18 +129,9 @@ async function loadTodaysFacts(
   return facts;
 }
 
-interface ChatExcerpt {
-  sessionId: string;
-  timestamp: string;
-  role: string;
-  text: string;
-}
-
 /**
  * Read today's chat log excerpts from OpenClaw session JSONL files.
- * Gracefully skips if the directory doesn't exist or files can't be parsed.
- *
- * Returns up to maxChars of text across all sessions, as a compact string.
+ * Returns up to maxChars of text (user messages only).
  */
 function loadTodaysChatLogs(
   sessionsDir: string,
@@ -197,11 +151,9 @@ function loadTodaysChatLogs(
     return '';
   }
 
-  // Filter to files modified today
   const todayFiles = files.filter((f) => {
     try {
-      const filePath = join(sessionsDir, f);
-      const mtime = statSync(filePath).mtime;
+      const mtime = statSync(join(sessionsDir, f)).mtime;
       return mtime.toISOString().startsWith(datePrefix);
     } catch {
       return false;
@@ -213,30 +165,18 @@ function loadTodaysChatLogs(
     return '';
   }
 
-  console.log(`  Found ${todayFiles.length} session file(s) from today.`);
-
-  const excerpts: ChatExcerpt[] = [];
-
+  let combined = '';
   for (const f of todayFiles) {
     const filePath = join(sessionsDir, f);
     try {
       const lines = readFileSync(filePath, 'utf8').split('\n');
-      // Extract first event for session ID
-      let sessionId = f.replace('.jsonl', '');
-
       for (const line of lines) {
         if (!line.trim()) continue;
         try {
           const obj = JSON.parse(line) as Record<string, unknown>;
-          if (obj['type'] === 'session') {
-            sessionId = String(obj['id'] ?? sessionId);
-          }
           if (obj['type'] === 'message') {
             const msg = obj['message'] as Record<string, unknown> | undefined;
-            if (!msg) continue;
-            const role = String(msg['role'] ?? '');
-            // Only include user messages (assistant messages tend to be very long)
-            if (role !== 'user') continue;
+            if (!msg || msg['role'] !== 'user') continue;
             const content = msg['content'];
             let text = '';
             if (Array.isArray(content)) {
@@ -247,20 +187,14 @@ function loadTodaysChatLogs(
             } else if (typeof content === 'string') {
               text = content;
             }
-            // Skip PLUMB MEMORY injections (not human-authored chat)
-            if (text.includes('[PLUMB MEMORY]')) continue;
-            if (!text.trim()) continue;
-
+            if (text.includes('[PLUMB MEMORY]') || !text.trim()) continue;
             const ts = String(obj['timestamp'] ?? '');
-            // Only include events that occurred on the target date
             if (ts && !ts.startsWith(datePrefix)) continue;
-
-            excerpts.push({
-              sessionId,
-              timestamp: ts,
-              role,
-              text: text.slice(0, 400),
-            });
+            const excerpt = text.slice(0, 400).trim();
+            combined += excerpt + '\n';
+            if (combined.length >= maxChars) {
+              return combined.slice(0, maxChars);
+            }
           }
         } catch {
           // skip malformed lines
@@ -271,25 +205,29 @@ function loadTodaysChatLogs(
     }
   }
 
-  if (excerpts.length === 0) {
-    return '';
-  }
-
-  // Build compact text, up to maxChars
-  let combined = '';
-  for (const e of excerpts) {
-    const line = `[${e.timestamp.slice(0, 16)}] ${e.role}: ${e.text.trim()}\n`;
-    if (combined.length + line.length > maxChars) break;
-    combined += line;
-  }
-
   return combined.trim();
 }
 
 /**
- * Enumerate existing wiki page paths (relative to wiki root), excluding index files.
- * Used to give Haiku context about what already exists so it can distinguish
- * "update existing page" from "create new entity".
+ * Read today's entries from the wiki activity log.md to understand what's already been committed.
+ */
+function loadRecentLogEntries(wikiRoot: string, datePrefix: string, maxChars = 3000): string {
+  const logPath = join(wikiRoot, 'log.md');
+  if (!existsSync(logPath)) return '';
+  try {
+    const raw = readFileSync(logPath, 'utf8');
+    // Find the section for today's date
+    const dateIdx = raw.indexOf(`## ${datePrefix}`);
+    if (dateIdx === -1) return '';
+    // Return up to maxChars from that section
+    return raw.slice(dateIdx, dateIdx + maxChars);
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Enumerate existing wiki page paths (relative to wiki root).
  */
 function listExistingWikiPages(wikiRoot: string): string[] {
   if (!existsSync(wikiRoot)) return [];
@@ -308,7 +246,8 @@ function listExistingWikiPages(wikiRoot: string): string[] {
           !entry.name.startsWith('_') &&
           entry.name !== 'index.md'
         ) {
-          pages.push(relative(wikiRoot, fullPath));
+          const rel = fullPath.slice(wikiRoot.length + 1);
+          pages.push(rel);
         }
       }
     } catch {
@@ -320,62 +259,60 @@ function listExistingWikiPages(wikiRoot: string): string[] {
   return pages.sort();
 }
 
+/**
+ * Read today's already-enqueued facts from the wiki queue to avoid duplicates.
+ */
+async function loadTodaysQueuedFacts(queuePath: string, datePrefix: string): Promise<string[]> {
+  const items = await readQueue(queuePath);
+  return items
+    .filter((item) => item.queued_at.startsWith(datePrefix) && item.status === 'pending')
+    .map((item) => item.fact);
+}
+
 // ---------------------------------------------------------------------------
-// Haiku scan
+// Haiku catch-up prompt
 // ---------------------------------------------------------------------------
 
-const SCAN_SYSTEM_PROMPT = `You are a knowledge-base update scanner for a personal wiki.
+const CATCH_UP_SYSTEM_PROMPT = `You are a knowledge-base catch-up scanner for a personal wiki.
 
 You will receive:
 1. A list of existing wiki pages (relative paths)
-2. Today's memory facts (new information learned today)
-3. Optionally, excerpts from today's chat logs
+2. Today's memory facts (new information)
+3. Excerpts from today's chat logs
+4. Today's wiki activity log (what was already written/updated today)
+5. Facts already queued for processing today (to avoid duplicates)
 
-Your job is to produce a JSON changeset with THREE sections:
+Your job is to identify facts that:
+- Mention a named entity (person, company, project, concept, tool)
+- Are NOT yet reflected in an existing wiki page
+- Have NOT already been queued today
 
-entities_to_create: New entities (people, companies, projects, concepts) mentioned in today's facts
-that do NOT yet have a wiki page. Each entry must have:
-  - name: canonical display name
-  - type: one of "person", "company", "project", "concept"
-  - facts: array of 1-3 relevant fact snippets (verbatim or paraphrased)
-
-pages_to_update: Existing wiki pages that need new information added, based on today's facts.
-Each entry must have:
-  - path: exact path from the existing pages list
-  - changes: array of strings describing what new information should be added
-
-contradictions: Facts that directly contradict what an existing page likely says.
-Each entry must have:
-  - path: exact path from the existing pages list
-  - field: what attribute/field is contradicted (e.g. "role", "location", "project status")
-  - old: what the page likely says (infer from context)
-  - new: what today's facts say instead
+For each such fact, produce a single self-contained sentence that includes the entity name and the key information. These sentences will be enqueued for the wiki worker to incorporate.
 
 Rules:
-- Only include items with clear evidence from today's facts
-- Skip vague or generic facts that don't relate to a named entity
-- If no new entities, updates, or contradictions exist, return empty arrays
-- Respond ONLY with valid JSON matching:
-  {
-    "entities_to_create": [...],
-    "pages_to_update": [...],
-    "contradictions": [...]
-  }`;
+- Only return facts with a clear named entity
+- Skip generic observations, process descriptions, or facts with no wiki-worthy entity
+- If a fact updates an existing page, include the entity name so the worker can find the page
+- Max 20 items — prioritize the most significant new information
+- Return ONLY a JSON array of strings:
+  ["Fact about Entity 1", "Fact about Entity 2", ...]
+- Return [] if nothing new needs enqueuing`;
 
-interface HaikuBatchResult {
-  entities_to_create: EntityToCreate[];
-  pages_to_update: PageUpdate[];
-  contradictions: Contradiction[];
+interface HaikuUsage {
+  input_tokens: number;
+  output_tokens: number;
 }
 
-async function scanBatchWithHaiku(
+async function runCatchUpBatch(
   client: import('@anthropic-ai/sdk').default,
   facts: MemoryFact[],
   existingPages: string[],
   chatContext: string,
+  logContext: string,
+  alreadyQueued: string[],
   batchNum: number,
   totalBatches: number,
-): Promise<HaikuBatchResult> {
+): Promise<{ facts: string[]; usage: HaikuUsage }> {
   const factsText = facts
     .map((f, i) => `[${i + 1}] (${f.created_at.slice(0, 16)}) ${f.content}`)
     .join('\n\n');
@@ -385,106 +322,55 @@ async function scanBatchWithHaiku(
       ? `Existing wiki pages (${existingPages.length} total):\n${existingPages.slice(0, 200).join('\n')}`
       : 'No existing wiki pages yet.';
 
-  const chatSection =
-    chatContext.trim()
-      ? `\n\n=== TODAY'S CHAT EXCERPTS ===\n${chatContext.slice(0, 3000)}`
+  const chatSection = chatContext.trim()
+    ? `\n\n=== TODAY'S CHAT EXCERPTS ===\n${chatContext.slice(0, 2000)}`
+    : '';
+
+  const logSection = logContext.trim()
+    ? `\n\n=== TODAY'S WIKI LOG (already written) ===\n${logContext.slice(0, 1500)}`
+    : '';
+
+  const queueSection =
+    alreadyQueued.length > 0
+      ? `\n\n=== ALREADY QUEUED TODAY (skip these) ===\n${alreadyQueued.slice(0, 30).join('\n')}`
       : '';
 
-  const userPrompt = `${pagesText}
+  const userPrompt = `${pagesText}${chatSection}${logSection}${queueSection}
 
 === TODAY'S MEMORY FACTS (batch ${batchNum}/${totalBatches}) ===
-${factsText}${chatSection}
+${factsText}
 
-Produce the changeset JSON.`;
+Return the JSON array of facts to enqueue.`;
 
   const message = await withRetry(() =>
     client.messages.create({
       model: 'claude-haiku-4-5-20251001',
-      max_tokens: 2048,
-      system: SCAN_SYSTEM_PROMPT,
+      max_tokens: 1024,
+      system: CATCH_UP_SYSTEM_PROMPT,
       messages: [{ role: 'user', content: userPrompt }],
     }),
   );
 
-  const text =
-    message.content[0]?.type === 'text' ? message.content[0].text : '';
+  const usage: HaikuUsage = {
+    input_tokens: message.usage.input_tokens,
+    output_tokens: message.usage.output_tokens,
+  };
+
+  const text = message.content[0]?.type === 'text' ? message.content[0].text : '';
 
   try {
     const cleaned = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim();
-    const parsed = JSON.parse(cleaned) as HaikuBatchResult;
-    return {
-      entities_to_create: Array.isArray(parsed.entities_to_create)
-        ? parsed.entities_to_create
-        : [],
-      pages_to_update: Array.isArray(parsed.pages_to_update)
-        ? parsed.pages_to_update
-        : [],
-      contradictions: Array.isArray(parsed.contradictions)
-        ? parsed.contradictions
-        : [],
-    };
+    const parsed = JSON.parse(cleaned) as unknown;
+    if (Array.isArray(parsed)) {
+      return {
+        facts: parsed.filter((f): f is string => typeof f === 'string' && f.trim().length > 0),
+        usage,
+      };
+    }
+    return { facts: [], usage };
   } catch {
     console.error(`  Warning: Could not parse Haiku response. Preview: ${text.slice(0, 200)}`);
-    return { entities_to_create: [], pages_to_update: [], contradictions: [] };
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Changeset merging
-// ---------------------------------------------------------------------------
-
-/**
- * Merge batch results into the accumulator changeset, deduplicating by entity name
- * and page path.
- */
-function mergeIntoChangeset(
-  acc: DreamChangeset,
-  batch: HaikuBatchResult,
-): void {
-  // entities_to_create: deduplicate by lower(name)+type
-  const entityKeys = new Set(
-    acc.entities_to_create.map((e) => `${e.type}:${e.name.toLowerCase()}`),
-  );
-  for (const e of batch.entities_to_create) {
-    const key = `${e.type ?? 'concept'}:${(e.name ?? '').toLowerCase()}`;
-    if (!key.includes(':') || !e.name) continue;
-    if (!entityKeys.has(key)) {
-      entityKeys.add(key);
-      acc.entities_to_create.push({
-        name: e.name,
-        type: e.type ?? 'concept',
-        facts: Array.isArray(e.facts) ? e.facts : [],
-      });
-    }
-  }
-
-  // pages_to_update: merge changes for same path
-  const updateMap = new Map<string, PageUpdate>();
-  for (const u of acc.pages_to_update) {
-    updateMap.set(u.path, u);
-  }
-  for (const u of batch.pages_to_update) {
-    if (!u.path) continue;
-    const existing = updateMap.get(u.path);
-    const changes = Array.isArray(u.changes) ? u.changes : [];
-    if (existing) {
-      existing.changes.push(...changes);
-    } else {
-      updateMap.set(u.path, { path: u.path, changes });
-    }
-  }
-  acc.pages_to_update = Array.from(updateMap.values());
-
-  // contradictions: append all (duplicates are acceptable; Sonnet write phase can dedupe)
-  for (const c of batch.contradictions) {
-    if (c.path && c.field) {
-      acc.contradictions.push({
-        path: c.path,
-        field: c.field,
-        old: c.old ?? '',
-        new: c.new ?? '',
-      });
-    }
+    return { facts: [], usage };
   }
 }
 
@@ -494,24 +380,29 @@ function mergeIntoChangeset(
 
 export async function wikiDreamScanCommand(
   options: WikiDreamScanOptions = {},
-): Promise<void> {
+): Promise<WikiDreamScanResult> {
   const today = options.date ?? new Date().toISOString().slice(0, 10);
   const dbPath = options.db ?? getDefaultDbPath();
   const wikiRoot = options.wiki ?? join(homedir(), '.plumb', 'wiki');
   const sessionsDir =
-    options.sessions ??
-    join(homedir(), '.openclaw', 'agents', 'main', 'sessions');
-  const outPath =
-    options.out ?? `/tmp/wiki-dream-changeset-${today}.json`;
+    options.sessions ?? join(homedir(), '.openclaw', 'agents', 'main', 'sessions');
+  const queuePath = options.queue ?? defaultQueuePath();
   const batchSize = options.batchSize ?? 50;
   const userId = options.userId ?? 'default';
   const dryRun = options.dryRun ?? false;
 
-  console.log(`Wiki dream scan — ${today}`);
+  console.log(`Wiki dream catch-up scan — ${today}`);
   console.log(`  db:       ${dbPath}`);
   console.log(`  wiki:     ${wikiRoot}`);
   console.log(`  sessions: ${sessionsDir}`);
-  console.log(`  out:      ${outPath}`);
+  console.log(`  queue:    ${queuePath}`);
+
+  const result: WikiDreamScanResult = {
+    factsExamined: 0,
+    enqueuedCount: 0,
+    tokensIn: 0,
+    tokensOut: 0,
+  };
 
   // --- Validate DB ---
   if (!existsSync(dbPath)) {
@@ -523,19 +414,11 @@ export async function wikiDreamScanCommand(
   console.log(`\nLoading today's facts (${today})…`);
   const facts = await loadTodaysFacts(dbPath, userId, today);
   console.log(`  Found ${facts.length} fact(s) created today.`);
+  result.factsExamined = facts.length;
 
   if (facts.length === 0) {
-    console.log('\nNo facts for today — writing empty changeset.');
-    const empty: DreamChangeset = {
-      date: today,
-      entities_to_create: [],
-      pages_to_update: [],
-      contradictions: [],
-    };
-    mkdirSync('/tmp', { recursive: true });
-    writeFileSync(outPath, JSON.stringify(empty, null, 2), 'utf8');
-    console.log(`Empty changeset written to: ${outPath}`);
-    return;
+    console.log('\nNo facts for today — nothing to catch up.');
+    return result;
   }
 
   // --- Load today's chat logs ---
@@ -545,20 +428,30 @@ export async function wikiDreamScanCommand(
     console.log(`  Loaded ${chatContext.length} chars of chat context.`);
   }
 
+  // --- Load today's wiki log (what's already been committed) ---
+  const logContext = loadRecentLogEntries(wikiRoot, today);
+  if (logContext) {
+    console.log(`  Loaded ${logContext.length} chars of today's wiki log.`);
+  }
+
   // --- List existing wiki pages ---
   const existingPages = listExistingWikiPages(wikiRoot);
   console.log(`  Found ${existingPages.length} existing wiki page(s).`);
 
+  // --- Load today's already-queued facts ---
+  const alreadyQueued = await loadTodaysQueuedFacts(queuePath, today);
+  console.log(`  Already queued today: ${alreadyQueued.length} item(s).`);
+
   // --- Dry run mode ---
   if (dryRun) {
     const totalBatches = Math.ceil(facts.length / batchSize);
-    console.log(`\n[Dry run] Would send ${totalBatches} batch(es) of up to ${batchSize} facts to Haiku.`);
-    console.log(`[Dry run] First batch preview (${Math.min(batchSize, facts.length)} facts):`);
-    for (const f of facts.slice(0, Math.min(5, facts.length))) {
+    console.log(`\n[dry-run] Would send ${totalBatches} batch(es) of up to ${batchSize} facts to Haiku.`);
+    console.log(`[dry-run] First facts preview (up to 5):`);
+    for (const f of facts.slice(0, 5)) {
       console.log(`  [${f.id.slice(0, 8)}] ${f.content.slice(0, 100)}`);
     }
-    console.log(`[Dry run] Would write changeset to: ${outPath}`);
-    return;
+    console.log(`[dry-run] Would enqueue missed facts to: ${queuePath}`);
+    return result;
   }
 
   // --- Load Anthropic SDK ---
@@ -566,7 +459,7 @@ export async function wikiDreamScanCommand(
   try {
     Anthropic = (await import('@anthropic-ai/sdk')).default;
   } catch {
-    console.error('Error: @anthropic-ai/sdk is required. Install with: npm install -g @anthropic-ai/sdk');
+    console.error('Error: @anthropic-ai/sdk is required.');
     process.exit(1);
   }
 
@@ -579,39 +472,34 @@ export async function wikiDreamScanCommand(
   const client = new Anthropic!({ apiKey });
 
   // --- Process in batches ---
-  const changeset: DreamChangeset = {
-    date: today,
-    entities_to_create: [],
-    pages_to_update: [],
-    contradictions: [],
-  };
-
   const totalBatches = Math.ceil(facts.length / batchSize);
-  console.log(`\nScanning ${facts.length} fact(s) in ${totalBatches} batch(es) of ${batchSize}…`);
+  console.log(`\nCatch-up scanning ${facts.length} fact(s) in ${totalBatches} batch(es)…`);
+
+  const allMissedFacts: string[] = [];
 
   for (let batchIdx = 0; batchIdx < totalBatches; batchIdx++) {
     const start = batchIdx * batchSize;
     const batch = facts.slice(start, start + batchSize);
 
-    process.stdout.write(
-      `  Batch ${batchIdx + 1}/${totalBatches} (${batch.length} facts)… `,
-    );
+    process.stdout.write(`  Batch ${batchIdx + 1}/${totalBatches} (${batch.length} facts)… `);
 
     try {
-      const result = await scanBatchWithHaiku(
+      const { facts: missedFacts, usage } = await runCatchUpBatch(
         client,
         batch,
         existingPages,
         chatContext,
+        logContext,
+        alreadyQueued,
         batchIdx + 1,
         totalBatches,
       );
-      mergeIntoChangeset(changeset, result);
-      console.log(
-        `done (+${result.entities_to_create.length} new, ` +
-          `${result.pages_to_update.length} updates, ` +
-          `${result.contradictions.length} contradictions)`,
-      );
+
+      result.tokensIn += usage.input_tokens;
+      result.tokensOut += usage.output_tokens;
+      allMissedFacts.push(...missedFacts);
+
+      console.log(`done — ${missedFacts.length} missed fact(s) found`);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       console.log(`FAILED: ${msg}`);
@@ -623,13 +511,26 @@ export async function wikiDreamScanCommand(
     }
   }
 
-  // --- Write output ---
-  mkdirSync('/tmp', { recursive: true });
-  writeFileSync(outPath, JSON.stringify(changeset, null, 2), 'utf8');
+  // --- Deduplicate missed facts before enqueuing ---
+  const uniqueFacts = Array.from(new Set(allMissedFacts));
 
-  console.log(`\nScan complete.`);
-  console.log(`  New entities:   ${changeset.entities_to_create.length}`);
-  console.log(`  Page updates:   ${changeset.pages_to_update.length}`);
-  console.log(`  Contradictions: ${changeset.contradictions.length}`);
-  console.log(`  Changeset:      ${outPath}`);
+  // --- Enqueue missed facts ---
+  if (uniqueFacts.length > 0) {
+    console.log(`\nEnqueuing ${uniqueFacts.length} missed fact(s) to wiki queue…`);
+    for (const fact of uniqueFacts) {
+      await appendToQueue(fact, queuePath);
+      result.enqueuedCount++;
+      console.log(`  Enqueued: ${fact.slice(0, 80)}${fact.length > 80 ? '…' : ''}`);
+    }
+  } else {
+    console.log('\nNo missed facts — wiki is up to date.');
+  }
+
+  console.log(`\nCatch-up scan complete.`);
+  console.log(`  Facts examined:  ${result.factsExamined}`);
+  console.log(`  Items enqueued:  ${result.enqueuedCount}`);
+  console.log(`  Tokens in:       ${result.tokensIn}`);
+  console.log(`  Tokens out:      ${result.tokensOut}`);
+
+  return result;
 }

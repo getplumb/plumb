@@ -21,7 +21,31 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { parseFrontmatter } from '@getplumb/core';
 import { WikiService, WikiValidationError } from '@getplumb/wiki';
-import type { DreamChangeset, EntityToCreate, PageUpdate, Contradiction } from './wiki-dream-scan.js';
+// Types previously from wiki-dream-scan.ts (now inlined here since scan no longer exports them)
+export interface EntityToCreate {
+  name: string;
+  type: 'person' | 'company' | 'project' | 'concept';
+  facts: string[];
+}
+
+export interface PageUpdate {
+  path: string;
+  changes: string[];
+}
+
+export interface Contradiction {
+  path: string;
+  field: string;
+  old: string;
+  new: string;
+}
+
+export interface DreamChangeset {
+  date: string;
+  entities_to_create: EntityToCreate[];
+  pages_to_update: PageUpdate[];
+  contradictions: Contradiction[];
+}
 import { wikiBuildIndexCommand } from './wiki-build-index.js';
 
 // ---------------------------------------------------------------------------

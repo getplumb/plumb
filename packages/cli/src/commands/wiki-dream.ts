@@ -1,34 +1,34 @@
 /**
- * wiki-dream.ts — Orchestrator for the nightly wiki dream cron (spec §5.2).
+ * wiki-dream.ts — Nightly dream cron orchestrator (T-239: deterministic phases only).
  *
- * Chains all phases in order:
- *   1. Scan (Haiku) — wiki-dream-scan
- *   2. Write (Sonnet) — wiki-dream-write
- *   3. Re-embed modified pages — wiki-embed
- *   4. Lint — wiki-lint
- *   5. Git commit + push inside ~/.plumb/wiki/
- *   6. Append total elapsed time + cost estimate to log.md
+ * Phases (Haiku-only — zero Sonnet calls):
+ *   1. Haiku catch-up scan — compares today's facts/chat vs wiki, enqueues missed items
+ *   2. Deterministic link-graph rebuild — full DELETE + re-insert from markdown source
+ *   3. Lint report — orphans, broken links, stale pages, frontmatter, dead-letter queue
+ *   4. Single git commit + push
  *
- * After all phases: git add -A && git commit -m 'dream: YYYY-MM-DD — <summary>'
- * inside ~/.plumb/wiki/ (must be a git repo; skip gracefully if not).
- * Then pushes to remote if configured.
+ * All Sonnet content writes happen via the normal wiki-worker (picks up enqueued items).
+ * This keeps dream cost low and SLO predictable.
+ *
+ * Per-run cost is logged to wiki_changelog and to log.md.
+ * A weekly 7-day cost roll-up is appended to log.md when today is Sunday.
  *
  * Usage:
  *   plumb wiki dream [--wiki <path>] [--db <path>] [--sessions <path>]
- *                    [--date <YYYY-MM-DD>] [--dry-run] [--skip-embed]
+ *                    [--wiki-db <path>] [--date <YYYY-MM-DD>] [--dry-run]
  *                    [--register-cron] [--user-id <id>]
  */
 
-import { execSync, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { appendFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-import { randomUUID } from 'node:crypto';
 
+import { openDb, applyWikiSchema } from '@getplumb/core';
 import { wikiDreamScanCommand } from './wiki-dream-scan.js';
-import { wikiDreamWriteCommand } from './wiki-dream-write.js';
-import { wikiEmbedCommand } from './wiki-embed.js';
+import type { WikiDreamScanResult } from './wiki-dream-scan.js';
+import { wikiLinkRebuildCommand } from './wiki-link-rebuild.js';
 import { wikiLintCommand } from './wiki-lint.js';
 
 // ---------------------------------------------------------------------------
@@ -40,18 +40,35 @@ export interface WikiDreamOptions {
   wiki?: string;
   /** Path to Plumb memory database. Defaults to ~/.plumb/memory.db */
   db?: string;
+  /** Path to wiki.db. Defaults to ~/.plumb/wiki.db */
+  wikiDb?: string;
   /** OpenClaw sessions directory. Defaults to ~/.openclaw/agents/main/sessions */
   sessions?: string;
   /** Date string YYYY-MM-DD. Defaults to today */
   date?: string;
   /** Skip all writes/commits/API calls — dry run passthrough */
   dryRun?: boolean;
-  /** Skip the re-embed phase (useful if embeddings are up to date) */
-  skipEmbed?: boolean;
   /** Register the dream cron job with OpenClaw and exit */
   registerCron?: boolean;
   /** User ID to filter facts by. Defaults to 'default' */
   userId?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Cost calculation
+// ---------------------------------------------------------------------------
+
+/** Haiku (claude-haiku-4-5) pricing: $0.80 / MTok in, $4.00 / MTok out */
+const HAIKU_COST_PER_MTok_IN = 0.80;
+const HAIKU_COST_PER_MTok_OUT = 4.00;
+
+function computeHaikuCost(tokensIn: number, tokensOut: number): number {
+  return (tokensIn * HAIKU_COST_PER_MTok_IN + tokensOut * HAIKU_COST_PER_MTok_OUT) / 1_000_000;
+}
+
+function formatCost(usd: number): string {
+  if (usd < 0.001) return `$${(usd * 1000).toFixed(3)}m`; // sub-millicent
+  return `$${usd.toFixed(4)}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -62,7 +79,7 @@ function nowHHMM(): string {
   return new Date().toTimeString().slice(0, 5);
 }
 
-/** Run a git command inside the given directory. Returns {stdout, stderr, status}. */
+/** Run a git command inside the given directory. */
 function gitRun(args: string[], cwd: string): { stdout: string; stderr: string; ok: boolean } {
   const result = spawnSync('git', args, {
     cwd,
@@ -76,32 +93,24 @@ function gitRun(args: string[], cwd: string): { stdout: string; stderr: string; 
   };
 }
 
-/** Check if a directory is a git repository. */
 function isGitRepo(dir: string): boolean {
   if (!existsSync(dir)) return false;
-  const result = gitRun(['rev-parse', '--git-dir'], dir);
-  return result.ok;
+  return gitRun(['rev-parse', '--git-dir'], dir).ok;
 }
 
-/** Check if a git remote is configured. */
 function hasGitRemote(dir: string): boolean {
   const result = gitRun(['remote'], dir);
   return result.ok && result.stdout.trim().length > 0;
 }
 
-/**
- * Pull latest from remote before starting any writes.
- * Uses --rebase to keep history linear. Non-fatal on failure (offline, conflict).
- */
 function gitPullLatest(wikiRoot: string): void {
   if (!isGitRepo(wikiRoot) || !hasGitRemote(wikiRoot)) return;
   console.log('Pulling latest from remote…');
   const result = gitRun(['pull', '--rebase'], wikiRoot);
   if (result.ok) {
-    const msg = result.stdout.trim();
-    console.log(`  ${msg || 'Already up to date.'}`);
+    console.log(`  ${result.stdout || 'Already up to date.'}`);
   } else {
-    console.warn(`  Warning: git pull failed (continuing anyway): ${result.stderr.trim()}`);
+    console.warn(`  Warning: git pull failed (continuing): ${result.stderr}`);
   }
 }
 
@@ -109,32 +118,19 @@ function gitPullLatest(wikiRoot: string): void {
 // Git commit + push
 // ---------------------------------------------------------------------------
 
-interface CommitSummary {
-  nCreated: number;
-  nUpdated: number;
-}
-
-/**
- * Stage all changes in wikiRoot, commit, and optionally push.
- * Skips gracefully if not a git repo or nothing to commit.
- */
 async function gitCommitAndPush(
   wikiRoot: string,
   today: string,
-  summary: CommitSummary,
+  enqueuedCount: number,
   dryRun: boolean,
 ): Promise<void> {
   console.log('\nGit commit phase…');
 
   if (!isGitRepo(wikiRoot)) {
-    console.log(
-      `  Warning: ${wikiRoot} is not a git repository. Skipping commit.\n` +
-      `  Tip: run \`git init && git add -A && git commit -m "init"\` in ${wikiRoot} to enable git tracking.`,
-    );
+    console.log(`  Warning: ${wikiRoot} is not a git repository. Skipping commit.`);
     return;
   }
 
-  // Check for changes
   const statusResult = gitRun(['status', '--porcelain'], wikiRoot);
   if (!statusResult.ok) {
     console.error(`  Warning: git status failed: ${statusResult.stderr}`);
@@ -146,32 +142,23 @@ async function gitCommitAndPush(
     return;
   }
 
-  const partsArr: string[] = [];
-  if (summary.nCreated > 0) {
-    partsArr.push(`${summary.nCreated} page${summary.nCreated !== 1 ? 's' : ''} created`);
+  const parts: string[] = ['link-graph + lint'];
+  if (enqueuedCount > 0) {
+    parts.push(`${enqueuedCount} catch-up item${enqueuedCount !== 1 ? 's' : ''} enqueued`);
   }
-  if (summary.nUpdated > 0) {
-    partsArr.push(`${summary.nUpdated} page${summary.nUpdated !== 1 ? 's' : ''} updated`);
-  }
-  if (partsArr.length === 0) {
-    partsArr.push('index + lint report');
-  }
-  const summaryStr = partsArr.join(', ');
-  const commitMsg = `dream: ${today} — ${summaryStr}`;
+  const commitMsg = `dream: ${today} — ${parts.join(', ')}`;
 
   if (dryRun) {
     console.log(`  [dry-run] Would commit: "${commitMsg}"`);
     return;
   }
 
-  // Stage all changes
   const addResult = gitRun(['add', '-A'], wikiRoot);
   if (!addResult.ok) {
     console.error(`  Warning: git add failed: ${addResult.stderr}`);
     return;
   }
 
-  // Commit
   const commitResult = gitRun(['commit', '-m', commitMsg], wikiRoot);
   if (!commitResult.ok) {
     if (commitResult.stdout.includes('nothing to commit')) {
@@ -184,15 +171,13 @@ async function gitCommitAndPush(
 
   console.log(`  Committed: "${commitMsg}"`);
 
-  // Push if remote is configured
   if (hasGitRemote(wikiRoot)) {
     console.log('  Pushing to remote…');
     const pushResult = gitRun(['push'], wikiRoot);
     if (pushResult.ok) {
       console.log('  Push succeeded.');
     } else {
-      console.error(`  Warning: git push failed: ${pushResult.stderr}`);
-      console.error('  (continuing — push failure is non-fatal)');
+      console.error(`  Warning: git push failed: ${pushResult.stderr} (non-fatal)`);
     }
   } else {
     console.log('  No remote configured — skipping push.');
@@ -200,37 +185,171 @@ async function gitCommitAndPush(
 }
 
 // ---------------------------------------------------------------------------
-// Elapsed time + cost estimate logging
+// Cost logging to wiki_changelog
 // ---------------------------------------------------------------------------
 
-/**
- * Rough cost estimate for a dream session:
- *   - Scan: ~N_facts × 0.00025¢ (Haiku input) + 0.00125¢ (Haiku output) per batch
- *   - Write: ~N_changes × 0.003¢ (Sonnet input) + 0.015¢ (Sonnet output) per page
- * This is a VERY rough estimate; real usage depends on token counts.
- */
-function estimateCost(elapsedMs: number): string {
-  // We don't have exact token counts at this layer, so just report time.
-  const elapsedSec = Math.round(elapsedMs / 1000);
-  const minutes = Math.floor(elapsedSec / 60);
-  const seconds = elapsedSec % 60;
-  if (minutes > 0) {
-    return `${minutes}m ${seconds}s`;
+async function logCostToChangelog(
+  wikiDbPath: string,
+  today: string,
+  tokensIn: number,
+  tokensOut: number,
+  costUsd: number,
+  dryRun: boolean,
+): Promise<void> {
+  if (dryRun) {
+    console.log(`\n[dry-run] Would log cost to wiki_changelog:`);
+    console.log(`  tokens_in=${tokensIn}, tokens_out=${tokensOut}, cost_usd=${costUsd.toFixed(6)}`);
+    return;
   }
-  return `${seconds}s`;
+
+  if (!existsSync(wikiDbPath)) return; // wiki.db not yet created
+
+  try {
+    const db = await openDb(wikiDbPath);
+    try {
+      db.exec('PRAGMA foreign_keys = ON');
+      applyWikiSchema(db);
+
+      const detail = JSON.stringify({
+        tokens_in: tokensIn,
+        tokens_out: tokensOut,
+        cost_usd: parseFloat(costUsd.toFixed(6)),
+        model: 'claude-haiku-4-5-20251001',
+      });
+
+      const stmt = db.prepare(
+        `INSERT INTO wiki_changelog (page_id, action, detail, source_ref, created_at)
+         VALUES (NULL, 'dream_run', ?, ?, ?)`,
+      );
+      stmt.bind([detail, `dream:${today}`, new Date().toISOString()]);
+      stmt.step();
+      stmt.finalize();
+    } finally {
+      db.close();
+    }
+  } catch (err) {
+    // Non-fatal: cost logging failure should never abort the cron
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`  Warning: could not log cost to wiki_changelog: ${msg}`);
+  }
 }
 
-async function appendElapsedToLog(
+// ---------------------------------------------------------------------------
+// log.md: per-run entry + weekly cost roll-up
+// ---------------------------------------------------------------------------
+
+async function appendRunToLog(
   wikiRoot: string,
   today: string,
   timeStr: string,
   elapsedMs: number,
+  scanResult: WikiDreamScanResult,
+  costUsd: number,
   dryRun: boolean,
 ): Promise<void> {
-  const logPath = join(wikiRoot, 'log.md');
-  const elapsed = estimateCost(elapsedMs);
+  const elapsed = formatElapsed(elapsedMs);
+  const costStr = formatCost(costUsd);
 
-  const entry = `\n## ${today}\n\n### Dream Orchestrator (${timeStr} MT)\n\n- Total elapsed: ${elapsed}\n- Note: see scan/write/lint sections above for detailed changes\n`;
+  const entry = [
+    `\n## ${today}\n`,
+    `### Dream Run (${timeStr} MT)`,
+    '',
+    `- Phases: catch-up scan, link-graph rebuild, lint`,
+    `- Facts examined: ${scanResult.factsExamined}`,
+    `- Items enqueued for worker: ${scanResult.enqueuedCount}`,
+    `- Haiku usage: ${scanResult.tokensIn.toLocaleString()} in / ${scanResult.tokensOut.toLocaleString()} out`,
+    `- Cost: ${costStr}`,
+    `- Elapsed: ${elapsed}`,
+    '',
+  ].join('\n');
+
+  await writeToLog(wikiRoot, entry, dryRun);
+}
+
+/** Append weekly 7-day cost roll-up to log.md. Only runs on Sundays. */
+async function maybeAppendWeeklyRollup(
+  wikiDbPath: string,
+  wikiRoot: string,
+  today: string,
+  dryRun: boolean,
+): Promise<void> {
+  // Only compute roll-up on Sundays (day 0)
+  const dayOfWeek = new Date(today + 'T12:00:00').getDay();
+  if (dayOfWeek !== 0) return;
+
+  if (!existsSync(wikiDbPath)) return;
+
+  try {
+    const db = await openDb(wikiDbPath);
+    let rows: Array<{ detail: string; created_at: string }> = [];
+    try {
+      const sevenDaysAgo = new Date(today);
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+      const cutoff = sevenDaysAgo.toISOString().slice(0, 10);
+
+      const stmt = db.prepare(
+        `SELECT detail, created_at FROM wiki_changelog
+         WHERE action = 'dream_run' AND created_at >= ?
+         ORDER BY created_at ASC`,
+      );
+      stmt.bind([cutoff + 'T00:00:00.000Z']);
+      while (stmt.step()) {
+        rows.push(stmt.get({}) as { detail: string; created_at: string });
+      }
+      stmt.finalize();
+    } finally {
+      db.close();
+    }
+
+    if (rows.length === 0) return;
+
+    let totalIn = 0;
+    let totalOut = 0;
+    let totalCost = 0;
+
+    for (const row of rows) {
+      try {
+        const d = JSON.parse(row.detail) as {
+          tokens_in?: number;
+          tokens_out?: number;
+          cost_usd?: number;
+        };
+        totalIn += d.tokens_in ?? 0;
+        totalOut += d.tokens_out ?? 0;
+        totalCost += d.cost_usd ?? 0;
+      } catch {
+        // skip malformed rows
+      }
+    }
+
+    const rollup = [
+      `\n## ${today}\n`,
+      `### Weekly Cost Roll-Up (last 7 days, ${rows.length} runs)`,
+      '',
+      `| Metric | Value |`,
+      `| --- | --- |`,
+      `| Total tokens in | ${totalIn.toLocaleString()} |`,
+      `| Total tokens out | ${totalOut.toLocaleString()} |`,
+      `| Total cost | ${formatCost(totalCost)} |`,
+      `| Avg cost/run | ${formatCost(totalCost / rows.length)} |`,
+      '',
+    ].join('\n');
+
+    await writeToLog(wikiRoot, rollup, dryRun);
+    if (dryRun) {
+      console.log('[dry-run] Would append weekly cost roll-up to log.md');
+    } else {
+      console.log('Weekly cost roll-up appended to log.md.');
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`  Warning: could not compute weekly roll-up: ${msg}`);
+  }
+}
+
+/** Insert an entry after the '---' separator in log.md (newest-first). */
+async function writeToLog(wikiRoot: string, entry: string, dryRun: boolean): Promise<void> {
+  const logPath = join(wikiRoot, 'log.md');
 
   if (dryRun) {
     console.log('\n[dry-run] Would append to log.md:');
@@ -239,7 +358,6 @@ async function appendElapsedToLog(
   }
 
   if (!existsSync(logPath)) {
-    // log.md will be created by the write/lint phases; if still missing, create it
     writeFileSync(
       logPath,
       '# Wiki Activity Log\n\nAppend-only. New entries go at the top (newest first). Never edit or delete past entries.\n\n---\n',
@@ -262,6 +380,13 @@ async function appendElapsedToLog(
   }
 }
 
+function formatElapsed(ms: number): string {
+  const sec = Math.round(ms / 1000);
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return m > 0 ? `${m}m ${s}s` : `${s}s`;
+}
+
 // ---------------------------------------------------------------------------
 // OpenClaw cron registration
 // ---------------------------------------------------------------------------
@@ -275,22 +400,11 @@ interface CronJob {
   enabled: boolean;
   createdAtMs: number;
   updatedAtMs: number;
-  schedule: {
-    kind: string;
-    expr: string;
-    tz: string;
-  };
+  schedule: { kind: string; expr: string; tz: string };
   sessionTarget: string;
   wakeMode: string;
-  payload: {
-    kind: string;
-    message: string;
-    timeoutSeconds: number;
-    model: string;
-  };
-  delivery: {
-    mode: string;
-  };
+  payload: { kind: string; message: string; timeoutSeconds: number; model: string };
+  delivery: { mode: string };
   state: {
     nextRunAtMs: number;
     lastRunAtMs: number | null;
@@ -304,16 +418,11 @@ interface CronJobsFile {
   jobs: CronJob[];
 }
 
-/**
- * Register (or update) the plumb-wiki-dream-nightly cron job in OpenClaw's jobs.json.
- * 2:00 AM MT daily, running `plumb wiki dream`.
- */
 async function registerDreamCron(): Promise<void> {
   const cronPath = join(homedir(), '.openclaw', 'cron', 'jobs.json');
 
   if (!existsSync(cronPath)) {
     console.error(`Error: OpenClaw cron file not found at ${cronPath}`);
-    console.error('Is OpenClaw installed? Expected ~/.openclaw/cron/jobs.json');
     process.exit(1);
   }
 
@@ -327,16 +436,10 @@ async function registerDreamCron(): Promise<void> {
 
   const now = Date.now();
 
-  // Compute next 2:00 AM MT from now
-  // America/Denver is UTC-7 (MST) or UTC-6 (MDT); cron handles DST automatically
   const nextRun2AM = (() => {
     const d = new Date();
-    // Approximate: 2:00 AM America/Denver is 8:00 AM or 9:00 AM UTC
-    // Let the cron scheduler handle precise timing; we just set a reasonable nextRunAtMs
     d.setUTCHours(9, 0, 0, 0); // ~2 AM MDT (UTC-7)
-    if (d.getTime() <= now) {
-      d.setUTCDate(d.getUTCDate() + 1);
-    }
+    if (d.getTime() <= now) d.setUTCDate(d.getUTCDate() + 1);
     return d.getTime();
   })();
 
@@ -347,11 +450,7 @@ async function registerDreamCron(): Promise<void> {
     enabled: true,
     createdAtMs: now,
     updatedAtMs: now,
-    schedule: {
-      kind: 'cron',
-      expr: '0 2 * * *',
-      tz: 'America/Denver',
-    },
+    schedule: { kind: 'cron', expr: '0 2 * * *', tz: 'America/Denver' },
     sessionTarget: 'isolated',
     wakeMode: 'now',
     payload: {
@@ -360,12 +459,10 @@ async function registerDreamCron(): Promise<void> {
         'Run the Plumb wiki dream cron: execute `plumb wiki dream` via shell and report results.\n\n' +
         'Run: `export PATH="$PATH:/home/openclaw-host/.npm-global/bin" && plumb wiki dream`\n\n' +
         'Wait for it to finish (it may take several minutes). Report success or failure.',
-      timeoutSeconds: 1800,
+      timeoutSeconds: 900, // narrowed: catch-up + link-rebuild + lint << 15 min
       model: 'anthropic/claude-haiku-4-5',
     },
-    delivery: {
-      mode: 'none',
-    },
+    delivery: { mode: 'none' },
     state: {
       nextRunAtMs: nextRun2AM,
       lastRunAtMs: null,
@@ -374,10 +471,8 @@ async function registerDreamCron(): Promise<void> {
     },
   };
 
-  // Check if already registered
   const existingIdx = cronFile.jobs.findIndex((j) => j.id === CRON_JOB_ID);
   if (existingIdx !== -1) {
-    // Update existing
     cronFile.jobs[existingIdx] = { ...newJob, createdAtMs: cronFile.jobs[existingIdx]!.createdAtMs };
     console.log(`Updated existing cron job "${CRON_JOB_ID}" in ${cronPath}`);
   } else {
@@ -400,104 +495,7 @@ async function registerDreamCron(): Promise<void> {
 // Main orchestrator
 // ---------------------------------------------------------------------------
 
-/**
- * Run all wiki dream phases in order.
- * Returns a summary of created/updated pages for the commit message.
- */
-async function runAllPhases(
-  options: WikiDreamOptions,
-  today: string,
-): Promise<CommitSummary> {
-  const {
-    wiki: wikiRoot = join(homedir(), '.plumb', 'wiki'),
-    db,
-    sessions,
-    dryRun = false,
-    skipEmbed = false,
-    userId,
-  } = options;
-
-  const changesetPath = `/tmp/wiki-dream-changeset-${today}.json`;
-
-  // --- Phase 1: Scan (Haiku) ---
-  console.log('\n' + '─'.repeat(60));
-  console.log('Phase 1 of 4: Dream scan (Haiku)');
-  console.log('─'.repeat(60));
-  await wikiDreamScanCommand({
-    ...(db !== undefined ? { db } : {}),
-    wiki: wikiRoot,
-    ...(sessions !== undefined ? { sessions } : {}),
-    out: changesetPath,
-    date: today,
-    ...(userId !== undefined ? { userId } : {}),
-    dryRun,
-  });
-
-  // --- Phase 2: Write (Sonnet) ---
-  console.log('\n' + '─'.repeat(60));
-  console.log('Phase 2 of 4: Dream write (Sonnet)');
-  console.log('─'.repeat(60));
-  await wikiDreamWriteCommand({
-    changeset: changesetPath,
-    wiki: wikiRoot,
-    date: today,
-    dryRun,
-  });
-
-  // Read changeset to determine commit summary
-  let nCreated = 0;
-  let nUpdated = 0;
-  try {
-    if (existsSync(changesetPath)) {
-      const cs = JSON.parse(readFileSync(changesetPath, 'utf8')) as {
-        entities_to_create?: unknown[];
-        pages_to_update?: unknown[];
-      };
-      nCreated = Array.isArray(cs.entities_to_create) ? cs.entities_to_create.length : 0;
-      nUpdated = Array.isArray(cs.pages_to_update) ? cs.pages_to_update.length : 0;
-    }
-  } catch {
-    // Non-fatal; summary will just say "index + lint report"
-  }
-
-  // --- Phase 3: Re-embed modified pages ---
-  if (!skipEmbed) {
-    console.log('\n' + '─'.repeat(60));
-    console.log('Phase 3 of 4: Re-embed wiki pages');
-    console.log('─'.repeat(60));
-    try {
-      await wikiEmbedCommand({
-        wiki: wikiRoot,
-      });
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(`  Warning: embed phase failed: ${msg}`);
-      console.error('  (continuing — embed failure is non-fatal)');
-    }
-  } else {
-    console.log('\nPhase 3 of 4: Re-embed — skipped (--skip-embed)');
-  }
-
-  // --- Phase 4: Lint ---
-  console.log('\n' + '─'.repeat(60));
-  console.log('Phase 4 of 4: Wiki lint');
-  console.log('─'.repeat(60));
-  await wikiLintCommand({
-    wiki: wikiRoot,
-    ...(sessions !== undefined ? { sessions } : {}),
-    date: today,
-    dryRun,
-  });
-
-  return { nCreated, nUpdated };
-}
-
-// ---------------------------------------------------------------------------
-// Exported command
-// ---------------------------------------------------------------------------
-
 export async function wikiDreamCommand(options: WikiDreamOptions = {}): Promise<void> {
-  // --- Register-cron mode ---
   if (options.registerCron) {
     await registerDreamCron();
     return;
@@ -505,50 +503,109 @@ export async function wikiDreamCommand(options: WikiDreamOptions = {}): Promise<
 
   const today = options.date ?? new Date().toISOString().slice(0, 10);
   const wikiRoot = options.wiki ?? join(homedir(), '.plumb', 'wiki');
+  const wikiDbPath = options.wikiDb ?? join(homedir(), '.plumb', 'wiki.db');
   const dryRun = options.dryRun ?? false;
   const startMs = Date.now();
 
   console.log('╔══════════════════════════════════════════════════════════╗');
-  console.log('║           Plumb Wiki Dream — Nightly Orchestrator        ║');
+  console.log('║        Plumb Wiki Dream — Deterministic Nightly Cron     ║');
   console.log('╚══════════════════════════════════════════════════════════╝');
-  console.log(`  date:     ${today}`);
-  console.log(`  wiki:     ${wikiRoot}`);
-  if (dryRun) console.log('  [dry-run mode — no writes, no commits]');
+  console.log(`  date:    ${today}`);
+  console.log(`  wiki:    ${wikiRoot}`);
+  console.log(`  wiki.db: ${wikiDbPath}`);
+  console.log('  phases:  catch-up(Haiku) → link-rebuild → lint → commit');
+  if (dryRun) console.log('  [dry-run mode — no writes, no commits, no API calls]');
   console.log('');
 
-  // Pull latest from GitHub before any writes — picks up Obsidian edits from the day.
+  // Pull latest from GitHub before any writes
   if (!dryRun) gitPullLatest(wikiRoot);
 
-  let summary: CommitSummary = { nCreated: 0, nUpdated: 0 };
+  // --- Phase 1: Haiku catch-up scan ---
+  console.log('\n' + '─'.repeat(60));
+  console.log('Phase 1 of 3: Haiku catch-up scan');
+  console.log('─'.repeat(60));
+
+  let scanResult: WikiDreamScanResult = {
+    factsExamined: 0,
+    enqueuedCount: 0,
+    tokensIn: 0,
+    tokensOut: 0,
+  };
 
   try {
-    summary = await runAllPhases(options, today);
+    scanResult = await wikiDreamScanCommand({
+      ...(options.db !== undefined ? { db: options.db } : {}),
+      wiki: wikiRoot,
+      ...(options.sessions !== undefined ? { sessions: options.sessions } : {}),
+      date: today,
+      ...(options.userId !== undefined ? { userId: options.userId } : {}),
+      dryRun,
+    });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.error(`\nFatal error during dream phases: ${msg}`);
-    // Still attempt the log append before exiting
-    const elapsedMs = Date.now() - startMs;
-    const timeStr = nowHHMM();
-    await appendElapsedToLog(wikiRoot, today, timeStr, elapsedMs, dryRun).catch(() => {});
-    process.exit(1);
+    console.error(`  Warning: catch-up scan failed: ${msg}`);
+    console.error('  (continuing with remaining phases)');
+  }
+
+  const costUsd = computeHaikuCost(scanResult.tokensIn, scanResult.tokensOut);
+
+  // --- Phase 2: Link-graph rebuild ---
+  console.log('\n' + '─'.repeat(60));
+  console.log('Phase 2 of 3: Deterministic link-graph rebuild');
+  console.log('─'.repeat(60));
+
+  try {
+    await wikiLinkRebuildCommand({
+      wiki: wikiRoot,
+      db: wikiDbPath,
+      dryRun,
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`  Warning: link-graph rebuild failed: ${msg}`);
+    console.error('  (continuing with lint phase)');
+  }
+
+  // --- Phase 3: Lint report ---
+  console.log('\n' + '─'.repeat(60));
+  console.log('Phase 3 of 3: Wiki lint');
+  console.log('─'.repeat(60));
+
+  try {
+    await wikiLintCommand({
+      wiki: wikiRoot,
+      ...(options.sessions !== undefined ? { sessions: options.sessions } : {}),
+      date: today,
+      dryRun,
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`  Warning: lint failed: ${msg}`);
+    console.error('  (continuing with commit phase)');
   }
 
   const elapsedMs = Date.now() - startMs;
   const timeStr = nowHHMM();
 
-  // --- Git commit + push ---
-  await gitCommitAndPush(wikiRoot, today, summary, dryRun);
+  // --- Log cost to wiki_changelog ---
+  await logCostToChangelog(wikiDbPath, today, scanResult.tokensIn, scanResult.tokensOut, costUsd, dryRun);
 
-  // --- Append total elapsed + cost estimate to log.md ---
-  console.log('\nAppending elapsed time to log.md…');
-  await appendElapsedToLog(wikiRoot, today, timeStr, elapsedMs, dryRun);
+  // --- Append run summary + cost to log.md ---
+  console.log('\nAppending run summary to log.md…');
+  await appendRunToLog(wikiRoot, today, timeStr, elapsedMs, scanResult, costUsd, dryRun);
+
+  // --- Weekly cost roll-up (Sundays only) ---
+  await maybeAppendWeeklyRollup(wikiDbPath, wikiRoot, today, dryRun);
+
+  // --- Git commit + push ---
+  await gitCommitAndPush(wikiRoot, today, scanResult.enqueuedCount, dryRun);
 
   // --- Final summary ---
-  const elapsed = estimateCost(elapsedMs);
   console.log('\n' + '═'.repeat(60));
   console.log('Dream complete.');
-  console.log(`  Pages created:  ${summary.nCreated}`);
-  console.log(`  Pages updated:  ${summary.nUpdated}`);
-  console.log(`  Elapsed:        ${elapsed}`);
+  console.log(`  Facts examined:  ${scanResult.factsExamined}`);
+  console.log(`  Items enqueued:  ${scanResult.enqueuedCount}`);
+  console.log(`  Haiku cost:      ${formatCost(costUsd)} (${scanResult.tokensIn}in / ${scanResult.tokensOut}out)`);
+  console.log(`  Elapsed:         ${formatElapsed(elapsedMs)}`);
   console.log('═'.repeat(60));
 }
