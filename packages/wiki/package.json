@@ -1,0 +1,42 @@
+{
+  "name": "@getplumb/wiki",
+  "version": "0.1.0",
+  "description": "Plumb wiki WaaS API — narrow read/write/query/links interface with frontmatter validation",
+  "license": "MIT",
+  "author": "Clay Waters <hello@plumb.run>",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "plumb-wiki": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "LICENSE"
+  ],
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "lint": "echo \"No lint yet\" && exit 0",
+    "clean": "rm -rf dist *.tsbuildinfo",
+    "prepublishOnly": "pnpm build"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@getplumb/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^25.3.3",
+    "tsx": "^4.0.0",
+    "typescript": "^5.4.0",
+    "vitest": "^4.0.18"
+  }
+}

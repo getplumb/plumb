@@ -215,7 +215,8 @@ export async function wikiBuildIndexCommand(
     try {
       const page = await readWikiPage(wikiRoot, relPath);
       const title = page.title ?? slugToTitle(relPath);
-      const summary = extractSummary(page.body);
+      // Prefer frontmatter summary field; fall back to first paragraph in body
+      const summary = (page.frontmatter.summary as string | undefined)?.trim() || extractSummary(page.body);
       entry = {
         relPath,
         dir,

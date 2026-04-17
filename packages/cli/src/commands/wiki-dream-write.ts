@@ -14,12 +14,41 @@
  *                          [--concurrency <n>] [--dry-run]
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { execSync } from 'node:child_process';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { appendFile, readFile, writeFile } from 'node:fs/promises';
-import { join, dirname } from 'node:path';
+import { join } from 'node:path';
 import { homedir } from 'node:os';
+import { parseFrontmatter } from '@getplumb/core';
+import { WikiService, WikiValidationError } from '@getplumb/wiki';
 import type { DreamChangeset, EntityToCreate, PageUpdate, Contradiction } from './wiki-dream-scan.js';
 import { wikiBuildIndexCommand } from './wiki-build-index.js';
+
+// ---------------------------------------------------------------------------
+// Git helper
+// ---------------------------------------------------------------------------
+
+/**
+ * Git-commit all modified files in the wiki root after a dream run.
+ * Silently skips if the directory is not a git repo or there's nothing to commit.
+ */
+function gitCommitWiki(wikiRoot: string, message: string): void {
+  try {
+    execSync('git rev-parse --git-dir', { cwd: wikiRoot, stdio: 'pipe' });
+  } catch {
+    return; // Not a git repo — skip
+  }
+
+  try {
+    execSync('git add -A', { cwd: wikiRoot, stdio: 'pipe' });
+    execSync(`git commit -m ${JSON.stringify(message)}`, {
+      cwd: wikiRoot,
+      stdio: 'pipe',
+    });
+  } catch {
+    // Nothing to commit, or commit failed — both are non-fatal
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -152,8 +181,10 @@ You must output a complete wiki page with:
 1. YAML frontmatter block (between --- delimiters)
 2. Markdown body starting with an H1 title
 
+CRITICAL: Never wrap the YAML frontmatter in a code fence (\`\`\`yaml, \`\`\`markdown, \`\`\`, or any variant). The very first line of your output must be --- on its own. Any code fence will break the indexer.
+
 ## Frontmatter fields (all required):
-  type: <type>           # person | company | project | concept | interview | story | life
+  type: <type>           # person | company | tool | project | concept | interview | story | life
   created: YYYY-MM-DD    # today's date
   updated: YYYY-MM-DD    # today's date
   source_refs:           # block list of sources
@@ -214,6 +245,8 @@ Your job:
 5. Maintain correct frontmatter structure and YAML validity
 6. Use [[Wikilink]] style for references to other pages
 
+CRITICAL: Never wrap the YAML frontmatter in a code fence (\`\`\`yaml, \`\`\`markdown, \`\`\`, or any variant). Output must start with --- on line 1.
+
 Output ONLY the updated wiki page (frontmatter + body), no preamble or explanation.`;
 
 const CONTRADICTION_SYSTEM_PROMPT = `You are a wiki page editor for a personal knowledge base called Plumb.
@@ -224,6 +257,8 @@ Your job:
 2. Update the "updated" date in frontmatter to today's date
 3. Preserve all other content unchanged
 4. Keep the page under ~800 words
+
+CRITICAL: Never wrap the YAML frontmatter in a code fence. Output must start with --- on line 1.
 
 Output ONLY the updated wiki page (frontmatter + body), no preamble or explanation.`;
 
@@ -312,13 +347,16 @@ ${factsText}
 
   try {
     const pageContent = await callSonnet(client, CREATE_SYSTEM_PROMPT, userMessage);
-    mkdirSync(dirname(absPath), { recursive: true });
-    writeFileSync(absPath, pageContent + '\n', 'utf8');
+    const parsed = parseFrontmatter(pageContent);
+    const wiki = WikiService.createFilesystemOnly(wikiRoot);
+    await wiki.write({ path: relPath, frontmatter: parsed.frontmatter, body: parsed.body, sourceRef: 'dream' });
     console.log(`  Created: ${relPath}`);
     stats.created.push({ path: relPath, reason: `${entity.facts.length} fact(s) from dream scan` });
     return relPath;
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = err instanceof WikiValidationError
+      ? `Frontmatter invalid: ${err.errors.map((e) => `${e.field}: ${e.message}`).join('; ')}`
+      : err instanceof Error ? err.message : String(err);
     console.error(`  Error creating ${relPath}: ${msg}`);
     stats.errors.push({ path: relPath, error: msg });
     return null;
@@ -418,7 +456,9 @@ ${hasContradictions ? `\n## Contradictions to resolve:\n${contLines}` : ''}`;
     }
 
     const updatedContent = await callSonnet(client, systemPrompt, userMessage);
-    await writeFile(absPath, updatedContent + '\n', 'utf8');
+    const parsedUpdate = parseFrontmatter(updatedContent);
+    const wikiUpdate = WikiService.createFilesystemOnly(wikiRoot);
+    await wikiUpdate.write({ path: relPath, frontmatter: parsedUpdate.frontmatter, body: parsedUpdate.body, sourceRef: 'dream' });
 
     // Log updates
     if (hasUpdates) {
@@ -552,21 +592,22 @@ Split this page into parent + child as instructed.`;
     const childRelPath = `${dir}/${childSlug}.md`;
     const childAbsPath = join(wikiRoot, childRelPath);
 
-    // Write parent (updated)
-    await writeFile(absPath, parentContent + '\n', 'utf8');
+    // Write parent (updated) and child (new) via WaaS gate.
+    const wikiSplit = WikiService.createFilesystemOnly(wikiRoot);
+    const parsedParent = parseFrontmatter(parentContent);
+    await wikiSplit.write({ path: relPath, frontmatter: parsedParent.frontmatter, body: parsedParent.body, sourceRef: 'dream:split' });
 
-    // Write child (new)
+    const parsedChild = parseFrontmatter(childContent);
     if (existsSync(childAbsPath)) {
-      // Avoid overwriting; append a suffix
       const altSlug = `${childSlug}-detail`;
       const altRelPath = `${dir}/${altSlug}.md`;
-      await writeFile(join(wikiRoot, altRelPath), childContent + '\n', 'utf8');
+      await wikiSplit.write({ path: altRelPath, frontmatter: parsedChild.frontmatter, body: parsedChild.body, sourceRef: 'dream:split' });
       console.log(`  Split: ${relPath} → child: ${altRelPath}`);
       stats.splitPages.push({ parent: relPath, child: altRelPath });
       return altRelPath;
     }
 
-    await writeFile(childAbsPath, childContent + '\n', 'utf8');
+    await wikiSplit.write({ path: childRelPath, frontmatter: parsedChild.frontmatter, body: parsedChild.body, sourceRef: 'dream:split' });
     console.log(`  Split: ${relPath} → child: ${childRelPath}`);
     stats.splitPages.push({ parent: relPath, child: childRelPath });
     return childRelPath;
@@ -853,6 +894,23 @@ export async function wikiDreamWriteCommand(
     await wikiBuildIndexCommand({ wiki: wikiRoot });
   } else {
     console.log('\n[dry-run] Would rebuild wiki index.');
+  }
+
+  // --- Git commit ---
+  if (!dryRun) {
+    const totalChanged = stats.created.length + stats.updated.length +
+      stats.contradictionsResolved.length + stats.splitPages.length;
+    const summaryParts: string[] = [];
+    if (stats.created.length > 0) summaryParts.push(`created ${stats.created.length}`);
+    if (stats.updated.length > 0) summaryParts.push(`updated ${stats.updated.length}`);
+    if (stats.contradictionsResolved.length > 0) summaryParts.push(`resolved ${stats.contradictionsResolved.length} contradiction(s)`);
+    if (stats.splitPages.length > 0) summaryParts.push(`split ${stats.splitPages.length} page(s)`);
+    const summaryStr = summaryParts.length > 0 ? summaryParts.join(', ') : 'no changes';
+    const commitMsg = `dream: ${today} — ${summaryStr}`;
+    gitCommitWiki(wikiRoot, commitMsg);
+    if (totalChanged > 0) {
+      console.log(`\nGit committed: ${commitMsg}`);
+    }
   }
 
   // --- Summary ---

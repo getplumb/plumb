@@ -14,11 +14,12 @@
  *                            [--concurrency <n>] [--dry-run]
  */
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
-import { join, dirname } from 'node:path';
+import { join } from 'node:path';
 import { homedir } from 'node:os';
-import { openDb } from '@getplumb/core';
+import { openDb, parseFrontmatter } from '@getplumb/core';
+import { WikiService, WikiValidationError } from '@getplumb/wiki';
 import { getDefaultDbPath } from '../utils/db-path.js';
 import type { EntityRegistry, ExtractedEntity, EntityType } from './wiki-seed-extract.js';
 
@@ -263,8 +264,10 @@ You must output a complete wiki page file with:
 1. YAML frontmatter block (between --- delimiters)
 2. Markdown body starting with an H1 title
 
+CRITICAL: Never wrap the YAML frontmatter in a code fence (\`\`\`yaml, \`\`\`markdown, \`\`\`, or any variant). The very first line of your output must be --- on its own. Any code fence will break the indexer.
+
 ## Frontmatter fields (all required):
-  type: <type>           # person | company | project | concept
+  type: <type>           # person | company | tool | project | concept | interview | story | life
   created: YYYY-MM-DD    # today's date
   updated: YYYY-MM-DD    # today's date
   source_refs:           # block list of plumb:<fact-id> and/or memory/YYYY-MM-DD.md
@@ -407,6 +410,14 @@ async function generatePage(
     searchMemoryLogs(memoryDir, entity.name),
   ]);
 
+  // Skip if there is no real source material — don't write stub pages
+  if (facts.length === 0 && logExcerpts.length === 0) {
+    return { entity, relPath, skipped: true, skipReason: 'no source material' };
+  }
+  if (facts.length < 2 && logExcerpts.length === 0) {
+    return { entity, relPath, skipped: true, skipReason: `insufficient source material (${facts.length} fact, 0 excerpts)` };
+  }
+
   // Call Sonnet
   const userMessage = buildUserMessage(entity, facts, logExcerpts, TODAY);
 
@@ -426,9 +437,32 @@ async function generatePage(
     throw new Error('Sonnet returned empty response');
   }
 
-  // Write the page to disk
-  mkdirSync(dirname(absPath), { recursive: true });
-  writeFileSync(absPath, pageContent + '\n', 'utf8');
+  // Parse frontmatter from LLM output, then write via the WaaS gate.
+  // This enforces frontmatter validation and auto-updates wiki.db.
+  const wiki = WikiService.createFilesystemOnly(wikiRoot);
+  let parsed: ReturnType<typeof parseFrontmatter>;
+  try {
+    parsed = parseFrontmatter(pageContent);
+  } catch (parseErr) {
+    throw new Error(
+      `Sonnet output has malformed frontmatter for ${relPath}: ${parseErr instanceof Error ? parseErr.message : String(parseErr)}`,
+    );
+  }
+
+  try {
+    await wiki.write({
+      path: relPath,
+      frontmatter: parsed.frontmatter,
+      body: parsed.body,
+      sourceRef: 'seed',
+    });
+  } catch (err) {
+    if (err instanceof WikiValidationError) {
+      const fieldList = err.errors.map((e) => `${e.field}: ${e.message}`).join('; ');
+      throw new Error(`Frontmatter validation failed for ${relPath} — ${fieldList}`);
+    }
+    throw err;
+  }
 
   return { entity, relPath, skipped: false, written: true };
 }

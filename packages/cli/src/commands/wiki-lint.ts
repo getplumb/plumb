@@ -188,15 +188,32 @@ interface PageInfo {
  * Scan all wiki pages, parse frontmatter + title, extract wikilinks.
  * Returns page info array and the full link map (sourcePath → link targets).
  */
+/**
+ * Convert a wikilink target to a filesystem-style slug:
+ * lowercase, alphanumerics + dashes only, spaces → dashes, collapse repeats.
+ * Used as a fallback resolver when a [[Target]] doesn't match any H1 title
+ * but does match a page basename (e.g. [[claude-code]] → tools/claude-code.md).
+ */
+function slugifyLinkTarget(target: string): string {
+  return target
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, '')
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
+}
+
 async function buildPageIndex(wikiRoot: string): Promise<{
   pages: PageInfo[];
   linkMap: Map<string, string[]>;
   titleToPath: Map<string, string>;
+  slugToPath: Map<string, string>;
 }> {
   const relPaths = await listWikiPages(wikiRoot);
   const pages: PageInfo[] = [];
   const linkMap = new Map<string, string[]>();
   const titleToPath = new Map<string, string>();
+  const slugToPath = new Map<string, string>();
 
   for (const relPath of relPaths) {
     const absPath = join(wikiRoot, relPath);
@@ -236,12 +253,26 @@ async function buildPageIndex(wikiRoot: string): Promise<{
     pages.push({ relPath, title, updated, frontmatterMissing: missingFields });
     titleToPath.set(title.toLowerCase(), relPath);
 
+    // Also index by basename slug for lowercase/hyphenated wikilinks
+    const baseSlug = relPath.replace(/^.*\//, '').replace(/\.md$/, '').toLowerCase();
+    slugToPath.set(baseSlug, relPath);
+
+    // Index any aliases declared in frontmatter (aliases: [Clay, Clay W])
+    const aliasesRaw = frontmatter['aliases'];
+    if (Array.isArray(aliasesRaw)) {
+      for (const alias of aliasesRaw) {
+        if (typeof alias === 'string' && alias.trim()) {
+          titleToPath.set(alias.toLowerCase(), relPath);
+        }
+      }
+    }
+
     // Extract wikilinks from body
     const links = extractWikilinks(body);
     linkMap.set(relPath, links);
   }
 
-  return { pages, linkMap, titleToPath };
+  return { pages, linkMap, titleToPath, slugToPath };
 }
 
 // ---------------------------------------------------------------------------
@@ -253,19 +284,25 @@ async function buildPageIndex(wikiRoot: string): Promise<{
  * A page is NOT an orphan if its title appears as a wikilink target in any other page.
  */
 function detectOrphans(pages: PageInfo[], linkMap: Map<string, string[]>): OrphanPage[] {
-  // Build the set of all link targets (lowercased titles)
+  // Build the set of all link targets (lowercased titles AND their slugified forms)
   const linkedTitles = new Set<string>();
+  const linkedSlugs = new Set<string>();
   for (const targets of linkMap.values()) {
     for (const t of targets) {
-      linkedTitles.add(t.toLowerCase());
+      const name = t.split('|')[0] ?? t;
+      linkedTitles.add(name.toLowerCase());
+      const slug = slugifyLinkTarget(name);
+      if (slug) linkedSlugs.add(slug);
     }
   }
 
   const orphans: OrphanPage[] = [];
   for (const page of pages) {
-    if (!linkedTitles.has(page.title.toLowerCase())) {
-      orphans.push({ path: page.relPath });
-    }
+    const titleLc = page.title.toLowerCase();
+    const baseSlug = page.relPath.replace(/^.*\//, '').replace(/\.md$/, '').toLowerCase();
+    if (linkedTitles.has(titleLc)) continue;
+    if (linkedSlugs.has(baseSlug)) continue;
+    orphans.push({ path: page.relPath });
   }
 
   return orphans;
@@ -273,19 +310,25 @@ function detectOrphans(pages: PageInfo[], linkMap: Map<string, string[]>): Orpha
 
 /**
  * Check 2: Broken wikilinks — [[Target]] targets that don't resolve to any page.
- * Checks against the title-to-path map (case-insensitive).
+ * Checks against (1) the title-to-path map (case-insensitive) and
+ * (2) a basename-slug fallback so [[claude-code]] resolves to tools/claude-code.md.
  */
 function detectBrokenLinks(
   linkMap: Map<string, string[]>,
   titleToPath: Map<string, string>,
+  slugToPath: Map<string, string>,
 ): BrokenLink[] {
   const broken: BrokenLink[] = [];
 
   for (const [sourcePath, targets] of linkMap.entries()) {
     for (const target of targets) {
-      if (!titleToPath.has(target.toLowerCase())) {
-        broken.push({ sourcePath, target });
-      }
+      // Strip alias: [[Name|display]] → use the part before the pipe
+      const targetName = target.split('|')[0] ?? target;
+      const lowerTitle = targetName.toLowerCase();
+      if (titleToPath.has(lowerTitle)) continue;
+      const slug = slugifyLinkTarget(targetName);
+      if (slug && slugToPath.has(slug)) continue;
+      broken.push({ sourcePath, target });
     }
   }
 
@@ -469,7 +512,7 @@ export async function wikiLintCommand(options: WikiLintOptions = {}): Promise<vo
 
   // --- Build page index ---
   console.log('\nScanning wiki pages…');
-  const { pages, linkMap, titleToPath } = await buildPageIndex(wikiRoot);
+  const { pages, linkMap, titleToPath, slugToPath } = await buildPageIndex(wikiRoot);
   console.log(`  Found ${pages.length} page(s).`);
 
   if (pages.length === 0) {
@@ -492,7 +535,7 @@ export async function wikiLintCommand(options: WikiLintOptions = {}): Promise<vo
   const orphanPages = detectOrphans(pages, linkMap);
   console.log(`  Orphan pages:     ${orphanPages.length}`);
 
-  const brokenLinks = detectBrokenLinks(linkMap, titleToPath);
+  const brokenLinks = detectBrokenLinks(linkMap, titleToPath, slugToPath);
   console.log(`  Broken wikilinks: ${brokenLinks.length}`);
 
   const stalePages = detectStalePages(pages, chatText, today);

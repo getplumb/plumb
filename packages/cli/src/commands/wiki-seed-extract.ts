@@ -122,23 +122,29 @@ async function withRetry<T>(
 // Haiku extraction
 // ---------------------------------------------------------------------------
 
-const SYSTEM_PROMPT = `You are an entity extractor for a personal knowledge base.
-Given a batch of memory facts, extract all named entities that appear across them.
+const SYSTEM_PROMPT = `You are an entity extractor for a personal knowledge base belonging to Clay Waters.
+Your job is to identify entities that DESERVE a dedicated wiki page — meaning Clay has a meaningful,
+ongoing relationship with them. Do NOT extract entities that are merely mentioned in passing.
 
-For each entity, output:
-- name: The canonical name (proper noun, capitalize correctly)
+An entity QUALIFIES if ONE OR MORE of these is true:
+- person: Someone Clay knows personally, has worked with, is interviewing with, or has a real ongoing relationship with
+- company: A company Clay works at, has worked at, is actively interviewing at, has built something for, or uses as a core daily tool
+- project: A project, codebase, or product Clay built, maintains, actively uses, or is currently developing
+- concept: A framework, methodology, or technology Clay actively applies in his work — not just mentioned once as context
+
+An entity does NOT qualify if:
+- Clay merely mentioned it as background context, an example, or a passing reference
+- It's a well-known brand with no specific Clay connection (e.g. Instagram, Disney, AMC, Netflix)
+- It appeared only as a comparison point or industry example
+- It's a generic tool Clay has no meaningful history with
+
+For each qualifying entity, output:
+- name: Canonical proper name (correct casing)
 - type: One of: person, company, project, concept
 
-Guidelines:
-- person: Any individual by name (e.g. "Alice Johnson", "Elon Musk")
-- company: Organizations, employers, startups, products-as-brands (e.g. "Stripe", "OpenAI", "Google")
-- project: Named projects, codebases, initiatives, products (e.g. "Plumb", "Project Atlas")
-- concept: Abstract ideas, frameworks, methodologies, technologies (e.g. "machine learning", "agile", "RAG")
-
 Rules:
-- Only extract entities with a proper name — skip vague references like "my manager" or "a company"
-- Deduplicate: output each unique entity once with the most canonical casing
-- Skip generic technical terms unless they name a specific product/framework (e.g. skip "API", include "GraphQL")
+- When in doubt, leave it out — a small high-quality wiki beats a large generic one
+- Deduplicate: output each unique entity once
 - Respond ONLY with valid JSON matching the schema: {"entities": [{"name": string, "type": string}]}`;
 
 /**
@@ -157,7 +163,7 @@ async function extractEntitiesFromBatch(
   const message = await withRetry(() =>
     client.messages.create({
       model: 'claude-haiku-4-5-20251001',
-      max_tokens: 1024,
+      max_tokens: 4096,
       system: SYSTEM_PROMPT,
       messages: [{ role: 'user', content: userPrompt }],
     }),

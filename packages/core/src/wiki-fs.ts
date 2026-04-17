@@ -148,10 +148,44 @@ function formatYamlField(key: string, value: unknown): string[] {
 const FM_DELIMITER = '---';
 
 /**
+ * Strip leading/closing code fences (```yaml, ```markdown, ```, etc.) if an
+ * LLM wrapped the frontmatter in a fenced code block. Defensive only —
+ * the SCHEMA forbids this, but we still accept it so a single rogue LLM
+ * output doesn't silently break indexing. See T-220.
+ */
+function stripFrontmatterFence(raw: string): string {
+  const lines = raw.split('\n');
+  const first = (lines[0] ?? '').trim();
+  // Match ```yaml, ```markdown, ```md, ```, or any ```<lang>
+  if (/^```[\w-]*$/.test(first)) {
+    // Find the matching closing fence that sits BEFORE the H1.
+    // If we see an H1 without a closing fence in between, the fence is
+    // malformed — bail and let parse fail naturally.
+    for (let i = 1; i < lines.length; i++) {
+      const trimmed = (lines[i] ?? '').trim();
+      if (trimmed === '```') {
+        // Drop opening fence, inner frontmatter stays, drop closing fence line.
+        const inner = lines.slice(1, i);
+        const rest = lines.slice(i + 1);
+        return [...inner, ...rest].join('\n');
+      }
+      if (trimmed.startsWith('# ')) {
+        // Reached H1 without closing fence — abandon the strip.
+        break;
+      }
+    }
+  }
+  return raw;
+}
+
+/**
  * Parse raw markdown content into frontmatter fields and body text.
  * Throws if the content does not begin with a valid frontmatter block.
+ * Defensively strips an accidental ```yaml / ``` fence wrapper around
+ * the frontmatter (see T-220); SCHEMA forbids fences, this is a safety net.
  */
 export function parseFrontmatter(raw: string): { frontmatter: WikiFrontmatter; body: string } {
+  raw = stripFrontmatterFence(raw);
   const lines = raw.split('\n');
 
   if ((lines[0] ?? '').trim() !== FM_DELIMITER) {
@@ -279,6 +313,9 @@ const SKIP_FILENAMES = new Set([
   '_index.md',
 ]);
 
+/** Filename prefixes to skip (meta reports, audits, evals). */
+const SKIP_PREFIXES = ['AUDIT_', 'EVAL_', 'REPORT_'];
+
 /**
  * Recursively list all wiki page .md files under wikiRoot.
  * Skips metadata files (SCHEMA.md, index.md, log.md, REVIEW.md, _index.md).
@@ -325,7 +362,11 @@ async function walk(
 
     if (isDir) {
       await walk(wikiRoot, absEntry, results, includeArchive);
-    } else if (extname(entry) === '.md' && !SKIP_FILENAMES.has(entry)) {
+    } else if (
+      extname(entry) === '.md' &&
+      !SKIP_FILENAMES.has(entry) &&
+      !SKIP_PREFIXES.some((prefix) => entry.startsWith(prefix))
+    ) {
       results.push(relEntry);
     }
   }
