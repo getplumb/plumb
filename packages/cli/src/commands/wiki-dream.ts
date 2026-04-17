@@ -89,6 +89,22 @@ function hasGitRemote(dir: string): boolean {
   return result.ok && result.stdout.trim().length > 0;
 }
 
+/**
+ * Pull latest from remote before starting any writes.
+ * Uses --rebase to keep history linear. Non-fatal on failure (offline, conflict).
+ */
+function gitPullLatest(wikiRoot: string): void {
+  if (!isGitRepo(wikiRoot) || !hasGitRemote(wikiRoot)) return;
+  console.log('Pulling latest from remote…');
+  const result = gitRun(['pull', '--rebase'], wikiRoot);
+  if (result.ok) {
+    const msg = result.stdout.trim();
+    console.log(`  ${msg || 'Already up to date.'}`);
+  } else {
+    console.warn(`  Warning: git pull failed (continuing anyway): ${result.stderr.trim()}`);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Git commit + push
 // ---------------------------------------------------------------------------
@@ -499,6 +515,9 @@ export async function wikiDreamCommand(options: WikiDreamOptions = {}): Promise<
   console.log(`  wiki:     ${wikiRoot}`);
   if (dryRun) console.log('  [dry-run mode — no writes, no commits]');
   console.log('');
+
+  // Pull latest from GitHub before any writes — picks up Obsidian edits from the day.
+  if (!dryRun) gitPullLatest(wikiRoot);
 
   let summary: CommitSummary = { nCreated: 0, nUpdated: 0 };
 
