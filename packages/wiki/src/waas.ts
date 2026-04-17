@@ -33,7 +33,9 @@ import {
   WikiStore,
   hashContent,
   formatPage,
+  runWikiEmbed,
 } from '@getplumb/core';
+import { readFile } from 'node:fs/promises';
 import type { WikiPage, WikiFrontmatter, WikiStoreOptions, WasmDb } from '@getplumb/core';
 import { validateFrontmatter } from './frontmatter-validator.js';
 import type { ValidationError } from './frontmatter-validator.js';
@@ -122,6 +124,11 @@ export interface WikiServiceOptions {
   wikiRoot?: string;
   /** Options for the wiki.db connection. If omitted, DB integration is skipped. */
   db?: WikiStoreOptions;
+  /**
+   * Check content_hash on wiki.read() and trigger re-embed if stale.
+   * Defaults to true when a DB is configured.
+   */
+  reEmbedOnRead?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -137,10 +144,19 @@ export interface WikiServiceOptions {
 export class WikiService {
   readonly wikiRoot: string;
   readonly #store: WikiStore | null;
+  readonly #reEmbedOnRead: boolean;
+  readonly #dbPath: string | undefined;
 
-  private constructor(wikiRoot: string, store: WikiStore | null) {
+  private constructor(
+    wikiRoot: string,
+    store: WikiStore | null,
+    reEmbedOnRead: boolean,
+    dbPath: string | undefined,
+  ) {
     this.wikiRoot = wikiRoot;
     this.#store = store;
+    this.#reEmbedOnRead = reEmbedOnRead;
+    this.#dbPath = dbPath;
   }
 
   // -------------------------------------------------------------------------
@@ -153,9 +169,11 @@ export class WikiService {
    */
   static async create(options: WikiServiceOptions = {}): Promise<WikiService> {
     const wikiRoot = options.wikiRoot ?? join(homedir(), '.plumb', 'wiki');
+    const dbPath = options.db?.dbPath ?? join(homedir(), '.plumb', 'wiki.db');
     mkdirSync(wikiRoot, { recursive: true });
     const store = await WikiStore.create(options.db);
-    return new WikiService(wikiRoot, store);
+    const reEmbedOnRead = options.reEmbedOnRead ?? true;
+    return new WikiService(wikiRoot, store, reEmbedOnRead, dbPath);
   }
 
   /**
@@ -167,7 +185,7 @@ export class WikiService {
    * Use this in tests or contexts where wiki.db is not available.
    */
   static createFilesystemOnly(wikiRoot: string): WikiService {
-    return new WikiService(wikiRoot, null);
+    return new WikiService(wikiRoot, null, false, undefined);
   }
 
   /** Close the DB connection if open. No-op for filesystem-only instances. */
@@ -182,10 +200,58 @@ export class WikiService {
   /**
    * Read a wiki page from disk. Parses frontmatter and body.
    *
+   * When a DB is configured and reEmbedOnRead is enabled (default: true),
+   * this method checks whether the page's content_hash on disk matches the
+   * stored hash in wiki_pages. If not, it triggers a re-embed pass before
+   * returning the page content — ensuring callers always get a search-ready page.
+   *
    * @param relPath  Relative path from wikiRoot, e.g. "people/dylan-sellberg.md"
    */
   async read(relPath: string): Promise<WikiPage> {
+    // Content-hash check: detect external edits (e.g. Obsidian) and re-embed.
+    if (this.#store !== null && this.#reEmbedOnRead && this.#dbPath !== undefined) {
+      await this.#checkAndReEmbed(relPath);
+    }
     return readWikiPage(this.wikiRoot, relPath);
+  }
+
+  /**
+   * Check if the page on disk has a different content_hash than stored in wiki_pages.
+   * If stale, triggers runWikiEmbed so the page is re-indexed before the caller reads it.
+   */
+  async #checkAndReEmbed(relPath: string): Promise<void> {
+    const db = this.#store!.db;
+    const pageId = relPath.replace(/\.md$/, '');
+    const absPath = join(this.wikiRoot, relPath);
+
+    // Read current disk content
+    let raw: string;
+    try {
+      raw = await readFile(absPath, 'utf8');
+    } catch {
+      return; // File doesn't exist yet — nothing to re-embed
+    }
+
+    const currentHash = hashContent(raw);
+
+    // Look up stored hash
+    const rows = db.exec({
+      sql: `SELECT content_hash FROM wiki_pages WHERE id = '${pageId.replace(/'/g, "''")}'`,
+      rowMode: 'object',
+      returnValue: 'resultRows',
+    }) as Array<{ content_hash: string | null }>;
+
+    if (rows.length === 0) {
+      // Page not in DB yet — trigger full embed pass
+      await runWikiEmbed({ wikiRoot: this.wikiRoot, dbPath: this.#dbPath!, verbose: false });
+      return;
+    }
+
+    const storedHash = rows[0]!.content_hash;
+    if (storedHash === null || storedHash !== currentHash) {
+      // Hash mismatch: external edit detected — re-embed
+      await runWikiEmbed({ wikiRoot: this.wikiRoot, dbPath: this.#dbPath!, verbose: false });
+    }
   }
 
   // -------------------------------------------------------------------------

@@ -30,6 +30,12 @@ import type { WasmDb } from './wasm-db.js';
 /** Target chunk size in characters (~200 tokens × 4 chars/token). */
 const TARGET_CHUNK_CHARS = 800;
 
+/**
+ * Sub-chunk threshold in characters (~300 tokens × 4 chars/token).
+ * H2 sections larger than this are split into paragraph-aware sub-chunks.
+ */
+const H2_SUBCHUNK_CHARS = 1200;
+
 /** Embedding model name — must match the model used in embedder.ts. */
 const EMBED_MODEL = 'Xenova/bge-small-en-v1.5';
 
@@ -64,21 +70,19 @@ export interface WikiEmbedStats {
 // ---------------------------------------------------------------------------
 
 /**
- * Chunk a markdown body into ~200-token paragraph-aware segments.
- *
- * Splits on paragraph boundaries (one or more blank lines between paragraphs).
- * Accumulates paragraphs into a chunk until the target character count is
- * reached, then starts a new chunk. Never splits mid-paragraph.
- *
- * A single paragraph that exceeds targetChars becomes its own chunk — we never
- * split inside a paragraph.
- *
- * @param text        The page body (everything after the frontmatter ---).
- * @param targetChars Approximate character budget per chunk (default: 800).
- * @returns Array of non-empty chunk strings.
+ * A chunk of wiki text with its associated H2 section name.
+ * section is the H2 heading text (without ##), or '' for content before the first H2.
  */
-export function chunkText(text: string, targetChars = TARGET_CHUNK_CHARS): string[] {
-  // Split into paragraphs on one or more consecutive blank lines.
+export interface WikiChunk {
+  content: string;
+  section: string;
+}
+
+/**
+ * Split text paragraphs into chunks up to targetChars each.
+ * Never splits mid-paragraph. Returns plain strings.
+ */
+function splitParagraphs(text: string, targetChars: number): string[] {
   const paragraphs = text
     .split(/\n{2,}/)
     .map((p) => p.trim())
@@ -89,13 +93,10 @@ export function chunkText(text: string, targetChars = TARGET_CHUNK_CHARS): strin
 
   for (const para of paragraphs) {
     if (current.length === 0) {
-      // Start fresh chunk with this paragraph.
       current = para;
     } else if (current.length + 2 + para.length <= targetChars) {
-      // Paragraph fits: append with a blank-line separator.
       current += '\n\n' + para;
     } else {
-      // Current chunk is at capacity — flush and start a new one.
       chunks.push(current);
       current = para;
     }
@@ -106,6 +107,77 @@ export function chunkText(text: string, targetChars = TARGET_CHUNK_CHARS): strin
   }
 
   return chunks;
+}
+
+/**
+ * H2-aware chunking of a markdown body.
+ *
+ * Algorithm:
+ *   1. Split the body at H2 boundaries (## Heading lines).
+ *   2. Each H2 section becomes one or more chunks (the heading line is
+ *      prepended to each sub-chunk so context is preserved in search snippets).
+ *   3. Any content before the first H2 is treated as section '' and chunked
+ *      by paragraphs as before.
+ *   4. H2 sections larger than H2_SUBCHUNK_CHARS are further split by
+ *      paragraph boundaries to stay within the sub-chunk budget.
+ *
+ * @param text        The page body (everything after the frontmatter ---).
+ * @param targetChars Sub-chunk character budget within an H2 section (default: 1200 ≈ 300 tokens).
+ * @returns Array of WikiChunk objects (content + section name).
+ */
+export function chunkByH2(text: string, targetChars = H2_SUBCHUNK_CHARS): WikiChunk[] {
+  // Split body into H2-delimited sections.
+  // Lines starting with exactly "## " begin a new section.
+  const lines = text.split('\n');
+  const sections: Array<{ heading: string; body: string }> = [];
+
+  let currentHeading = '';
+  let currentLines: string[] = [];
+
+  for (const line of lines) {
+    if (/^## /.test(line)) {
+      // Flush previous section
+      sections.push({ heading: currentHeading, body: currentLines.join('\n') });
+      currentHeading = line.slice(3).trim();
+      currentLines = [line]; // Include heading line in the body for context
+    } else {
+      currentLines.push(line);
+    }
+  }
+  // Flush last section
+  sections.push({ heading: currentHeading, body: currentLines.join('\n') });
+
+  const result: WikiChunk[] = [];
+
+  for (const section of sections) {
+    const bodyTrimmed = section.body.trim();
+    if (!bodyTrimmed) continue;
+
+    if (bodyTrimmed.length <= targetChars) {
+      result.push({ content: bodyTrimmed, section: section.heading });
+    } else {
+      // Sub-chunk the section by paragraphs
+      const subChunks = splitParagraphs(bodyTrimmed, targetChars);
+      for (const sub of subChunks) {
+        result.push({ content: sub, section: section.heading });
+      }
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Chunk a markdown body into ~200-token paragraph-aware segments.
+ * This is the legacy paragraph-only chunker — kept for backward compatibility
+ * and tests. New code should prefer chunkByH2().
+ *
+ * @param text        The page body (everything after the frontmatter ---).
+ * @param targetChars Approximate character budget per chunk (default: 800).
+ * @returns Array of non-empty chunk strings.
+ */
+export function chunkText(text: string, targetChars = TARGET_CHUNK_CHARS): string[] {
+  return splitParagraphs(text, targetChars);
 }
 
 // ---------------------------------------------------------------------------
@@ -200,20 +272,21 @@ function deleteChunksForPage(db: WasmDb, pageId: string): void {
 }
 
 /**
- * Insert a single wiki_chunk row with its embedding.
+ * Insert a single wiki_chunk row with its embedding and section.
  */
 function insertChunk(
   db: WasmDb,
   pageId: string,
   chunkIndex: number,
   content: string,
+  section: string,
   embeddingJson: string,
 ): void {
   const stmt = db.prepare(`
-    INSERT INTO wiki_chunks (page_id, chunk_index, content, embed_status, embed_model, embedding)
-    VALUES (?, ?, ?, 'done', ?, ?)
+    INSERT INTO wiki_chunks (page_id, chunk_index, content, section, embed_status, embed_model, embedding)
+    VALUES (?, ?, ?, ?, 'done', ?, ?)
   `);
-  stmt.bind([pageId, chunkIndex, content, EMBED_MODEL, embeddingJson]);
+  stmt.bind([pageId, chunkIndex, content, section, EMBED_MODEL, embeddingJson]);
   stmt.step();
   stmt.finalize();
 }
@@ -299,17 +372,21 @@ export async function runWikiEmbed(options: WikiEmbedderOptions = {}): Promise<W
 
         const wordCount = body.split(/\s+/).filter((w) => w.length > 0).length;
 
-        // --- Chunk the body ---
-        const chunks = chunkText(body);
+        // --- Chunk the body (H2-aware) ---
+        const chunks = chunkByH2(body);
 
         // --- Embed each chunk ---
-        const embeddedChunks: Array<{ content: string; embeddingJson: string }> = [];
+        const embeddedChunks: Array<{ content: string; section: string; embeddingJson: string }> = [];
         let chunkFailed = false;
 
-        for (const chunkContent of chunks) {
+        for (const wikiChunk of chunks) {
           try {
-            const vec = await embed(chunkContent);
-            embeddedChunks.push({ content: chunkContent, embeddingJson: serializeEmbedding(vec) });
+            const vec = await embed(wikiChunk.content);
+            embeddedChunks.push({
+              content: wikiChunk.content,
+              section: wikiChunk.section,
+              embeddingJson: serializeEmbedding(vec),
+            });
           } catch (err) {
             // If any chunk fails to embed, mark the whole page as failed.
             const msg = err instanceof Error ? err.message : String(err);
@@ -345,7 +422,7 @@ export async function runWikiEmbed(options: WikiEmbedderOptions = {}): Promise<W
 
         for (let i = 0; i < embeddedChunks.length; i++) {
           const chunk = embeddedChunks[i]!;
-          insertChunk(db, pageId, i, chunk.content, chunk.embeddingJson);
+          insertChunk(db, pageId, i, chunk.content, chunk.section, chunk.embeddingJson);
         }
 
         stats.embedded++;

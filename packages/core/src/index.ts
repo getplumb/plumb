@@ -18,6 +18,8 @@ export {
   CREATE_WIKI_CHUNKS_TABLE,
   CREATE_WIKI_LINKS_TABLE,
   CREATE_WIKI_CHANGELOG_TABLE,
+  CREATE_WIKI_FTS_TABLE,
+  CREATE_WIKI_FTS_TRIGGERS,
 } from './wiki-schema.js';
 export type { WikiStoreOptions } from './wiki-schema.js';
 export {
@@ -35,10 +37,14 @@ export {
   archivePage,
 } from './wiki-fs.js';
 export type { WikiFrontmatter, WikiPage } from './wiki-fs.js';
-export { runWikiEmbed, chunkText } from './wiki-embedder.js';
-export type { WikiEmbedderOptions, WikiEmbedStats } from './wiki-embedder.js';
+export { runWikiEmbed, chunkText, chunkByH2 } from './wiki-embedder.js';
+export type { WikiEmbedderOptions, WikiEmbedStats, WikiChunk } from './wiki-embedder.js';
 export { WikiSearch } from './wiki-search.js';
 export type { WikiSearchResult, WikiSearchOptions } from './wiki-search.js';
+export { startWikiWatcher } from './wiki-watcher.js';
+export type { WikiWatcherOptions, WikiWatcher } from './wiki-watcher.js';
+export { installWikiGitHook } from './wiki-git-hook.js';
+export type { WikiGitHookOptions } from './wiki-git-hook.js';
 export {
   extractWikilinks,
   syncWikiLinks,

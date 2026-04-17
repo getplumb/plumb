@@ -65,6 +65,7 @@ export const CREATE_WIKI_PAGES_INDEXES = [
  * page_id:      FK → wiki_pages.id
  * chunk_index:  Zero-based position within the page (for reconstruction order)
  * content:      The chunk text
+ * section:      H2 heading that contains this chunk (empty string for pre-H2 content)
  * embed_status: pending | done | failed
  * embed_model:  Model name when embed_status = 'done'
  * vec_rowid:    Row in the shared vec_raw_log table (null until embedded)
@@ -76,6 +77,7 @@ export const CREATE_WIKI_CHUNKS_TABLE = `
     page_id      TEXT    NOT NULL REFERENCES wiki_pages(id),
     chunk_index  INTEGER NOT NULL,
     content      TEXT    NOT NULL,
+    section      TEXT    NOT NULL DEFAULT '',
     embed_status TEXT    NOT NULL DEFAULT 'pending',
     embed_error  TEXT,
     embed_model  TEXT,
@@ -88,6 +90,59 @@ export const CREATE_WIKI_CHUNKS_TABLE = `
 export const CREATE_WIKI_CHUNKS_INDEXES = [
   `CREATE INDEX IF NOT EXISTS idx_wiki_chunks_page_id      ON wiki_chunks (page_id)`,
   `CREATE INDEX IF NOT EXISTS idx_wiki_chunks_embed_status ON wiki_chunks (embed_status)`,
+];
+
+/**
+ * wiki_fts — FTS5 virtual table over wiki_chunks for BM25 keyword search.
+ *
+ * Uses content= mode pointing at wiki_chunks so SQLite manages the FTS index
+ * without duplicating chunk_text in a separate storage table.
+ * content_rowid='id' maps the FTS rowid to wiki_chunks.id.
+ *
+ * Triggers (wiki_chunks_ai/bd/bu/au) keep the FTS index in sync with
+ * INSERT/DELETE/UPDATE operations on wiki_chunks.
+ *
+ * BM25 search: SELECT rowid, rank FROM wiki_fts WHERE wiki_fts MATCH ?
+ * The rank column returns a negative float; ORDER BY rank ASC = best first.
+ */
+export const CREATE_WIKI_FTS_TABLE = `
+  CREATE VIRTUAL TABLE IF NOT EXISTS wiki_fts
+  USING fts5(
+    content,
+    section,
+    content='wiki_chunks',
+    content_rowid='id'
+  )
+`;
+
+export const CREATE_WIKI_FTS_TRIGGERS = [
+  // After INSERT: add new chunk to FTS index
+  `CREATE TRIGGER IF NOT EXISTS wiki_chunks_ai
+   AFTER INSERT ON wiki_chunks BEGIN
+     INSERT INTO wiki_fts(rowid, content, section)
+     VALUES (new.id, new.content, new.section);
+   END`,
+
+  // Before DELETE: remove chunk from FTS index
+  `CREATE TRIGGER IF NOT EXISTS wiki_chunks_bd
+   BEFORE DELETE ON wiki_chunks BEGIN
+     INSERT INTO wiki_fts(wiki_fts, rowid, content, section)
+     VALUES ('delete', old.id, old.content, old.section);
+   END`,
+
+  // Before UPDATE: remove old entry from FTS index
+  `CREATE TRIGGER IF NOT EXISTS wiki_chunks_bu
+   BEFORE UPDATE ON wiki_chunks BEGIN
+     INSERT INTO wiki_fts(wiki_fts, rowid, content, section)
+     VALUES ('delete', old.id, old.content, old.section);
+   END`,
+
+  // After UPDATE: add new entry to FTS index
+  `CREATE TRIGGER IF NOT EXISTS wiki_chunks_au
+   AFTER UPDATE ON wiki_chunks BEGIN
+     INSERT INTO wiki_fts(rowid, content, section)
+     VALUES (new.id, new.content, new.section);
+   END`,
 ];
 
 /**
@@ -162,6 +217,10 @@ export function applyWikiSchema(db: WasmDb): void {
   db.exec(CREATE_WIKI_CHANGELOG_TABLE);
   for (const idx of CREATE_WIKI_CHANGELOG_INDEXES) db.exec(idx);
 
+  // FTS5 virtual table and sync triggers
+  db.exec(CREATE_WIKI_FTS_TABLE);
+  for (const trigger of CREATE_WIKI_FTS_TRIGGERS) db.exec(trigger);
+
   // Migrations: add new columns to existing tables if they don't exist yet.
   // This handles wiki.db files created before these columns were added.
   const pagesColumns = db.exec({
@@ -182,6 +241,23 @@ export function applyWikiSchema(db: WasmDb): void {
   const chunksColNames = new Set(chunksColumns.map((c) => c.name));
   if (!chunksColNames.has('embedding')) {
     db.exec(`ALTER TABLE wiki_chunks ADD COLUMN embedding TEXT`);
+  }
+  if (!chunksColNames.has('section')) {
+    db.exec(`ALTER TABLE wiki_chunks ADD COLUMN section TEXT NOT NULL DEFAULT ''`);
+  }
+
+  // Rebuild FTS index from existing wiki_chunks rows if the table was just
+  // created (or was empty). This handles databases that had rows before the
+  // FTS table was added — we insert all existing done chunks into the index.
+  const ftsCount = db.selectValue(`SELECT count(*) FROM wiki_fts`) as number ?? 0;
+  const chunkCount = db.selectValue(
+    `SELECT count(*) FROM wiki_chunks WHERE embed_status = 'done'`,
+  ) as number ?? 0;
+  if (ftsCount === 0 && chunkCount > 0) {
+    db.exec(`
+      INSERT INTO wiki_fts(rowid, content, section)
+      SELECT id, content, COALESCE(section, '') FROM wiki_chunks WHERE embed_status = 'done'
+    `);
   }
 }
 

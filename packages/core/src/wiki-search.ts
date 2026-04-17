@@ -1,15 +1,15 @@
 /**
- * wiki-search.ts — Hybrid vector + BM25 search over wiki_chunks.
+ * wiki-search.ts — Hybrid vector + FTS5 BM25 search over wiki_chunks.
  *
  * Pipeline (spec §7.1):
  *   1. Pre-check: scan wiki_pages for content_hash mismatches against disk;
  *      re-embed any stale pages before searching.
  *   2. Embed the query with embedQuery() (BGE "query: " prefix).
  *   3. Vector search: cosine similarity across all wiki_chunks.embedding.
- *   4. BM25 search: keyword relevance across wiki_chunks.content.
+ *   4. FTS5 BM25 search: native SQLite full-text search via wiki_fts virtual table.
  *   5. RRF (Reciprocal Rank Fusion): merge lists with score = Σ 1/(k + rank_i), k=60.
  *   6. Deduplicate by page; keep the best-scoring chunk per page as the snippet.
- *   7. Return top-K results: [{path, title, type, snippet, score}].
+ *   7. Return top-K results: [{path, title, type, snippet, section, score}].
  */
 
 import { join } from 'node:path';
@@ -17,7 +17,6 @@ import { homedir } from 'node:os';
 import { readFile } from 'node:fs/promises';
 import { WikiStore } from './wiki-schema.js';
 import { embedQuery } from './embedder.js';
-import { Bm25 } from './bm25.js';
 import { deserializeEmbedding, cosineDistance } from './vector-search.js';
 import { runWikiEmbed } from './wiki-embedder.js';
 import { hashContent } from './wiki-fs.js';
@@ -36,6 +35,8 @@ export interface WikiSearchResult {
   type: string;
   /** Best-matching chunk text for this page */
   snippet: string;
+  /** H2 section that the snippet belongs to (empty string if before first H2) */
+  section: string;
   /** RRF fusion score (higher = more relevant) */
   score: number;
 }
@@ -67,6 +68,7 @@ interface ChunkRow {
   id: number;
   page_id: string;
   content: string;
+  section: string;
   embedding: string | null;
 }
 
@@ -85,7 +87,7 @@ interface PageRow {
 /** Load all embedded chunks from wiki_chunks. */
 function loadAllChunks(db: WasmDb): ChunkRow[] {
   return db.exec({
-    sql: `SELECT id, page_id, content, embedding FROM wiki_chunks WHERE embed_status = 'done' AND embedding IS NOT NULL`,
+    sql: `SELECT id, page_id, content, COALESCE(section, '') AS section, embedding FROM wiki_chunks WHERE embed_status = 'done' AND embedding IS NOT NULL`,
     rowMode: 'object',
     returnValue: 'resultRows',
   }) as ChunkRow[];
@@ -98,6 +100,45 @@ function loadAllPages(db: WasmDb): PageRow[] {
     rowMode: 'object',
     returnValue: 'resultRows',
   }) as PageRow[];
+}
+
+// ---------------------------------------------------------------------------
+// FTS5 BM25 search
+// ---------------------------------------------------------------------------
+
+/**
+ * Run FTS5 BM25 search against wiki_fts.
+ *
+ * Returns chunk rowids in descending BM25 relevance order (best match first).
+ * FTS5 rank column is negative — more negative = better match.
+ *
+ * Falls back to an empty array if the FTS table is empty or the query contains
+ * only stop words / punctuation.
+ */
+function fts5Search(db: WasmDb, query: string): number[] {
+  // Sanitize: FTS5 MATCH syntax doesn't accept raw queries with special chars.
+  // Wrap in double-quotes for a phrase-like match, then fall back to individual
+  // terms if the phrase fails.
+  const sanitized = query.replace(/["*^()]/g, ' ').trim();
+  if (!sanitized) return [];
+
+  try {
+    const stmt = db.prepare(
+      `SELECT rowid FROM wiki_fts WHERE wiki_fts MATCH ? ORDER BY rank`,
+    );
+    stmt.bind([sanitized]);
+
+    const ids: number[] = [];
+    while (stmt.step()) {
+      const row = stmt.get({}) as { rowid: number };
+      if (row.rowid != null) ids.push(row.rowid as number);
+    }
+    stmt.finalize();
+    return ids;
+  } catch {
+    // FTS5 query syntax error (e.g. bare operator) — return empty
+    return [];
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -167,6 +208,9 @@ async function preCheckAndReEmbed(wikiRoot: string, dbPath: string, db: WasmDb):
 /**
  * WikiSearch — hybrid search over embedded wiki pages.
  *
+ * Uses FTS5 BM25 for keyword ranking and cosine similarity for vector ranking,
+ * fused via Reciprocal Rank Fusion (RRF).
+ *
  * Usage:
  *   const search = await WikiSearch.create({ dbPath: '~/.plumb/wiki.db' });
  *   const results = await search.search('Dylan Sellberg Samsara', 5);
@@ -207,7 +251,7 @@ export class WikiSearch {
    *   1. Optionally pre-check for stale pages and re-embed them.
    *   2. Embed the query.
    *   3. Vector search (cosine similarity) over all chunks.
-   *   4. BM25 keyword search over all chunks.
+   *   4. FTS5 BM25 keyword search over all chunks.
    *   5. RRF fusion.
    *   6. Deduplicate by page (keep best chunk per page).
    *   7. Return top-K WikiSearchResult items.
@@ -245,19 +289,11 @@ export class WikiSearch {
     vectorRanked.sort((a, b) => a.distance - b.distance);
     const vectorList = vectorRanked.map((r) => r.id);
 
-    // 4b. BM25 search — build index over chunk texts
-    const corpus = chunks.map((c) => c.content);
-    const bm25 = new Bm25(corpus);
-    const bm25Scores = bm25.scores(query);
-
-    // Rank by BM25 score (descending)
-    const bm25Ranked = chunks
-      .map((c, i) => ({ id: c.id, score: bm25Scores[i] ?? 0 }))
-      .sort((a, b) => b.score - a.score)
-      .map((r) => r.id);
+    // 4b. FTS5 BM25 search — native SQLite full-text index
+    const fts5List = fts5Search(db, query);
 
     // 5. RRF fusion
-    const rrfScores = rrf([vectorList, bm25Ranked]);
+    const rrfScores = rrf([vectorList, fts5List]);
 
     // 6. Deduplicate by page — keep the best-scoring chunk per page
     //    Build a lookup from chunk id → chunk row
@@ -301,6 +337,7 @@ export class WikiSearch {
         title: page.title,
         type: page.type,
         snippet: chunk.content,
+        section: chunk.section,
         score,
       });
     }
