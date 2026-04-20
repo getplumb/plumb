@@ -359,7 +359,11 @@ Return the JSON array of facts to enqueue.`;
   const text = message.content[0]?.type === 'text' ? message.content[0].text : '';
 
   try {
-    const cleaned = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim();
+    // Strip code fences and any leading reasoning/commentary before the JSON array
+    let cleaned = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim();
+    // If there's a JSON array embedded after reasoning text, extract it
+    const arrayMatch = cleaned.match(/(\[.*\])/s);
+    if (arrayMatch?.[1]) cleaned = arrayMatch[1].trim();
     const parsed = JSON.parse(cleaned) as unknown;
     if (Array.isArray(parsed)) {
       return {
