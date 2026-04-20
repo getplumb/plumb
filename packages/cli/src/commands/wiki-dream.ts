@@ -25,11 +25,13 @@ import { appendFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 
-import { openDb, applyWikiSchema } from '@getplumb/core';
+import { openDb, applyWikiSchema, getWeeklyCostBySource } from '@getplumb/core';
 import { wikiDreamScanCommand } from './wiki-dream-scan.js';
 import type { WikiDreamScanResult } from './wiki-dream-scan.js';
 import { wikiLinkRebuildCommand } from './wiki-link-rebuild.js';
 import { wikiLintCommand } from './wiki-lint.js';
+import { wikiRefactorPhase } from '@getplumb/wiki';
+import type { RefactorPhaseResult } from '@getplumb/wiki';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -211,17 +213,25 @@ async function logCostToChangelog(
       applyWikiSchema(db);
 
       const detail = JSON.stringify({
+        model: 'claude-haiku-4-5-20251001',
         tokens_in: tokensIn,
         tokens_out: tokensOut,
-        cost_usd: parseFloat(costUsd.toFixed(6)),
-        model: 'claude-haiku-4-5-20251001',
       });
 
-      const stmt = db.prepare(
-        `INSERT INTO wiki_changelog (page_id, action, detail, source_ref, created_at)
-         VALUES (NULL, 'dream_run', ?, ?, ?)`,
-      );
-      stmt.bind([detail, `dream:${today}`, new Date().toISOString()]);
+      // Insert with dedicated cost columns (T-244) and legacy action='dream_run' for compatibility
+      const stmt = db.prepare(`
+        INSERT INTO wiki_changelog
+          (page_id, action, detail, source_ref, source, tokens_in, tokens_out, cost_usd, created_at)
+        VALUES (NULL, 'dream_run', ?, ?, 'dream', ?, ?, ?, ?)
+      `);
+      stmt.bind([
+        detail,
+        `dream:${today}`,
+        tokensIn,
+        tokensOut,
+        parseFloat(costUsd.toFixed(8)),
+        new Date().toISOString(),
+      ]);
       stmt.step();
       stmt.finalize();
     } finally {
@@ -281,61 +291,74 @@ async function maybeAppendWeeklyRollup(
 
   try {
     const db = await openDb(wikiDbPath);
-    let rows: Array<{ detail: string; created_at: string }> = [];
+    let bySource: ReturnType<typeof getWeeklyCostBySource> = [];
+    let lastWeekCost = 0;
     try {
-      const sevenDaysAgo = new Date(today);
-      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-      const cutoff = sevenDaysAgo.toISOString().slice(0, 10);
+      db.exec('PRAGMA foreign_keys = ON');
+      applyWikiSchema(db);
+      bySource = getWeeklyCostBySource(db, 7);
 
-      const stmt = db.prepare(
-        `SELECT detail, created_at FROM wiki_changelog
-         WHERE action = 'dream_run' AND created_at >= ?
-         ORDER BY created_at ASC`,
+      // Fetch prior-week total for regression detection
+      const twoWeeksAgo = new Date(today);
+      twoWeeksAgo.setUTCDate(twoWeeksAgo.getUTCDate() - 14);
+      const oneWeekAgo = new Date(today);
+      oneWeekAgo.setUTCDate(oneWeekAgo.getUTCDate() - 7);
+      const prevStmt = db.prepare(
+        `SELECT COALESCE(SUM(cost_usd), 0) AS total FROM wiki_changelog
+         WHERE cost_usd IS NOT NULL AND created_at >= ? AND created_at < ?`,
       );
-      stmt.bind([cutoff + 'T00:00:00.000Z']);
-      while (stmt.step()) {
-        rows.push(stmt.get({}) as { detail: string; created_at: string });
+      prevStmt.bind([twoWeeksAgo.toISOString(), oneWeekAgo.toISOString()]);
+      if (prevStmt.step()) {
+        const row = prevStmt.get({}) as { total?: number } | null;
+        lastWeekCost = (row as { total?: number } | null)?.total ?? 0;
       }
-      stmt.finalize();
+      prevStmt.finalize();
     } finally {
       db.close();
     }
 
-    if (rows.length === 0) return;
+    if (bySource.length === 0) return;
 
-    let totalIn = 0;
-    let totalOut = 0;
-    let totalCost = 0;
+    const totalCost = bySource.reduce((s, r) => s + r.totalCost, 0);
+    const totalIn   = bySource.reduce((s, r) => s + r.totalTokensIn, 0);
+    const totalOut  = bySource.reduce((s, r) => s + r.totalTokensOut, 0);
 
-    for (const row of rows) {
-      try {
-        const d = JSON.parse(row.detail) as {
-          tokens_in?: number;
-          tokens_out?: number;
-          cost_usd?: number;
-        };
-        totalIn += d.tokens_in ?? 0;
-        totalOut += d.tokens_out ?? 0;
-        totalCost += d.cost_usd ?? 0;
-      } catch {
-        // skip malformed rows
-      }
+    const SOURCE_LABELS: Record<string, string> = {
+      dream: 'Dream (Haiku scan)',
+      'worker:resolver': 'Worker resolver (Haiku)',
+      'worker:writer': 'Worker writer (Sonnet)',
+      embed: 'Embedding (local)',
+      rerank: 'Rerank (local)',
+    };
+
+    const sourceRows = bySource
+      .map((r) => {
+        const label = SOURCE_LABELS[r.source] ?? r.source;
+        return `| ${label} | ${formatCost(r.totalCost)} | ${r.totalTokensIn.toLocaleString()} / ${r.totalTokensOut.toLocaleString()} | ${r.callCount} |`;
+      })
+      .join('\n');
+
+    const lines = [
+      `\n## ${today}\n`,
+      `### Weekly Cost Roll-Up (last 7 days)`,
+      '',
+      `| Source | Cost | Tokens in / out | Calls |`,
+      `| --- | --- | --- | --- |`,
+      sourceRows,
+      `| **Total** | **${formatCost(totalCost)}** | **${totalIn.toLocaleString()} / ${totalOut.toLocaleString()}** | |`,
+      '',
+    ];
+
+    // Regression warning inline: this week > 2× last week
+    if (lastWeekCost > 0 && totalCost >= lastWeekCost * 2) {
+      lines.push(
+        `> ⚠ **Cost regression**: this week ${formatCost(totalCost)} is ${(totalCost / lastWeekCost).toFixed(1)}× last week's ${formatCost(lastWeekCost)}. Check for runaway loops.`,
+        '',
+      );
+      console.warn(`\n⚠ COST REGRESSION: this week ${formatCost(totalCost)} vs last week ${formatCost(lastWeekCost)}`);
     }
 
-    const rollup = [
-      `\n## ${today}\n`,
-      `### Weekly Cost Roll-Up (last 7 days, ${rows.length} runs)`,
-      '',
-      `| Metric | Value |`,
-      `| --- | --- |`,
-      `| Total tokens in | ${totalIn.toLocaleString()} |`,
-      `| Total tokens out | ${totalOut.toLocaleString()} |`,
-      `| Total cost | ${formatCost(totalCost)} |`,
-      `| Avg cost/run | ${formatCost(totalCost / rows.length)} |`,
-      '',
-    ].join('\n');
-
-    await writeToLog(wikiRoot, rollup, dryRun);
+    await writeToLog(wikiRoot, lines.join('\n'), dryRun);
     if (dryRun) {
       console.log('[dry-run] Would append weekly cost roll-up to log.md');
     } else {
@@ -513,7 +536,7 @@ export async function wikiDreamCommand(options: WikiDreamOptions = {}): Promise<
   console.log(`  date:    ${today}`);
   console.log(`  wiki:    ${wikiRoot}`);
   console.log(`  wiki.db: ${wikiDbPath}`);
-  console.log('  phases:  catch-up(Haiku) → link-rebuild → lint → commit');
+  console.log('  phases:  catch-up(Haiku) → link-rebuild → lint → refactor(Sonnet) → commit');
   if (dryRun) console.log('  [dry-run mode — no writes, no commits, no API calls]');
   console.log('');
 
@@ -568,7 +591,7 @@ export async function wikiDreamCommand(options: WikiDreamOptions = {}): Promise<
 
   // --- Phase 3: Lint report ---
   console.log('\n' + '─'.repeat(60));
-  console.log('Phase 3 of 3: Wiki lint');
+  console.log('Phase 3 of 4: Wiki lint');
   console.log('─'.repeat(60));
 
   try {
@@ -581,6 +604,33 @@ export async function wikiDreamCommand(options: WikiDreamOptions = {}): Promise<
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`  Warning: lint failed: ${msg}`);
+    console.error('  (continuing with refactor phase)');
+  }
+
+  // --- Phase 4: Page refactor (H2-boundary splits) ---
+  console.log('\n' + '─'.repeat(60));
+  console.log('Phase 4 of 4: Page refactor (H2-boundary splits)');
+  console.log('─'.repeat(60));
+
+  let refactorResult: RefactorPhaseResult = {
+    splits: [],
+    pagesExamined: 0,
+    sonnetTokensIn: 0,
+    sonnetTokensOut: 0,
+  };
+
+  try {
+    const apiKey = process.env['ANTHROPIC_API_KEY'];
+    refactorResult = await wikiRefactorPhase({
+      wikiRoot,
+      wikiDbPath,
+      today,
+      dryRun,
+      ...(apiKey !== undefined ? { apiKey } : {}),
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`  Warning: refactor phase failed: ${msg}`);
     console.error('  (continuing with commit phase)');
   }
 
@@ -606,6 +656,12 @@ export async function wikiDreamCommand(options: WikiDreamOptions = {}): Promise<
   console.log(`  Facts examined:  ${scanResult.factsExamined}`);
   console.log(`  Items enqueued:  ${scanResult.enqueuedCount}`);
   console.log(`  Haiku cost:      ${formatCost(costUsd)} (${scanResult.tokensIn}in / ${scanResult.tokensOut}out)`);
+  if (refactorResult.splits.length > 0 || refactorResult.pagesExamined > 0) {
+    console.log(`  Refactor:        ${refactorResult.splits.length} split(s) from ${refactorResult.pagesExamined} page(s) examined`);
+    if (refactorResult.sonnetTokensIn > 0) {
+      console.log(`  Sonnet (refactor): ${refactorResult.sonnetTokensIn}in / ${refactorResult.sonnetTokensOut}out`);
+    }
+  }
   console.log(`  Elapsed:         ${formatElapsed(elapsedMs)}`);
   console.log('═'.repeat(60));
 }

@@ -59,3 +59,20 @@ export {
   defaultQueuePath,
 } from './wiki-queue.js';
 export type { WikiQueueItem, WikiQueueItemStatus } from './wiki-queue.js';
+export {
+  computeCost,
+  readPlumbConfig,
+  readDailyBudget,
+  ensureDefaultConfig,
+  recordLlmCost,
+  getDailySpend,
+  isOverDailyBudget,
+  nextMidnightMT,
+  nextMidnightMTMs,
+  getWeeklyCostBySource,
+  HAIKU_PRICE_IN,
+  HAIKU_PRICE_OUT,
+  SONNET_PRICE_IN,
+  SONNET_PRICE_OUT,
+} from './cost-tracker.js';
+export type { PlumbConfig, LlmCostRecord, WeeklyCostRow } from './cost-tracker.js';

@@ -38,18 +38,19 @@ import { openDb, type WasmDb } from './wasm-db.js';
  */
 export const CREATE_WIKI_PAGES_TABLE = `
   CREATE TABLE IF NOT EXISTS wiki_pages (
-    id           TEXT    PRIMARY KEY,
-    path         TEXT    NOT NULL UNIQUE,
-    type         TEXT    NOT NULL,
-    title        TEXT    NOT NULL,
-    created      TEXT    NOT NULL,
-    updated      TEXT    NOT NULL,
-    confidence   TEXT    NOT NULL DEFAULT 'medium',
-    tags         TEXT,
-    source_refs  TEXT,
-    status       TEXT    NOT NULL DEFAULT 'active',
-    word_count   INTEGER,
-    content_hash TEXT
+    id            TEXT    PRIMARY KEY,
+    path          TEXT    NOT NULL UNIQUE,
+    type          TEXT    NOT NULL,
+    title         TEXT    NOT NULL,
+    created       TEXT    NOT NULL,
+    updated       TEXT    NOT NULL,
+    confidence    TEXT    NOT NULL DEFAULT 'medium',
+    tags          TEXT,
+    source_refs   TEXT,
+    status        TEXT    NOT NULL DEFAULT 'active',
+    word_count    INTEGER,
+    content_hash  TEXT,
+    last_split_at TEXT
   )
 `;
 
@@ -173,9 +174,14 @@ export const CREATE_WIKI_LINKS_INDEXES = [
  * wiki_changelog — append-only audit trail.
  *
  * page_id:    FK → wiki_pages.id; NULL for system-level events not tied to a page
- * action:     created | updated | archived | chunk_added | link_resolved | link_removed
+ * action:     created | updated | archived | chunk_added | link_resolved | link_removed |
+ *             dream_run | llm_call
  * detail:     JSON or free text with action-specific context
  * source_ref: The source that triggered the change (e.g. "plumb:abc123", "chat:2026-04-15")
+ * source:     LLM call origin: dream | worker:resolver | worker:writer | embed | rerank
+ * tokens_in:  Input tokens consumed (NULL for non-LLM actions)
+ * tokens_out: Output tokens consumed (NULL for non-LLM actions)
+ * cost_usd:   Cost in USD to ≤ $0.000001 resolution (NULL for non-LLM actions)
  * created_at: ISO 8601 timestamp
  */
 export const CREATE_WIKI_CHANGELOG_TABLE = `
@@ -185,6 +191,10 @@ export const CREATE_WIKI_CHANGELOG_TABLE = `
     action     TEXT    NOT NULL,
     detail     TEXT,
     source_ref TEXT,
+    source     TEXT,
+    tokens_in  INTEGER,
+    tokens_out INTEGER,
+    cost_usd   REAL,
     created_at TEXT    NOT NULL
   )
 `;
@@ -192,6 +202,8 @@ export const CREATE_WIKI_CHANGELOG_TABLE = `
 export const CREATE_WIKI_CHANGELOG_INDEXES = [
   `CREATE INDEX IF NOT EXISTS idx_wiki_changelog_page_id    ON wiki_changelog (page_id)`,
   `CREATE INDEX IF NOT EXISTS idx_wiki_changelog_created_at ON wiki_changelog (created_at)`,
+  `CREATE INDEX IF NOT EXISTS idx_wiki_changelog_source     ON wiki_changelog (source)`,
+  `CREATE INDEX IF NOT EXISTS idx_wiki_changelog_cost       ON wiki_changelog (cost_usd) WHERE cost_usd IS NOT NULL`,
 ];
 
 // ---------------------------------------------------------------------------
@@ -232,6 +244,9 @@ export function applyWikiSchema(db: WasmDb): void {
   if (!pagesColNames.has('content_hash')) {
     db.exec(`ALTER TABLE wiki_pages ADD COLUMN content_hash TEXT`);
   }
+  if (!pagesColNames.has('last_split_at')) {
+    db.exec(`ALTER TABLE wiki_pages ADD COLUMN last_split_at TEXT`);
+  }
 
   const chunksColumns = db.exec({
     sql: 'PRAGMA table_info(wiki_chunks)',
@@ -244,6 +259,25 @@ export function applyWikiSchema(db: WasmDb): void {
   }
   if (!chunksColNames.has('section')) {
     db.exec(`ALTER TABLE wiki_chunks ADD COLUMN section TEXT NOT NULL DEFAULT ''`);
+  }
+
+  const changelogColumns = db.exec({
+    sql: 'PRAGMA table_info(wiki_changelog)',
+    rowMode: 'object',
+    returnValue: 'resultRows',
+  }) as Array<{ name: string }>;
+  const changelogColNames = new Set(changelogColumns.map((c) => c.name));
+  if (!changelogColNames.has('source')) {
+    db.exec(`ALTER TABLE wiki_changelog ADD COLUMN source TEXT`);
+  }
+  if (!changelogColNames.has('tokens_in')) {
+    db.exec(`ALTER TABLE wiki_changelog ADD COLUMN tokens_in INTEGER`);
+  }
+  if (!changelogColNames.has('tokens_out')) {
+    db.exec(`ALTER TABLE wiki_changelog ADD COLUMN tokens_out INTEGER`);
+  }
+  if (!changelogColNames.has('cost_usd')) {
+    db.exec(`ALTER TABLE wiki_changelog ADD COLUMN cost_usd REAL`);
   }
 
   // Rebuild FTS index from existing wiki_chunks rows if the table was just

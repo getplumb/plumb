@@ -27,6 +27,9 @@ import {
   defaultQueuePath,
   runWikiEmbed,
   openDb,
+  isOverDailyBudget,
+  nextMidnightMT,
+  ensureDefaultConfig,
 } from '@getplumb/core';
 import type { WikiQueueItem, WasmDb } from '@getplumb/core';
 import { WikiService } from '@getplumb/wiki';
@@ -199,13 +202,14 @@ async function groupItemsByAffectedPages(
   pageIndex: readonly PageIndexEntry[],
   resolver: ResolverFn,
   logger: NonNullable<WikiWorkerOptions['logger']>,
+  db?: WasmDb | null,
 ): Promise<Map<string, { paths: string[]; items: WorkerQueueItem[] }>> {
   const groups = new Map<string, { paths: string[]; items: WorkerQueueItem[] }>();
 
   for (const item of items) {
     let paths: string[];
     try {
-      paths = await resolver(item.fact, pageIndex);
+      paths = await resolver(item.fact, pageIndex, db);
     } catch (err) {
       logger.warn(`[wiki-worker] Resolver failed for item ${item.id}: ${err}`);
       paths = [];
@@ -273,6 +277,14 @@ export async function runWorkerTick(
       }
     }
 
+    // --- Daily budget ceiling check ---
+    ensureDefaultConfig();
+    if (db !== null && isOverDailyBudget(db)) {
+      const resumeDate = nextMidnightMT();
+      logger.warn(`[wiki-worker] throttled until ${resumeDate} 00:00 MT — daily budget reached; queue preserved`);
+      return;
+    }
+
     // --- Read pending items ---
     let allItems: WorkerQueueItem[];
     try {
@@ -297,7 +309,7 @@ export async function runWorkerTick(
     }
 
     // --- Group items by affected pages (coalescing) ---
-    const groups = await groupItemsByAffectedPages(pending, pageIndex, resolver, logger);
+    const groups = await groupItemsByAffectedPages(pending, pageIndex, resolver, logger, db);
 
     // --- Process each group ---
     const modifiedPaths = new Set<string>();

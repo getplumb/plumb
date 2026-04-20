@@ -11,6 +11,8 @@
  */
 
 import type { WikiPageRecord } from '@getplumb/wiki';
+import type { WasmDb } from '@getplumb/core';
+import { computeCost, recordLlmCost } from '@getplumb/core';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -25,6 +27,7 @@ export interface PageIndexEntry {
 export type ResolverFn = (
   fact: string,
   pages: readonly PageIndexEntry[],
+  db?: WasmDb | null,
 ) => Promise<string[]>;
 
 // ---------------------------------------------------------------------------
@@ -46,7 +49,15 @@ Example output: ["people/dylan-sellberg.md","companies/samsara.md"]`;
 // Haiku API call
 // ---------------------------------------------------------------------------
 
-async function callHaiku(system: string, userContent: string): Promise<string> {
+const RESOLVER_MODEL = 'claude-haiku-4-5-20251001';
+
+interface HaikuResult {
+  text: string;
+  tokensIn: number;
+  tokensOut: number;
+}
+
+async function callHaiku(system: string, userContent: string): Promise<HaikuResult> {
   const apiKey = process.env['ANTHROPIC_API_KEY'];
   if (!apiKey) throw new Error('ANTHROPIC_API_KEY not set');
 
@@ -55,7 +66,7 @@ async function callHaiku(system: string, userContent: string): Promise<string> {
   const client = new Anthropic({ apiKey });
 
   const response = await client.messages.create({
-    model: 'claude-haiku-4-5-20251001',
+    model: RESOLVER_MODEL,
     max_tokens: 256,
     system,
     messages: [{ role: 'user', content: userContent }],
@@ -64,7 +75,11 @@ async function callHaiku(system: string, userContent: string): Promise<string> {
   const text =
     response.content[0]?.type === 'text' ? response.content[0].text.trim() : '';
   if (!text) throw new Error('Haiku returned empty response');
-  return text;
+  return {
+    text,
+    tokensIn: response.usage.input_tokens,
+    tokensOut: response.usage.output_tokens,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -93,18 +108,33 @@ function buildIndexString(pages: readonly PageIndexEntry[]): string {
 export async function resolveAffectedPages(
   fact: string,
   pages: readonly PageIndexEntry[],
+  db?: WasmDb | null,
 ): Promise<string[]> {
   if (pages.length === 0) return [];
 
   const index = buildIndexString(pages);
   const userContent = `## Fact\n${fact}\n\n## Wiki page index\n${index}`;
 
-  let raw: string;
+  let result: HaikuResult;
   try {
-    raw = await callHaiku(RESOLVER_SYSTEM, userContent);
+    result = await callHaiku(RESOLVER_SYSTEM, userContent);
   } catch (err) {
     throw new Error(`Resolver Haiku call failed: ${err}`);
   }
+
+  // Record cost if a DB handle is available
+  if (db != null) {
+    const costUsd = computeCost(RESOLVER_MODEL, result.tokensIn, result.tokensOut);
+    recordLlmCost(db, {
+      source: 'worker:resolver',
+      model: RESOLVER_MODEL,
+      tokensIn: result.tokensIn,
+      tokensOut: result.tokensOut,
+      costUsd,
+    });
+  }
+
+  const raw = result.text;
 
   // Strip optional markdown code fence if present
   const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim();
