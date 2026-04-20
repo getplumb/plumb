@@ -265,7 +265,7 @@ function listExistingWikiPages(wikiRoot: string): string[] {
 async function loadTodaysQueuedFacts(queuePath: string, datePrefix: string): Promise<string[]> {
   const items = await readQueue(queuePath);
   return items
-    .filter((item) => item.queued_at.startsWith(datePrefix) && item.status === 'pending')
+    .filter((item) => item.queued_at?.startsWith(datePrefix) && item.status === 'pending')
     .map((item) => item.fact);
 }
 
@@ -416,16 +416,20 @@ export async function wikiDreamScanCommand(
   console.log(`  Found ${facts.length} fact(s) created today.`);
   result.factsExamined = facts.length;
 
-  if (facts.length === 0) {
-    console.log('\nNo facts for today — nothing to catch up.');
-    return result;
-  }
-
-  // --- Load today's chat logs ---
+  // --- Load today's chat logs (always — even if no V1 facts, chat may have wiki-worthy content) ---
   console.log(`\nLoading today's chat logs…`);
   const chatContext = loadTodaysChatLogs(sessionsDir, today);
   if (chatContext) {
     console.log(`  Loaded ${chatContext.length} chars of chat context.`);
+  }
+
+  if (facts.length === 0 && !chatContext.trim()) {
+    console.log('\nNo facts and no chat activity today — nothing to catch up.');
+    return result;
+  }
+
+  if (facts.length === 0) {
+    console.log('\nNo V1 facts today — scanning chat logs only.');
   }
 
   // --- Load today's wiki log (what's already been committed) ---
@@ -444,11 +448,13 @@ export async function wikiDreamScanCommand(
 
   // --- Dry run mode ---
   if (dryRun) {
-    const totalBatches = Math.ceil(facts.length / batchSize);
-    console.log(`\n[dry-run] Would send ${totalBatches} batch(es) of up to ${batchSize} facts to Haiku.`);
-    console.log(`[dry-run] First facts preview (up to 5):`);
-    for (const f of facts.slice(0, 5)) {
-      console.log(`  [${f.id.slice(0, 8)}] ${f.content.slice(0, 100)}`);
+    const totalBatches = Math.max(1, Math.ceil(facts.length / batchSize));
+    console.log(`\n[dry-run] Would send ${totalBatches} batch(es) to Haiku (${facts.length} facts + chat context).`);
+    if (facts.length > 0) {
+      console.log(`[dry-run] First facts preview (up to 5):`);
+      for (const f of facts.slice(0, 5)) {
+        console.log(`  [${f.id.slice(0, 8)}] ${f.content.slice(0, 100)}`);
+      }
     }
     console.log(`[dry-run] Would enqueue missed facts to: ${queuePath}`);
     return result;
@@ -471,9 +477,9 @@ export async function wikiDreamScanCommand(
 
   const client = new Anthropic!({ apiKey });
 
-  // --- Process in batches ---
-  const totalBatches = Math.ceil(facts.length / batchSize);
-  console.log(`\nCatch-up scanning ${facts.length} fact(s) in ${totalBatches} batch(es)…`);
+  // --- Process in batches (at least 1 batch even if facts=0 so chat logs are scanned) ---
+  const totalBatches = Math.max(1, Math.ceil(facts.length / batchSize));
+  console.log(`\nCatch-up scanning ${facts.length} fact(s) + chat context in ${totalBatches} batch(es)…`);
 
   const allMissedFacts: string[] = [];
 
