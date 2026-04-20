@@ -199,11 +199,19 @@ export const CREATE_WIKI_CHANGELOG_TABLE = `
   )
 `;
 
+/** Base indexes that can be created immediately after table creation. */
 export const CREATE_WIKI_CHANGELOG_INDEXES = [
   `CREATE INDEX IF NOT EXISTS idx_wiki_changelog_page_id    ON wiki_changelog (page_id)`,
   `CREATE INDEX IF NOT EXISTS idx_wiki_changelog_created_at ON wiki_changelog (created_at)`,
-  `CREATE INDEX IF NOT EXISTS idx_wiki_changelog_source     ON wiki_changelog (source)`,
-  `CREATE INDEX IF NOT EXISTS idx_wiki_changelog_cost       ON wiki_changelog (cost_usd) WHERE cost_usd IS NOT NULL`,
+];
+
+/**
+ * Cost-tracking indexes — depend on the T-244 migration columns (source, cost_usd).
+ * Must be created AFTER the ALTER TABLE migrations in applyWikiSchema().
+ */
+export const CREATE_WIKI_CHANGELOG_COST_INDEXES = [
+  `CREATE INDEX IF NOT EXISTS idx_wiki_changelog_source ON wiki_changelog (source)`,
+  `CREATE INDEX IF NOT EXISTS idx_wiki_changelog_cost   ON wiki_changelog (cost_usd) WHERE cost_usd IS NOT NULL`,
 ];
 
 // ---------------------------------------------------------------------------
@@ -279,6 +287,9 @@ export function applyWikiSchema(db: WasmDb): void {
   if (!changelogColNames.has('cost_usd')) {
     db.exec(`ALTER TABLE wiki_changelog ADD COLUMN cost_usd REAL`);
   }
+
+  // Cost-tracking indexes depend on the columns added above — must run after migration.
+  for (const idx of CREATE_WIKI_CHANGELOG_COST_INDEXES) db.exec(idx);
 
   // Rebuild FTS index from existing wiki_chunks rows if the table was just
   // created (or was empty). This handles databases that had rows before the
