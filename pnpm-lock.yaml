@@ -200,6 +200,9 @@ importers:
 
   packages/wiki:
     dependencies:
+      '@anthropic-ai/sdk':
+        specifier: ^0.78.0
+        version: 0.78.0(zod@4.3.6)
       '@getplumb/core':
         specifier: workspace:*
         version: link:../core
@@ -6568,7 +6571,6 @@ snapshots:
       json-schema-to-ts: 3.1.1
     optionalDependencies:
       zod: 4.3.6
-    optional: true
 
   '@aws-crypto/crc32@5.2.0':
     dependencies:

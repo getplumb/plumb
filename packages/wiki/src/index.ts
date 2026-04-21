@@ -15,3 +15,17 @@ export type {
   ValidWikiType,
   ValidConfidence,
 } from './frontmatter-validator.js';
+export {
+  wikiRefactorPhase,
+  parseH2Sections,
+  splitPageContent,
+  pickSectionDeterministically,
+  countWords,
+  slugify,
+  childPageSlug,
+  countOutboundLinks,
+  SPLIT_THRESHOLD_WORDS,
+  MERGE_THRESHOLD_WORDS,
+  COOLDOWN_DAYS,
+} from './refactor.js';
+export type { H2Section, SplitRecord, RefactorPhaseOptions, RefactorPhaseResult } from './refactor.js';

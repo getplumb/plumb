@@ -13,6 +13,7 @@
  */
 
 import type { WasmDb } from '@getplumb/core';
+import { computeCost, recordLlmCost } from '@getplumb/core';
 import { type WikiPatch, type PatchOp, parsePatchOp } from './patch-schema.js';
 import { isTombstoned } from './tombstone.js';
 
@@ -78,7 +79,15 @@ Rules:
 // Sonnet API call
 // ---------------------------------------------------------------------------
 
-async function callSonnet(system: string, userContent: string): Promise<string> {
+const WRITER_MODEL = 'claude-sonnet-4-6';
+
+interface SonnetResult {
+  text: string;
+  tokensIn: number;
+  tokensOut: number;
+}
+
+async function callSonnet(system: string, userContent: string): Promise<SonnetResult> {
   const apiKey = process.env['ANTHROPIC_API_KEY'];
   if (!apiKey) throw new Error('ANTHROPIC_API_KEY not set');
 
@@ -87,7 +96,7 @@ async function callSonnet(system: string, userContent: string): Promise<string> 
   const client = new Anthropic({ apiKey });
 
   const response = await client.messages.create({
-    model: 'claude-sonnet-4-6',
+    model: WRITER_MODEL,
     max_tokens: 1500,
     system,
     messages: [{ role: 'user', content: userContent }],
@@ -96,7 +105,11 @@ async function callSonnet(system: string, userContent: string): Promise<string> 
   const text =
     response.content[0]?.type === 'text' ? response.content[0].text.trim() : '';
   if (!text) throw new Error('Sonnet returned empty response');
-  return text;
+  return {
+    text,
+    tokensIn: response.usage.input_tokens,
+    tokensOut: response.usage.output_tokens,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -158,16 +171,29 @@ ${input.existingContent}
 ## Facts to incorporate
 ${factsBlock}`;
 
-  const raw = await callSonnet(WRITER_SYSTEM, userContent);
+  const result = await callSonnet(WRITER_SYSTEM, userContent);
+
+  // Record cost if a DB handle is available
+  if (db != null) {
+    const costUsd = computeCost(WRITER_MODEL, result.tokensIn, result.tokensOut);
+    recordLlmCost(db, {
+      source: 'worker:writer',
+      model: WRITER_MODEL,
+      tokensIn: result.tokensIn,
+      tokensOut: result.tokensOut,
+      costUsd,
+      sourceRef: input.sourceRef,
+    });
+  }
 
   // Strip optional markdown code fence
-  const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim();
+  const cleaned = result.text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim();
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(cleaned);
   } catch {
-    throw new Error(`Writer returned invalid JSON: ${raw.slice(0, 300)}`);
+    throw new Error(`Writer returned invalid JSON: ${result.text.slice(0, 300)}`);
   }
 
   if (typeof parsed !== 'object' || parsed === null) {

@@ -18,6 +18,7 @@ export {
   CREATE_WIKI_CHUNKS_TABLE,
   CREATE_WIKI_LINKS_TABLE,
   CREATE_WIKI_CHANGELOG_TABLE,
+  CREATE_WIKI_CHANGELOG_COST_INDEXES,
   CREATE_WIKI_FTS_TABLE,
   CREATE_WIKI_FTS_TRIGGERS,
 } from './wiki-schema.js';
@@ -59,3 +60,20 @@ export {
   defaultQueuePath,
 } from './wiki-queue.js';
 export type { WikiQueueItem, WikiQueueItemStatus } from './wiki-queue.js';
+export {
+  computeCost,
+  readPlumbConfig,
+  readDailyBudget,
+  ensureDefaultConfig,
+  recordLlmCost,
+  getDailySpend,
+  isOverDailyBudget,
+  nextMidnightMT,
+  nextMidnightMTMs,
+  getWeeklyCostBySource,
+  HAIKU_PRICE_IN,
+  HAIKU_PRICE_OUT,
+  SONNET_PRICE_IN,
+  SONNET_PRICE_OUT,
+} from './cost-tracker.js';
+export type { PlumbConfig, LlmCostRecord, WeeklyCostRow } from './cost-tracker.js';
