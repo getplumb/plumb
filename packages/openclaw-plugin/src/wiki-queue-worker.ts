@@ -150,6 +150,17 @@ async function processQueueItem(
 ): Promise<void> {
   const today = new Date().toISOString().slice(0, 10);
 
+  // --- Step 0: Atomically mark item as in-flight so overlapping worker
+  // ticks don't double-process it. Any crash or failure below still
+  // leaves the item flipped away from 'pending' so it won't be retried
+  // until it's explicitly reset.
+  try {
+    await updateQueueItemStatus(item.id, 'processing', undefined, queuePath);
+  } catch (err) {
+    logger.warn(`[plumb:wiki-queue] Could not mark item ${item.id} processing: ${err}`);
+    return;
+  }
+
   // --- Step 1: Search for relevant wiki pages ---
   let relevantPages: Array<{ path: string; title: string; type: string; score: number }> = [];
   try {
@@ -254,38 +265,59 @@ ${item.fact}`;
 // Worker tick
 // ---------------------------------------------------------------------------
 
+/**
+ * Re-entrancy guard. Because Sonnet calls can take 5-30s per page and we
+ * process items sequentially, a full tick can easily run longer than the
+ * 60s worker interval. Without this guard, setInterval fires a second tick
+ * that re-reads still-'pending' items and re-processes them in parallel,
+ * producing duplicate commits (seen in production 2026-04-24: 21 queue
+ * items produced 218 wiki commits).
+ *
+ * Module-scoped so it survives across ticks from a single setInterval.
+ */
+let workerTickInFlight = false;
+
 async function runWorkerTick(
   wikiRoot: string,
   wikiDbPath: string,
   queuePath: string,
   logger: NonNullable<WikiQueueWorkerOptions['logger']>,
 ): Promise<void> {
-  let items: Awaited<ReturnType<typeof readQueue>>;
-  try {
-    items = await readQueue(queuePath);
-  } catch (err) {
-    logger.warn(`[plumb:wiki-queue] Could not read queue: ${err}`);
+  if (workerTickInFlight) {
+    logger.debug?.(`[plumb:wiki-queue] Previous tick still running; skipping`);
     return;
   }
-
-  const pending = items.filter((i) => i.status === 'pending');
-
-  if (pending.length === 0) return;
-
-  logger.info(`[plumb:wiki-queue] Processing ${pending.length} pending item(s)…`);
-
-  // Process sequentially to avoid git lock conflicts
-  for (const item of pending) {
+  workerTickInFlight = true;
+  try {
+    let items: Awaited<ReturnType<typeof readQueue>>;
     try {
-      await processQueueItem(item, wikiRoot, wikiDbPath, queuePath, logger);
+      items = await readQueue(queuePath);
     } catch (err) {
-      logger.error(`[plumb:wiki-queue] Unexpected error on item ${item.id}: ${err}`);
+      logger.warn(`[plumb:wiki-queue] Could not read queue: ${err}`);
+      return;
+    }
+
+    const pending = items.filter((i) => i.status === 'pending');
+
+    if (pending.length === 0) return;
+
+    logger.info(`[plumb:wiki-queue] Processing ${pending.length} pending item(s)…`);
+
+    // Process sequentially to avoid git lock conflicts
+    for (const item of pending) {
       try {
-        await updateQueueItemStatus(item.id, 'failed', String(err), queuePath);
-      } catch {
-        // If we can't even mark it failed, move on
+        await processQueueItem(item, wikiRoot, wikiDbPath, queuePath, logger);
+      } catch (err) {
+        logger.error(`[plumb:wiki-queue] Unexpected error on item ${item.id}: ${err}`);
+        try {
+          await updateQueueItemStatus(item.id, 'failed', String(err), queuePath);
+        } catch {
+          // If we can't even mark it failed, move on
+        }
       }
     }
+  } finally {
+    workerTickInFlight = false;
   }
 }
 

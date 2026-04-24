@@ -7,8 +7,11 @@
  * Queue file: ~/.plumb/wiki-queue.jsonl
  * Each line: { id, fact, queued_at, status, processed_at? }
  *
- * Items are never deleted — status transitions from 'pending' → 'done' | 'failed'.
- * This ensures crashes during processing don't lose work.
+ * Items are never deleted — status transitions from 'pending' → 'processing' → 'done' | 'failed'.
+ * The 'processing' state is set atomically before Sonnet is invoked so
+ * overlapping worker ticks (and future concurrency) don't re-process the
+ * same item. This ensures crashes during processing don't lose work and
+ * don't cause duplicate wiki commits.
  */
 
 import { appendFile, readFile, writeFile, mkdir } from 'node:fs/promises';
@@ -21,7 +24,7 @@ import { randomUUID } from 'node:crypto';
 // Types
 // ---------------------------------------------------------------------------
 
-export type WikiQueueItemStatus = 'pending' | 'done' | 'failed';
+export type WikiQueueItemStatus = 'pending' | 'processing' | 'done' | 'failed';
 
 export interface WikiQueueItem {
   /** UUID assigned at enqueue time. */
@@ -113,26 +116,30 @@ export async function readQueue(queuePath?: string): Promise<WikiQueueItem[]> {
  * If the id is not found, the file is left unchanged.
  *
  * @param id         The item id to update.
- * @param status     New status: 'done' | 'failed'.
+ * @param status     New status: 'processing' | 'done' | 'failed'.
  * @param error      Optional error message (only for 'failed' status).
  * @param queuePath  Override the default queue file path.
  */
 export async function updateQueueItemStatus(
   id: string,
-  status: 'done' | 'failed',
+  status: 'processing' | 'done' | 'failed',
   error?: string,
   queuePath?: string,
 ): Promise<void> {
   const path = queuePath ?? defaultQueuePath();
   const items = await readQueue(path);
 
-  const processedAt = new Date().toISOString();
+  // Only set processed_at when the item reaches a terminal state. 'processing'
+  // is a transient in-flight marker and should not claim completion time.
+  const isTerminal = status === 'done' || status === 'failed';
+  const processedAt = isTerminal ? new Date().toISOString() : undefined;
+
   const updated = items.map((item): WikiQueueItem => {
     if (item.id !== id) return item;
     return {
       ...item,
       status,
-      processed_at: processedAt,
+      ...(processedAt !== undefined && { processed_at: processedAt }),
       ...(error !== undefined && { error }),
     };
   });
