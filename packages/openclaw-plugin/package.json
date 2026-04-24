@@ -36,6 +36,7 @@
     "clean": "rm -rf dist *.tsbuildinfo"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.91.0",
     "better-sqlite3": "^12.6.2"
   },
   "devDependencies": {

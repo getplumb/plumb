@@ -49,7 +49,10 @@ async function main() {
       // PostHog public analytics key — injected at build time (safe to embed in bundle)
       'process.env.POSTHOG_KEY': JSON.stringify('phc_zODHLfFXk0LZXbOn98Wd0i1BMg8QJT3P5LIortpGyut'),
       'process.env.OPENAI_API_KEY': 'undefined',
-      'process.env.ANTHROPIC_API_KEY': 'undefined',
+      // ANTHROPIC_API_KEY must be resolved at runtime so the wiki-queue
+      // worker (callSonnet) can call the Anthropic API. Baking this to
+      // 'undefined' at build time breaks V2 wiki integration.
+      // 'process.env.ANTHROPIC_API_KEY': 'undefined',
       'process.env.GEMINI_API_KEY': 'undefined',
       'process.env.PLUMB_LLM_PROVIDER': 'undefined',
       'process.env.PLUMB_LLM_MODEL': 'undefined',
