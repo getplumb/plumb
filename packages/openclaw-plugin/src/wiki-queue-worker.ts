@@ -355,7 +355,14 @@ async function processQueueItem(
   let routing: RoutingResult;
   try {
     const rawJson = await callHaiku(ROUTING_SYSTEM_PROMPT, routingUserMsg);
-    routing = JSON.parse(rawJson) as RoutingResult;
+    // Strip optional ```json...``` or ```...``` code fences that LLMs
+    // routinely emit despite prompts asking for bare JSON.
+    const cleanedJson = rawJson
+      .trim()
+      .replace(/^```(?:json)?\s*\n?/, '')
+      .replace(/\n?```\s*$/, '')
+      .trim();
+    routing = JSON.parse(cleanedJson) as RoutingResult;
   } catch (err) {
     logger.error(`[plumb:wiki-queue] Routing LLM failed for item ${item.id}: ${err}`);
     await updateQueueItemStatus(item.id, 'failed', `routing LLM failed: ${err}`, queuePath);
