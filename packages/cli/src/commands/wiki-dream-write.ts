@@ -1,9 +1,9 @@
 /**
- * wiki-dream-write.ts — Sonnet write phase of the nightly dream cron (spec §5.2, steps 3-4).
+ * wiki-dream-write.ts — OpenClaw model write phase of the nightly dream cron (spec §5.2, steps 3-4).
  *
  * Reads the changeset JSON produced by wiki-dream-scan (T-209) and:
- *   1. Creates new wiki pages for each entity_to_create using Sonnet.
- *   2. Updates existing pages for each page_to_update using Sonnet.
+ *   1. Creates new wiki pages for each entity_to_create using OpenClaw GPT 5.5.
+ *   2. Updates existing pages for each page_to_update using OpenClaw GPT 5.5.
  *   3. Auto-resolves contradictions (update immediately; flag high-sensitivity to REVIEW.md).
  *   4. Splits pages exceeding 1000 words (§7 chunking procedure).
  *   5. Appends a session summary to log.md.
@@ -21,6 +21,7 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { parseFrontmatter } from '@getplumb/core';
 import { WikiService, WikiValidationError } from '@getplumb/wiki';
+import { callOpenClawChat } from '../utils/openclaw-chat.js';
 // Types previously from wiki-dream-scan.ts (now inlined here since scan no longer exports them)
 export interface EntityToCreate {
   name: string;
@@ -119,7 +120,7 @@ export interface WikiDreamWriteOptions {
   wiki?: string;
   /** Date string YYYY-MM-DD. Defaults to today */
   date?: string;
-  /** Max concurrent Sonnet calls. Defaults to 3 */
+  /** Max concurrent model calls. Defaults to 3 */
   concurrency?: number;
   /** If true, skip writes and print what would happen */
   dryRun?: boolean;
@@ -195,7 +196,7 @@ function nowHHMM(): string {
 }
 
 // ---------------------------------------------------------------------------
-// Sonnet prompts
+// Model prompts
 // ---------------------------------------------------------------------------
 
 const CREATE_SYSTEM_PROMPT = `You are a wiki page author for a personal knowledge base called Plumb.
@@ -254,6 +255,9 @@ One-line summary / definition.
 ## Rules:
 - Only include sections you have content for; omit empty sections
 - Use [[Wikilink]] style for cross-references to other entities
+- Every new page must explain why the entity belongs in Clay's wiki: its relationship to Clay, Terra, OpenClaw/Plumb, or another existing page.
+- The Related section must include at least one meaningful [[Wikilink]] to an existing connected entity when one is present in the supplied facts.
+- Do not invent relationships or wikilinks. If the only available fact is sparse, say that the connection is limited rather than padding the page.
 - Keep total page under ~800 words
 - Set confidence to: high (5+ facts), medium (2-4 facts), low (1 fact)
 - Output ONLY the wiki page (frontmatter + body), no preamble or explanation`;
@@ -305,26 +309,16 @@ Output exactly this format (no extra text):
 <full child page content>`;
 
 // ---------------------------------------------------------------------------
-// Sonnet API calls
+// Model API calls
 // ---------------------------------------------------------------------------
 
-async function callSonnet(
-  client: import('@anthropic-ai/sdk').default,
+async function callDreamModel(
   system: string,
   userContent: string,
   maxTokens = 3000,
 ): Promise<string> {
-  const response = await withRetry(() =>
-    client.messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: maxTokens,
-      system,
-      messages: [{ role: 'user', content: userContent }],
-    }),
-  );
-  const text = response.content[0]?.type === 'text' ? response.content[0].text.trim() : '';
-  if (!text) throw new Error('Sonnet returned empty response');
-  return text;
+  const response = await withRetry(() => callOpenClawChat(system, userContent, maxTokens));
+  return response.text;
 }
 
 // ---------------------------------------------------------------------------
@@ -332,14 +326,13 @@ async function callSonnet(
 // ---------------------------------------------------------------------------
 
 /**
- * Generate a new wiki page for an entity using Sonnet.
+ * Generate a new wiki page for an entity using OpenClaw GPT 5.5.
  * Returns the relative path written, or null on skip/error.
  */
 async function createPage(
   entity: EntityToCreate,
   wikiRoot: string,
   today: string,
-  client: import('@anthropic-ai/sdk').default,
   dryRun: boolean,
   stats: SessionStats,
 ): Promise<string | null> {
@@ -370,7 +363,7 @@ ${factsText}
   }
 
   try {
-    const pageContent = await callSonnet(client, CREATE_SYSTEM_PROMPT, userMessage);
+    const pageContent = await callDreamModel(CREATE_SYSTEM_PROMPT, userMessage);
     const parsed = parseFrontmatter(pageContent);
     const wiki = WikiService.createFilesystemOnly(wikiRoot);
     await wiki.write({ path: relPath, frontmatter: parsed.frontmatter, body: parsed.body, sourceRef: 'dream' });
@@ -401,7 +394,6 @@ async function updatePage(
   updates: PageUpdate | null,
   contradictions: Contradiction[],
   today: string,
-  client: import('@anthropic-ai/sdk').default,
   dryRun: boolean,
   stats: SessionStats,
 ): Promise<boolean> {
@@ -479,7 +471,7 @@ ${hasUpdates ? `## New information to incorporate:\n${changeLines}` : ''}
 ${hasContradictions ? `\n## Contradictions to resolve:\n${contLines}` : ''}`;
     }
 
-    const updatedContent = await callSonnet(client, systemPrompt, userMessage);
+    const updatedContent = await callDreamModel(systemPrompt, userMessage);
     const parsedUpdate = parseFrontmatter(updatedContent);
     const wikiUpdate = WikiService.createFilesystemOnly(wikiRoot);
     await wikiUpdate.write({ path: relPath, frontmatter: parsedUpdate.frontmatter, body: parsedUpdate.body, sourceRef: 'dream' });
@@ -562,7 +554,6 @@ async function maybeSplitPage(
   relPath: string,
   wikiRoot: string,
   today: string,
-  client: import('@anthropic-ai/sdk').default,
   dryRun: boolean,
   stats: SessionStats,
 ): Promise<string | null> {
@@ -594,7 +585,7 @@ ${content}
 Split this page into parent + child as instructed.`;
 
   try {
-    const raw = await callSonnet(client, SPLIT_SYSTEM_PROMPT, userMessage, 4000);
+    const raw = await callDreamModel(SPLIT_SYSTEM_PROMPT, userMessage, 4000);
 
     // Parse the structured response
     const parentMatch = raw.match(/===PARENT===\s*([\s\S]*?)(?====CHILD_TITLE===)/);
@@ -808,23 +799,6 @@ export async function wikiDreamWriteCommand(
     return;
   }
 
-  // --- Load Anthropic SDK ---
-  let Anthropic: typeof import('@anthropic-ai/sdk').default | null = null;
-  try {
-    Anthropic = (await import('@anthropic-ai/sdk')).default;
-  } catch {
-    console.error('Error: @anthropic-ai/sdk is required. Install with: npm install -g @anthropic-ai/sdk');
-    process.exit(1);
-  }
-
-  const apiKey = process.env['ANTHROPIC_API_KEY'];
-  if (!apiKey) {
-    console.error('Error: ANTHROPIC_API_KEY environment variable is not set.');
-    process.exit(1);
-  }
-
-  const client = new Anthropic!({ apiKey });
-
   const stats: SessionStats = {
     created: [],
     updated: [],
@@ -840,7 +814,7 @@ export async function wikiDreamWriteCommand(
   if (changeset.entities_to_create.length > 0) {
     console.log(`\nPhase 1: Creating ${changeset.entities_to_create.length} new page(s)…`);
     const createTasks = changeset.entities_to_create.map((entity) => () =>
-      createPage(entity, wikiRoot, today, client, dryRun, stats),
+      createPage(entity, wikiRoot, today, dryRun, stats),
     );
     const createdPaths = await runConcurrent(createTasks, concurrency);
     for (const p of createdPaths) {
@@ -880,7 +854,6 @@ export async function wikiDreamWriteCommand(
         updates,
         contradictions,
         today,
-        client,
         dryRun,
         stats,
       );
@@ -899,7 +872,7 @@ export async function wikiDreamWriteCommand(
   if (modifiedPaths.size > 0) {
     console.log(`\nPhase 3: Checking ${modifiedPaths.size} modified page(s) for size limit…`);
     const splitTasks = Array.from(modifiedPaths).map((relPath) => async () => {
-      const childPath = await maybeSplitPage(relPath, wikiRoot, today, client, dryRun, stats);
+      const childPath = await maybeSplitPage(relPath, wikiRoot, today, dryRun, stats);
       if (childPath) modifiedPaths.add(childPath);
     });
     // Run splits sequentially to avoid racing on same files

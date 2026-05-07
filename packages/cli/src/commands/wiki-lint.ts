@@ -192,6 +192,7 @@ function nowHHMM(): string {
 interface PageInfo {
   relPath: string;
   title: string;
+  aliases: string[];
   updated: string;
   frontmatterMissing: string[];
 }
@@ -262,7 +263,12 @@ async function buildPageIndex(wikiRoot: string): Promise<{
       return false;
     });
 
-    pages.push({ relPath, title, updated, frontmatterMissing: missingFields });
+    const aliasesRaw = frontmatter['aliases'];
+    const aliases = Array.isArray(aliasesRaw)
+      ? aliasesRaw.filter((alias): alias is string => typeof alias === 'string' && alias.trim().length > 0)
+      : [];
+
+    pages.push({ relPath, title, aliases, updated, frontmatterMissing: missingFields });
     titleToPath.set(title.toLowerCase(), relPath);
 
     // Also index by basename slug for lowercase/hyphenated wikilinks
@@ -270,12 +276,9 @@ async function buildPageIndex(wikiRoot: string): Promise<{
     slugToPath.set(baseSlug, relPath);
 
     // Index any aliases declared in frontmatter (aliases: [Clay, Clay W])
-    const aliasesRaw = frontmatter['aliases'];
-    if (Array.isArray(aliasesRaw)) {
-      for (const alias of aliasesRaw) {
-        if (typeof alias === 'string' && alias.trim()) {
-          titleToPath.set(alias.toLowerCase(), relPath);
-        }
+    if (aliases.length > 0) {
+      for (const alias of aliases) {
+        titleToPath.set(alias.toLowerCase(), relPath);
       }
     }
 
@@ -292,8 +295,9 @@ async function buildPageIndex(wikiRoot: string): Promise<{
 // ---------------------------------------------------------------------------
 
 /**
- * Check 1: Orphan pages — pages that no other page links to.
- * A page is NOT an orphan if its title appears as a wikilink target in any other page.
+ * Check 1: Semantic orphan pages — pages that no other content page links to.
+ * A page is NOT an orphan if its title, alias, or basename slug appears as a
+ * wikilink target in any other indexed wiki page.
  */
 function detectOrphans(pages: PageInfo[], linkMap: Map<string, string[]>): OrphanPage[] {
   // Build the set of all link targets (lowercased titles AND their slugified forms)
@@ -310,9 +314,13 @@ function detectOrphans(pages: PageInfo[], linkMap: Map<string, string[]>): Orpha
 
   const orphans: OrphanPage[] = [];
   for (const page of pages) {
-    const titleLc = page.title.toLowerCase();
+    const possibleTargets = [page.title, ...page.aliases].map((name) => name.toLowerCase());
     const baseSlug = page.relPath.replace(/^.*\//, '').replace(/\.md$/, '').toLowerCase();
-    if (linkedTitles.has(titleLc)) continue;
+    if (possibleTargets.some((target) => linkedTitles.has(target))) continue;
+    if (possibleTargets.some((target) => {
+      const slug = slugifyLinkTarget(target);
+      return slug.length > 0 && linkedSlugs.has(slug);
+    })) continue;
     if (linkedSlugs.has(baseSlug)) continue;
     orphans.push({ path: page.relPath });
   }
@@ -443,7 +451,7 @@ function formatReport(
   ];
 
   // Orphan pages
-  lines.push(`**Orphan pages** (no inbound links): ${report.orphanPages.length}`);
+  lines.push(`**Semantic orphan pages** (no inbound wikilinks from content pages; generated indexes/logs excluded): ${report.orphanPages.length}`);
   if (report.orphanPages.length > 0) {
     for (const p of report.orphanPages) {
       lines.push(`- ${p.path}`);

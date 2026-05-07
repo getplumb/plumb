@@ -1,9 +1,9 @@
 /**
- * wiki-dream-scan.ts — Haiku catch-up scan phase of the nightly dream cron (T-239).
+ * wiki-dream-scan.ts — OpenClaw GPT 5.5 catch-up scan phase of the nightly dream cron (T-239).
  *
  * Reads today's Plumb V1 facts from memory.db and today's OpenClaw chat logs,
  * compares against what is already reflected in the wiki and the in-band queue,
- * and uses Claude Haiku to identify facts that have NOT been incorporated yet.
+ * and uses OpenClaw GPT 5.5 to identify facts that have NOT been incorporated yet.
  *
  * Missed facts are ENQUEUED to wiki-queue.jsonl — they are NOT written directly.
  * The normal wiki-worker pipeline picks them up on its next hourly tick.
@@ -23,6 +23,7 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { openDb, appendToQueue, readQueue, defaultQueuePath } from '@getplumb/core';
 import { getDefaultDbPath } from '../utils/db-path.js';
+import { callOpenClawChat } from '../utils/openclaw-chat.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -37,11 +38,11 @@ export interface WikiDreamScanOptions {
   sessions?: string;
   /** Path to wiki-queue.jsonl. Defaults to defaultQueuePath() */
   queue?: string;
-  /** Facts per Haiku request. Defaults to 50 */
+  /** Facts per model request. Defaults to 50 */
   batchSize?: number;
   /** Date to scan (YYYY-MM-DD). Defaults to today */
   date?: string;
-  /** Skip Haiku calls, print what would be sent */
+  /** Skip model calls, print what would be sent */
   dryRun?: boolean;
   /** User ID to filter facts by. Defaults to 'default' */
   userId?: string;
@@ -52,9 +53,9 @@ export interface WikiDreamScanResult {
   factsExamined: number;
   /** How many items were enqueued for the worker to process */
   enqueuedCount: number;
-  /** Total input tokens consumed by Haiku */
+  /** Total input tokens consumed by the model */
   tokensIn: number;
-  /** Total output tokens consumed by Haiku */
+  /** Total output tokens consumed by the model */
   tokensOut: number;
 }
 
@@ -270,7 +271,7 @@ async function loadTodaysQueuedFacts(queuePath: string, datePrefix: string): Pro
 }
 
 // ---------------------------------------------------------------------------
-// Haiku catch-up prompt
+// Catch-up prompt
 // ---------------------------------------------------------------------------
 
 const CATCH_UP_SYSTEM_PROMPT = `You are a knowledge-base catch-up scanner for a personal wiki.
@@ -291,20 +292,21 @@ For each such fact, produce a single self-contained sentence that includes the e
 
 Rules:
 - Only return facts with a clear named entity
+- Only return facts that have a clear relationship to Clay, Terra, OpenClaw/Plumb, or an existing wiki page. If the fact is about a disconnected person/company/concept and the connection is unclear, skip it.
 - Skip generic observations, process descriptions, or facts with no wiki-worthy entity
 - If a fact updates an existing page, include the entity name so the worker can find the page
+- Prefer updating existing connected pages over creating standalone low-confidence pages.
 - Max 20 items — prioritize the most significant new information
 - Return ONLY a JSON array of strings:
   ["Fact about Entity 1", "Fact about Entity 2", ...]
 - Return [] if nothing new needs enqueuing`;
 
-interface HaikuUsage {
+interface ModelUsage {
   input_tokens: number;
   output_tokens: number;
 }
 
 async function runCatchUpBatch(
-  client: import('@anthropic-ai/sdk').default,
   facts: MemoryFact[],
   existingPages: string[],
   chatContext: string,
@@ -312,7 +314,7 @@ async function runCatchUpBatch(
   alreadyQueued: string[],
   batchNum: number,
   totalBatches: number,
-): Promise<{ facts: string[]; usage: HaikuUsage }> {
+): Promise<{ facts: string[]; usage: ModelUsage }> {
   const factsText = facts
     .map((f, i) => `[${i + 1}] (${f.created_at.slice(0, 16)}) ${f.content}`)
     .join('\n\n');
@@ -343,20 +345,15 @@ ${factsText}
 Return the JSON array of facts to enqueue.`;
 
   const message = await withRetry(() =>
-    client.messages.create({
-      model: 'claude-haiku-4-5-20251001',
-      max_tokens: 1024,
-      system: CATCH_UP_SYSTEM_PROMPT,
-      messages: [{ role: 'user', content: userPrompt }],
-    }),
+    callOpenClawChat(CATCH_UP_SYSTEM_PROMPT, userPrompt, 1024),
   );
 
-  const usage: HaikuUsage = {
-    input_tokens: message.usage.input_tokens,
-    output_tokens: message.usage.output_tokens,
+  const usage: ModelUsage = {
+    input_tokens: message.usage.inputTokens,
+    output_tokens: message.usage.outputTokens,
   };
 
-  const text = message.content[0]?.type === 'text' ? message.content[0].text : '';
+  const text = message.text;
 
   try {
     // Strip code fences and any leading reasoning/commentary before the JSON array
@@ -373,7 +370,7 @@ Return the JSON array of facts to enqueue.`;
     }
     return { facts: [], usage };
   } catch {
-    console.error(`  Warning: Could not parse Haiku response. Preview: ${text.slice(0, 200)}`);
+    console.error(`  Warning: Could not parse OpenClaw model response. Preview: ${text.slice(0, 200)}`);
     return { facts: [], usage };
   }
 }
@@ -453,7 +450,7 @@ export async function wikiDreamScanCommand(
   // --- Dry run mode ---
   if (dryRun) {
     const totalBatches = Math.max(1, Math.ceil(facts.length / batchSize));
-    console.log(`\n[dry-run] Would send ${totalBatches} batch(es) to Haiku (${facts.length} facts + chat context).`);
+    console.log(`\n[dry-run] Would send ${totalBatches} batch(es) to OpenClaw GPT 5.5 (${facts.length} facts + chat context).`);
     if (facts.length > 0) {
       console.log(`[dry-run] First facts preview (up to 5):`);
       for (const f of facts.slice(0, 5)) {
@@ -463,23 +460,6 @@ export async function wikiDreamScanCommand(
     console.log(`[dry-run] Would enqueue missed facts to: ${queuePath}`);
     return result;
   }
-
-  // --- Load Anthropic SDK ---
-  let Anthropic: typeof import('@anthropic-ai/sdk').default | null = null;
-  try {
-    Anthropic = (await import('@anthropic-ai/sdk')).default;
-  } catch {
-    console.error('Error: @anthropic-ai/sdk is required.');
-    process.exit(1);
-  }
-
-  const apiKey = process.env['ANTHROPIC_API_KEY'];
-  if (!apiKey) {
-    console.error('Error: ANTHROPIC_API_KEY environment variable is not set.');
-    process.exit(1);
-  }
-
-  const client = new Anthropic!({ apiKey });
 
   // --- Process in batches (at least 1 batch even if facts=0 so chat logs are scanned) ---
   const totalBatches = Math.max(1, Math.ceil(facts.length / batchSize));
@@ -495,7 +475,6 @@ export async function wikiDreamScanCommand(
 
     try {
       const { facts: missedFacts, usage } = await runCatchUpBatch(
-        client,
         batch,
         existingPages,
         chatContext,

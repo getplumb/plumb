@@ -8,11 +8,11 @@
  *   - Merge-back threshold: < 600 words  → eligible for merge-back (not yet implemented)
  *   - Cooldown:             7 days between splits of the same page
  *   - Child page naming:    {parent-slug}-{section-slug}.md (same directory as parent)
- *   - Sonnet:               Used only to pick which H2 section to externalize (max_tokens=100)
+ *   - OpenClaw dream model: Used only to pick which H2 section to externalize (max_tokens=100)
  *   - Inbound wikilinks:    Parent keeps a summary + [[child]] link — existing links still resolve
  *   - Log:                  Every split appended to log.md (parent, child, words before/after)
  *
- * Tie-breaking (when Sonnet not available or for deterministic fallback):
+ * Tie-breaking (when the model is not available or for deterministic fallback):
  *   1. Most outbound [[wikilinks]] in the section body
  *   2. Alphabetical by section title (a < z)
  */
@@ -29,6 +29,7 @@ import {
   applyWikiSchema,
 } from '@getplumb/core';
 import type { WikiFrontmatter, WasmDb } from '@getplumb/core';
+import { callOpenClawChat } from './openclaw-chat.js';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -74,7 +75,7 @@ export interface RefactorPhaseOptions {
   today?: string;
   /** If true, skip all writes and API calls */
   dryRun?: boolean;
-  /** Anthropic API key for Sonnet section selection. Falls back to deterministic tie-break. */
+  /** Deprecated. Refactor now uses OpenClaw chat and falls back to deterministic tie-break on failure. */
   apiKey?: string;
 }
 
@@ -181,8 +182,8 @@ export function parseH2Sections(body: string): H2Section[] {
  *   2. Most outbound [[wikilinks]]
  *   3. Alphabetical by section title (a < z)
  *
- * This is the fallback used when Sonnet is not available (no API key) and
- * as the tie-breaker when Sonnet returns a title that matches multiple sections.
+ * This is the fallback used when the model is not available and as the
+ * tie-breaker when the model returns a title that matches multiple sections.
  */
 export function pickSectionDeterministically(sections: H2Section[]): H2Section {
   if (sections.length === 0) throw new Error('No sections to pick from');
@@ -198,20 +199,19 @@ export function pickSectionDeterministically(sections: H2Section[]): H2Section {
 }
 
 // ---------------------------------------------------------------------------
-// Sonnet section selection
+// OpenClaw model section selection
 // ---------------------------------------------------------------------------
 
 /**
- * Ask claude-sonnet-4-6 which section to externalize.
+ * Ask the configured OpenClaw dream model which section to externalize.
  * Returns the exact section title or null if the response doesn't match
  * any known title (caller falls back to deterministic pick).
  *
  * max_tokens=100 — the response should be a single section title, nothing else.
  */
-async function callSonnetPickSection(
+async function callModelPickSection(
   pageId: string,
   sections: H2Section[],
-  apiKey: string,
 ): Promise<{ title: string | null; tokensIn: number; tokensOut: number }> {
   const sectionList = sections
     .map((s) => `- ${s.title} | ${s.wordCount} words | ${s.outboundLinkCount} links`)
@@ -224,23 +224,16 @@ async function callSonnetPickSection(
     `Pick the most self-contained sub-topic. Reply with ONLY the exact section title — no punctuation, no explanation.`;
 
   try {
-    const AnthropicModule = await import('@anthropic-ai/sdk');
-    const Anthropic = AnthropicModule.default;
-    const client = new Anthropic({ apiKey });
+    const response = await callOpenClawChat(
+      'You are a wiki editor. You will receive a list of H2 sections from a wiki page. ' +
+        'Reply with ONLY the exact section title to externalize, no other text.',
+      userContent,
+      100,
+    );
 
-    const response = await client.messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 100,
-      system:
-        'You are a wiki editor. You will receive a list of H2 sections from a wiki page. ' +
-        'Reply with ONLY the exact section title to externalize — no other text.',
-      messages: [{ role: 'user', content: userContent }],
-    });
-
-    const tokensIn = response.usage?.input_tokens ?? 0;
-    const tokensOut = response.usage?.output_tokens ?? 0;
-    const raw =
-      response.content[0]?.type === 'text' ? response.content[0].text.trim() : '';
+    const tokensIn = response.inputTokens;
+    const tokensOut = response.outputTokens;
+    const raw = response.text;
 
     // Match response against known titles (case-insensitive)
     const known = sections.find(
@@ -416,7 +409,7 @@ async function appendSplitToLog(
  *   1. Skip if the page is within the COOLDOWN_DAYS window
  *   2. Parse H2 sections from the file on disk
  *   3. Skip if there are < 2 H2 sections (cannot split coherently)
- *   4. Ask Sonnet which section to externalize (falls back to deterministic pick)
+ *   4. Ask OpenClaw dream model which section to externalize (falls back to deterministic pick)
  *   5. Write the child page and update the parent page via direct file I/O
  *   6. Record last_split_at + append a wiki_changelog entry
  *   7. Append the split record to log.md
@@ -431,7 +424,6 @@ export async function wikiRefactorPhase(
     wikiDbPath,
     today = new Date().toISOString().slice(0, 10),
     dryRun = false,
-    apiKey,
   } = options;
 
   const result: RefactorPhaseResult = {
@@ -506,23 +498,12 @@ export async function wikiRefactorPhase(
       }
 
       // 4. Pick section to externalize
-      let chosenSection: H2Section;
-      if (apiKey) {
-        const { title, tokensIn, tokensOut } = await callSonnetPickSection(
-          page.id,
-          sections,
-          apiKey,
-        );
-        result.sonnetTokensIn += tokensIn;
-        result.sonnetTokensOut += tokensOut;
-        if (title !== null) {
-          chosenSection = sections.find((s) => s.title === title)!;
-        } else {
-          chosenSection = pickSectionDeterministically(sections);
-        }
-      } else {
-        chosenSection = pickSectionDeterministically(sections);
-      }
+      const { title, tokensIn, tokensOut } = await callModelPickSection(page.id, sections);
+      result.sonnetTokensIn += tokensIn;
+      result.sonnetTokensOut += tokensOut;
+      const chosenSection = title !== null
+        ? sections.find((s) => s.title === title)!
+        : pickSectionDeterministically(sections);
 
       // 5. Build child page id and path
       const parentSlug = page.id; // e.g. "people/dylan-sellberg"

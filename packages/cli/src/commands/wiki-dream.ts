@@ -1,13 +1,15 @@
 /**
- * wiki-dream.ts — Nightly dream cron orchestrator (T-239: deterministic phases only).
+ * wiki-dream.ts - Nightly dream cron orchestrator (T-239).
  *
- * Phases (Haiku-only — zero Sonnet calls):
- *   1. Haiku catch-up scan — compares today's facts/chat vs wiki, enqueues missed items
- *   2. Deterministic link-graph rebuild — full DELETE + re-insert from markdown source
- *   3. Lint report — orphans, broken links, stale pages, frontmatter, dead-letter queue
- *   4. Single git commit + push
+ * Phases:
+ *   1. OpenClaw GPT 5.5 catch-up scan - compares today's facts/chat vs wiki, enqueues missed items
+ *   2. Deterministic link-graph rebuild - full DELETE + re-insert from markdown source
+ *   3. Lint report - orphans, broken links, stale pages, frontmatter, dead-letter queue
+ *   4. Orphan resolver - add safe backlinks for semantically connected orphan pages
+ *   5. Page refactor - H2-boundary splits for oversized pages
+ *   6. Single git commit + push
  *
- * All Sonnet content writes happen via the normal wiki-worker (picks up enqueued items).
+ * Most content writes happen via the normal wiki-worker (picks up enqueued items).
  * This keeps dream cost low and SLO predictable.
  *
  * Per-run cost is logged to wiki_changelog and to log.md.
@@ -25,7 +27,15 @@ import { appendFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 
-import { openDb, applyWikiSchema, getWeeklyCostBySource } from '@getplumb/core';
+import {
+  openDb,
+  applyWikiSchema,
+  getWeeklyCostBySource,
+  listWikiPages,
+  parseFrontmatter,
+  extractTitle,
+  extractWikilinks,
+} from '@getplumb/core';
 import { wikiDreamScanCommand } from './wiki-dream-scan.js';
 import type { WikiDreamScanResult } from './wiki-dream-scan.js';
 import { wikiLinkRebuildCommand } from './wiki-link-rebuild.js';
@@ -60,12 +70,9 @@ export interface WikiDreamOptions {
 // Cost calculation
 // ---------------------------------------------------------------------------
 
-/** Haiku (claude-haiku-4-5) pricing: $0.80 / MTok in, $4.00 / MTok out */
-const HAIKU_COST_PER_MTok_IN = 0.80;
-const HAIKU_COST_PER_MTok_OUT = 4.00;
-
-function computeHaikuCost(tokensIn: number, tokensOut: number): number {
-  return (tokensIn * HAIKU_COST_PER_MTok_IN + tokensOut * HAIKU_COST_PER_MTok_OUT) / 1_000_000;
+// OpenClaw subscription-backed model calls do not have per-API-call cost here.
+function computeModelCost(_tokensIn: number, _tokensOut: number): number {
+  return 0;
 }
 
 function formatCost(usd: number): string {
@@ -213,7 +220,7 @@ async function logCostToChangelog(
       applyWikiSchema(db);
 
       const detail = JSON.stringify({
-        model: 'claude-haiku-4-5-20251001',
+        model: process.env['PLUMB_DREAM_MODEL'] ?? 'openai-codex/gpt-5.5',
         tokens_in: tokensIn,
         tokens_out: tokensOut,
       });
@@ -264,10 +271,10 @@ async function appendRunToLog(
     `\n## ${today}\n`,
     `### Dream Run (${timeStr} MT)`,
     '',
-    `- Phases: catch-up scan, link-graph rebuild, lint`,
+    `- Phases: catch-up scan, link-graph rebuild, lint, orphan resolver, refactor`,
     `- Facts examined: ${scanResult.factsExamined}`,
     `- Items enqueued for worker: ${scanResult.enqueuedCount}`,
-    `- Haiku usage: ${scanResult.tokensIn.toLocaleString()} in / ${scanResult.tokensOut.toLocaleString()} out`,
+    `- Model usage: ${scanResult.tokensIn.toLocaleString()} in / ${scanResult.tokensOut.toLocaleString()} out (OpenClaw subscription)`,
     `- Cost: ${costStr}`,
     `- Elapsed: ${elapsed}`,
     '',
@@ -324,9 +331,9 @@ async function maybeAppendWeeklyRollup(
     const totalOut  = bySource.reduce((s, r) => s + r.totalTokensOut, 0);
 
     const SOURCE_LABELS: Record<string, string> = {
-      dream: 'Dream (Haiku scan)',
-      'worker:resolver': 'Worker resolver (Haiku)',
-      'worker:writer': 'Worker writer (Sonnet)',
+      dream: 'Dream (OpenClaw GPT 5.5 scan)',
+      'worker:resolver': 'Worker resolver',
+      'worker:writer': 'Worker writer',
       embed: 'Embedding (local)',
       rerank: 'Rerank (local)',
     };
@@ -411,6 +418,184 @@ function formatElapsed(ms: number): string {
 }
 
 // ---------------------------------------------------------------------------
+// Orphan resolver
+// ---------------------------------------------------------------------------
+
+interface DreamPageInfo {
+  relPath: string;
+  title: string;
+  aliases: string[];
+  body: string;
+  raw: string;
+  links: string[];
+}
+
+interface OrphanResolverResult {
+  examined: number;
+  orphans: number;
+  backlinksAdded: number;
+  reviewItems: number;
+}
+
+function slugifyLinkTarget(target: string): string {
+  return target
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, '')
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
+}
+
+function linkToken(target: string): string {
+  return target.split('|')[0]?.trim() ?? target.trim();
+}
+
+function containsWikilinkTo(raw: string, title: string): boolean {
+  const titleLc = title.toLowerCase();
+  const slug = slugifyLinkTarget(title);
+  return extractWikilinks(raw).some((target) => {
+    const token = linkToken(target);
+    return token.toLowerCase() === titleLc || slugifyLinkTarget(token) === slug;
+  });
+}
+
+function insertBacklink(raw: string, title: string, today: string): string {
+  const updated = raw.replace(/^updated:\s*.*$/m, `updated: ${today}`);
+  const backlink = `- [[${title}]] — related page linked by nightly orphan resolver.`;
+
+  if (/^## Related\s*$/m.test(updated)) {
+    return updated.replace(/(^## Related\s*$)/m, `$1\n\n${backlink}`);
+  }
+
+  return `${updated.trimEnd()}\n\n## Related\n\n${backlink}\n`;
+}
+
+async function appendOrphanReviewItem(
+  wikiRoot: string,
+  today: string,
+  page: DreamPageInfo,
+  dryRun: boolean,
+): Promise<void> {
+  const reviewPath = join(wikiRoot, 'REVIEW.md');
+  const entry = `\n## ${today} — Orphan page needs review\n\n- Page: ${page.relPath}\n- Title: ${page.title}\n- Reason: no inbound wikilinks and no resolvable outbound wikilinks to an existing content page.\n- Suggested action: link it from a relevant existing page, merge it into another page, or archive it if it is not useful.\n\n---\n`;
+
+  if (dryRun) {
+    console.log(`  [dry-run] Would append orphan review item for ${page.relPath}`);
+    return;
+  }
+
+  await appendFile(reviewPath, entry, 'utf8');
+}
+
+async function resolveOrphanPages(
+  wikiRoot: string,
+  today: string,
+  dryRun: boolean,
+): Promise<OrphanResolverResult> {
+  console.log('Resolving semantic orphan pages…');
+
+  const relPaths = await listWikiPages(wikiRoot);
+  const pages = new Map<string, DreamPageInfo>();
+  const titleToPath = new Map<string, string>();
+  const slugToPath = new Map<string, string>();
+
+  for (const relPath of relPaths) {
+    const raw = readFileSync(join(wikiRoot, relPath), 'utf8');
+    let body = raw;
+    let aliases: string[] = [];
+    try {
+      const parsed = parseFrontmatter(raw);
+      body = parsed.body;
+      const aliasesRaw = (parsed.frontmatter as Record<string, unknown>)['aliases'];
+      aliases = Array.isArray(aliasesRaw)
+        ? aliasesRaw.filter((alias): alias is string => typeof alias === 'string' && alias.trim().length > 0)
+        : [];
+    } catch {
+      // Keep raw body fallback so malformed pages can still be considered.
+    }
+
+    const title = extractTitle(body) ?? relPath.replace(/^.*\//, '').replace(/\.md$/, '');
+    const info: DreamPageInfo = {
+      relPath,
+      title,
+      aliases,
+      body,
+      raw,
+      links: extractWikilinks(body),
+    };
+    pages.set(relPath, info);
+    titleToPath.set(title.toLowerCase(), relPath);
+    for (const alias of aliases) titleToPath.set(alias.toLowerCase(), relPath);
+    slugToPath.set(relPath.replace(/^.*\//, '').replace(/\.md$/, '').toLowerCase(), relPath);
+  }
+
+  const resolveTarget = (target: string): string | null => {
+    const token = linkToken(target);
+    const direct = titleToPath.get(token.toLowerCase());
+    if (direct) return direct;
+    const slug = slugifyLinkTarget(token);
+    return slugToPath.get(slug) ?? null;
+  };
+
+  const inbound = new Map<string, number>();
+  for (const relPath of relPaths) inbound.set(relPath, 0);
+  for (const [sourcePath, page] of pages.entries()) {
+    for (const link of page.links) {
+      const targetPath = resolveTarget(link);
+      if (targetPath && targetPath !== sourcePath) {
+        inbound.set(targetPath, (inbound.get(targetPath) ?? 0) + 1);
+      }
+    }
+  }
+
+  const orphanPaths = relPaths.filter((relPath) => (inbound.get(relPath) ?? 0) === 0);
+  let backlinksAdded = 0;
+  let reviewItems = 0;
+
+  for (const orphanPath of orphanPaths) {
+    const orphan = pages.get(orphanPath);
+    if (!orphan) continue;
+
+    const outboundTargets = orphan.links
+      .map((link) => resolveTarget(link))
+      .filter((targetPath): targetPath is string => Boolean(targetPath) && targetPath !== orphanPath);
+
+    const uniqueTargets = [...new Set(outboundTargets)];
+    if (uniqueTargets.length === 0) {
+      await appendOrphanReviewItem(wikiRoot, today, orphan, dryRun);
+      reviewItems++;
+      continue;
+    }
+
+    const targetPath = uniqueTargets.find((path) => (inbound.get(path) ?? 0) > 0) ?? uniqueTargets[0]!;
+    const target = pages.get(targetPath);
+    if (!target) continue;
+
+    if (containsWikilinkTo(target.raw, orphan.title)) continue;
+
+    const nextRaw = insertBacklink(target.raw, orphan.title, today);
+    if (dryRun) {
+      console.log(`  [dry-run] Would link ${targetPath} → [[${orphan.title}]]`);
+    } else {
+      writeFileSync(join(wikiRoot, targetPath), nextRaw, 'utf8');
+      console.log(`  Linked ${targetPath} → [[${orphan.title}]]`);
+    }
+    backlinksAdded++;
+  }
+
+  console.log(`  Orphans found: ${orphanPaths.length}`);
+  console.log(`  Backlinks added: ${backlinksAdded}`);
+  console.log(`  Review items: ${reviewItems}`);
+
+  return {
+    examined: relPaths.length,
+    orphans: orphanPaths.length,
+    backlinksAdded,
+    reviewItems,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // OpenClaw cron registration
 // ---------------------------------------------------------------------------
 
@@ -483,7 +668,7 @@ async function registerDreamCron(): Promise<void> {
         'Run: `export PATH="$PATH:/home/openclaw-host/.npm-global/bin" && plumb wiki dream`\n\n' +
         'Wait for it to finish (it may take several minutes). Report success or failure.',
       timeoutSeconds: 900, // narrowed: catch-up + link-rebuild + lint << 15 min
-      model: 'anthropic/claude-haiku-4-5',
+      model: 'openai-codex/gpt-5.5',
     },
     delivery: { mode: 'none' },
     state: {
@@ -536,16 +721,16 @@ export async function wikiDreamCommand(options: WikiDreamOptions = {}): Promise<
   console.log(`  date:    ${today}`);
   console.log(`  wiki:    ${wikiRoot}`);
   console.log(`  wiki.db: ${wikiDbPath}`);
-  console.log('  phases:  catch-up(Haiku) → link-rebuild → lint → refactor(Sonnet) → commit');
+  console.log('  phases:  catch-up(OpenClaw GPT 5.5) -> link-rebuild -> lint -> orphan-resolver -> refactor(OpenClaw GPT 5.5/deterministic) -> commit');
   if (dryRun) console.log('  [dry-run mode — no writes, no commits, no API calls]');
   console.log('');
 
   // Pull latest from GitHub before any writes
   if (!dryRun) gitPullLatest(wikiRoot);
 
-  // --- Phase 1: Haiku catch-up scan ---
+  // --- Phase 1: OpenClaw GPT 5.5 catch-up scan ---
   console.log('\n' + '─'.repeat(60));
-  console.log('Phase 1 of 3: Haiku catch-up scan');
+  console.log('Phase 1 of 6: OpenClaw GPT 5.5 catch-up scan');
   console.log('─'.repeat(60));
 
   let scanResult: WikiDreamScanResult = {
@@ -570,11 +755,11 @@ export async function wikiDreamCommand(options: WikiDreamOptions = {}): Promise<
     console.error('  (continuing with remaining phases)');
   }
 
-  const costUsd = computeHaikuCost(scanResult.tokensIn, scanResult.tokensOut);
+  const costUsd = computeModelCost(scanResult.tokensIn, scanResult.tokensOut);
 
   // --- Phase 2: Link-graph rebuild ---
   console.log('\n' + '─'.repeat(60));
-  console.log('Phase 2 of 3: Deterministic link-graph rebuild');
+  console.log('Phase 2 of 6: Deterministic link-graph rebuild');
   console.log('─'.repeat(60));
 
   try {
@@ -591,7 +776,7 @@ export async function wikiDreamCommand(options: WikiDreamOptions = {}): Promise<
 
   // --- Phase 3: Lint report ---
   console.log('\n' + '─'.repeat(60));
-  console.log('Phase 3 of 4: Wiki lint');
+  console.log('Phase 3 of 6: Wiki lint');
   console.log('─'.repeat(60));
 
   try {
@@ -607,9 +792,29 @@ export async function wikiDreamCommand(options: WikiDreamOptions = {}): Promise<
     console.error('  (continuing with refactor phase)');
   }
 
-  // --- Phase 4: Page refactor (H2-boundary splits) ---
+  // --- Phase 4: Orphan resolver ---
   console.log('\n' + '─'.repeat(60));
-  console.log('Phase 4 of 4: Page refactor (H2-boundary splits)');
+  console.log('Phase 4 of 6: Orphan resolver');
+  console.log('─'.repeat(60));
+
+  let orphanResult: OrphanResolverResult = {
+    examined: 0,
+    orphans: 0,
+    backlinksAdded: 0,
+    reviewItems: 0,
+  };
+
+  try {
+    orphanResult = await resolveOrphanPages(wikiRoot, today, dryRun);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`  Warning: orphan resolver failed: ${msg}`);
+    console.error('  (continuing with refactor phase)');
+  }
+
+  // --- Phase 5: Page refactor (H2-boundary splits) ---
+  console.log('\n' + '─'.repeat(60));
+  console.log('Phase 5 of 6: Page refactor (H2-boundary splits)');
   console.log('─'.repeat(60));
 
   let refactorResult: RefactorPhaseResult = {
@@ -620,13 +825,11 @@ export async function wikiDreamCommand(options: WikiDreamOptions = {}): Promise<
   };
 
   try {
-    const apiKey = process.env['ANTHROPIC_API_KEY'];
     refactorResult = await wikiRefactorPhase({
       wikiRoot,
       wikiDbPath,
       today,
       dryRun,
-      ...(apiKey !== undefined ? { apiKey } : {}),
     });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -647,7 +850,10 @@ export async function wikiDreamCommand(options: WikiDreamOptions = {}): Promise<
   // --- Weekly cost roll-up (Sundays only) ---
   await maybeAppendWeeklyRollup(wikiDbPath, wikiRoot, today, dryRun);
 
-  // --- Git commit + push ---
+  // --- Phase 6: Git commit + push ---
+  console.log('\n' + '─'.repeat(60));
+  console.log('Phase 6 of 6: Git commit phase');
+  console.log('─'.repeat(60));
   await gitCommitAndPush(wikiRoot, today, scanResult.enqueuedCount, dryRun);
 
   // --- Final summary ---
@@ -655,12 +861,15 @@ export async function wikiDreamCommand(options: WikiDreamOptions = {}): Promise<
   console.log('Dream complete.');
   console.log(`  Facts examined:  ${scanResult.factsExamined}`);
   console.log(`  Items enqueued:  ${scanResult.enqueuedCount}`);
-  console.log(`  Haiku cost:      ${formatCost(costUsd)} (${scanResult.tokensIn}in / ${scanResult.tokensOut}out)`);
+  console.log(`  Model usage:     ${scanResult.tokensIn}in / ${scanResult.tokensOut}out (OpenClaw subscription)`);
   if (refactorResult.splits.length > 0 || refactorResult.pagesExamined > 0) {
     console.log(`  Refactor:        ${refactorResult.splits.length} split(s) from ${refactorResult.pagesExamined} page(s) examined`);
     if (refactorResult.sonnetTokensIn > 0) {
-      console.log(`  Sonnet (refactor): ${refactorResult.sonnetTokensIn}in / ${refactorResult.sonnetTokensOut}out`);
+      console.log(`  Model (refactor): ${refactorResult.sonnetTokensIn}in / ${refactorResult.sonnetTokensOut}out`);
     }
+  }
+  if (orphanResult.examined > 0) {
+    console.log(`  Orphans:         ${orphanResult.backlinksAdded} backlink(s), ${orphanResult.reviewItems} review item(s) from ${orphanResult.orphans} orphan(s)`);
   }
   console.log(`  Elapsed:         ${formatElapsed(elapsedMs)}`);
   console.log('═'.repeat(60));
