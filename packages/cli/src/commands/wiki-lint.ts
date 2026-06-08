@@ -4,9 +4,8 @@
  * Checks for:
  *   1. Orphan pages — pages with no inbound links from any other wiki page
  *   2. Broken wikilinks — [[Link]] targets that don't resolve to a file on disk
- *   3. Stale pages — pages with updated_at >30 days ago referenced in today's chat
- *   4. Frontmatter inconsistencies — missing required fields
- *   5. Dead-letter queue items — facts that failed 3× and need human attention
+ *   3. Frontmatter inconsistencies — missing required fields
+ *   4. Dead-letter queue items — facts that failed 3× and need human attention
  *
  * Appends a Lint Report section to log.md.
  * Does NOT auto-fix — lint is report-only.
@@ -21,7 +20,6 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { appendFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-import { readdirSync, statSync } from 'node:fs';
 import { listWikiPages, parseFrontmatter, extractTitle } from '@getplumb/core';
 import { extractWikilinks } from '@getplumb/core';
 
@@ -38,9 +36,6 @@ const REQUIRED_FRONTMATTER_FIELDS: ReadonlyArray<string> = [
   'tags',
   'confidence',
 ];
-
-/** Pages with updated > this many days ago are considered stale */
-const STALE_DAYS = 30;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -71,13 +66,6 @@ interface BrokenLink {
   target: string;
 }
 
-interface StalePage {
-  /** Wiki-relative path */
-  path: string;
-  /** updated date from frontmatter */
-  updated: string;
-}
-
 interface FrontmatterIssue {
   /** Wiki-relative path */
   path: string;
@@ -96,90 +84,13 @@ interface DeadLetterItem {
 interface LintReport {
   orphanPages: OrphanPage[];
   brokenLinks: BrokenLink[];
-  stalePages: StalePage[];
   frontmatterIssues: FrontmatterIssue[];
   deadLetterItems: DeadLetterItem[];
 }
 
 // ---------------------------------------------------------------------------
-// Chat log loading (mirrors wiki-dream-scan approach)
-// ---------------------------------------------------------------------------
-
-/**
- * Load today's chat log text from OpenClaw session JSONL files.
- * Returns combined raw text (user messages only), capped at maxChars.
- */
-function loadTodaysChatText(sessionsDir: string, datePrefix: string, maxChars = 12000): string {
-  if (!existsSync(sessionsDir)) return '';
-
-  let files: string[];
-  try {
-    files = readdirSync(sessionsDir).filter((f) => f.endsWith('.jsonl'));
-  } catch {
-    return '';
-  }
-
-  const todayFiles = files.filter((f) => {
-    try {
-      const mtime = statSync(join(sessionsDir, f)).mtime;
-      return mtime.toISOString().startsWith(datePrefix);
-    } catch {
-      return false;
-    }
-  });
-
-  let combined = '';
-
-  for (const f of todayFiles) {
-    try {
-      const lines = readFileSync(join(sessionsDir, f), 'utf8').split('\n');
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        try {
-          const obj = JSON.parse(line) as Record<string, unknown>;
-          if (obj['type'] === 'message') {
-            const msg = obj['message'] as Record<string, unknown> | undefined;
-            if (!msg || msg['role'] !== 'user') continue;
-            const content = msg['content'];
-            let text = '';
-            if (Array.isArray(content)) {
-              text = content
-                .filter((c: unknown) => (c as Record<string, unknown>)['type'] === 'text')
-                .map((c: unknown) => String((c as Record<string, unknown>)['text'] ?? ''))
-                .join(' ');
-            } else if (typeof content === 'string') {
-              text = content;
-            }
-            if (text.includes('[PLUMB MEMORY]') || !text.trim()) continue;
-            const ts = String(obj['timestamp'] ?? '');
-            if (ts && !ts.startsWith(datePrefix)) continue;
-            combined += text + '\n';
-            if (combined.length > maxChars) {
-              combined = combined.slice(0, maxChars);
-              return combined;
-            }
-          }
-        } catch {
-          // skip malformed lines
-        }
-      }
-    } catch {
-      // skip unreadable files
-    }
-  }
-
-  return combined;
-}
-
-// ---------------------------------------------------------------------------
 // Date helpers
 // ---------------------------------------------------------------------------
-
-function daysBetween(isoA: string, isoB: string): number {
-  const a = new Date(isoA).getTime();
-  const b = new Date(isoB).getTime();
-  return Math.abs(b - a) / (1000 * 60 * 60 * 24);
-}
 
 function nowHHMM(): string {
   return new Date().toTimeString().slice(0, 5);
@@ -356,47 +267,7 @@ function detectBrokenLinks(
 }
 
 /**
- * Check 3: Stale pages — pages with updated >30 days ago that appear in today's chat.
- * Checks chat text for [[wikilink]] patterns referencing page titles.
- */
-function detectStalePages(
-  pages: PageInfo[],
-  chatText: string,
-  today: string,
-): StalePage[] {
-  if (!chatText.trim()) return [];
-
-  // Extract wikilink targets from the chat text
-  const chatLinks = new Set(
-    extractWikilinks(chatText).map((t) => t.toLowerCase()),
-  );
-
-  // Also check if page titles appear as plain text in the chat
-  const stale: StalePage[] = [];
-  for (const page of pages) {
-    const updated = page.updated;
-    if (!updated) continue;
-
-    const daysOld = daysBetween(updated, today);
-    if (daysOld <= STALE_DAYS) continue;
-
-    // Check if this page's title appears in the chat wikilinks or as plain text
-    const titleLower = page.title.toLowerCase();
-    const referencedInChat =
-      chatLinks.has(titleLower) ||
-      chatText.toLowerCase().includes(`[[${titleLower}]]`) ||
-      chatText.toLowerCase().includes(titleLower);
-
-    if (referencedInChat) {
-      stale.push({ path: page.relPath, updated });
-    }
-  }
-
-  return stale;
-}
-
-/**
- * Check 4: Frontmatter inconsistencies — missing required fields.
+ * Check 3: Frontmatter inconsistencies — missing required fields.
  */
 function detectFrontmatterIssues(pages: PageInfo[]): FrontmatterIssue[] {
   return pages
@@ -405,7 +276,7 @@ function detectFrontmatterIssues(pages: PageInfo[]): FrontmatterIssue[] {
 }
 
 /**
- * Check 5: Dead-letter queue items — facts that failed 3× and need human attention.
+ * Check 4: Dead-letter queue items — facts that failed 3× and need human attention.
  * Reads ~/.plumb/wiki-queue-dead.jsonl directly (no wiki-worker import needed).
  */
 async function readDeadLetterItems(deadLetterPath: string): Promise<DeadLetterItem[]> {
@@ -440,7 +311,6 @@ function formatReport(
   const totalIssues =
     report.orphanPages.length +
     report.brokenLinks.length +
-    report.stalePages.length +
     report.frontmatterIssues.length +
     report.deadLetterItems.length;
 
@@ -464,17 +334,6 @@ function formatReport(
   if (report.brokenLinks.length > 0) {
     for (const b of report.brokenLinks) {
       lines.push(`- ${b.sourcePath} → [[${b.target}]]`);
-    }
-  }
-  lines.push('');
-
-  // Stale pages
-  lines.push(
-    `**Stale pages** (>30 days old, referenced today): ${report.stalePages.length}`,
-  );
-  if (report.stalePages.length > 0) {
-    for (const s of report.stalePages) {
-      lines.push(`- ${s.path} (updated: ${s.updated})`);
     }
   }
   lines.push('');
@@ -551,8 +410,6 @@ async function appendToLog(
 export async function wikiLintCommand(options: WikiLintOptions = {}): Promise<void> {
   const today = options.date ?? new Date().toISOString().slice(0, 10);
   const wikiRoot = options.wiki ?? join(homedir(), '.plumb', 'wiki');
-  const sessionsDir =
-    options.sessions ?? join(homedir(), '.openclaw', 'agents', 'main', 'sessions');
   const deadLetterPath =
     options.deadLetter ?? join(homedir(), '.plumb', 'wiki-queue-dead.jsonl');
   const dryRun = options.dryRun ?? false;
@@ -560,7 +417,6 @@ export async function wikiLintCommand(options: WikiLintOptions = {}): Promise<vo
 
   console.log(`Wiki lint — ${today}`);
   console.log(`  wiki:     ${wikiRoot}`);
-  console.log(`  sessions: ${sessionsDir}`);
   if (dryRun) console.log(`  [dry-run mode]`);
 
   if (!existsSync(wikiRoot)) {
@@ -578,15 +434,6 @@ export async function wikiLintCommand(options: WikiLintOptions = {}): Promise<vo
     return;
   }
 
-  // --- Load today's chat text for stale page detection ---
-  console.log('Loading today\'s chat logs…');
-  const chatText = loadTodaysChatText(sessionsDir, today);
-  if (chatText) {
-    console.log(`  Loaded ${chatText.length} chars of chat context.`);
-  } else {
-    console.log('  No chat logs found for today.');
-  }
-
   // --- Run lint checks ---
   console.log('\nRunning lint checks…');
 
@@ -595,9 +442,6 @@ export async function wikiLintCommand(options: WikiLintOptions = {}): Promise<vo
 
   const brokenLinks = detectBrokenLinks(linkMap, titleToPath, slugToPath);
   console.log(`  Broken wikilinks:   ${brokenLinks.length}`);
-
-  const stalePages = detectStalePages(pages, chatText, today);
-  console.log(`  Stale pages:        ${stalePages.length}`);
 
   const frontmatterIssues = detectFrontmatterIssues(pages);
   console.log(`  Frontmatter issues: ${frontmatterIssues.length}`);
@@ -608,14 +452,12 @@ export async function wikiLintCommand(options: WikiLintOptions = {}): Promise<vo
   const report: LintReport = {
     orphanPages,
     brokenLinks,
-    stalePages,
     frontmatterIssues,
     deadLetterItems,
   };
   const totalIssues =
     orphanPages.length +
     brokenLinks.length +
-    stalePages.length +
     frontmatterIssues.length +
     deadLetterItems.length;
 
