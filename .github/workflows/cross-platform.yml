@@ -13,6 +13,10 @@ on:
         type: boolean
         default: false
 
+# Least privilege: tests only read the repo.
+permissions:
+  contents: read
+
 # -------------------------------------------------------------------
 # STRATEGY
 #

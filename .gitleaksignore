@@ -9,7 +9,30 @@ c5c242283eeac975d7893746a3b308c36b74dc09:hosted/api-server/src/routes/auth.test.
 c5c242283eeac975d7893746a3b308c36b74dc09:hosted/api-server/src/routes/auth.test.ts:generic-api-key:84
 c5c242283eeac975d7893746a3b308c36b74dc09:hosted/api-server/src/routes/auth.test.ts:generic-api-key:85
 
-# PostHog public analytics key — historical commits; key moved to env var in current source
+# PostHog public analytics key (phc_ project token), historical commits only.
+# Current source reads it from the build environment: POSTHOG_KEY for the plugin
+# (esbuild define), NEXT_PUBLIC_POSTHOG_KEY for the website.
+#
+# BLIND SPOT, do not repeat: c7881c0 ("move PostHog key to env var") only moved the
+# website key. The plugin key was relocated into esbuild.config.mjs as a hardcoded
+# literal and stayed there in plaintext until 2026-08-09. Gitleaks never flagged it,
+# so a clean scan here does NOT prove the repo is free of phc_ tokens. If you add a
+# secret to a build config, grep for it manually.
+#
+# Not a real exposure: a phc_ project token is public by design. It only works on
+# PostHog's unauthenticated POST-only endpoints (event capture, feature flag
+# evaluation) and grants no access to private project data. It is intended to ship
+# in client-side bundles and CLI binaries. See https://posthog.com/docs/api
+#
+# RETIRED 2026-08-09: this key was deleted in PostHog after an unsolicited external
+# scanner report (codelake advisory CLR-2026-11894) flagged it in published
+# @getplumb/plumb tarballs. The report was accurate but overstated the severity.
+# The token is now inert. One caveat for whoever picks this up: the website and the
+# npm plugin shared a single project token, so deleting it stopped both. Published
+# versions 0.4.18 through 0.4.23 are immutable and will never report again.
+# If telemetry is restored, use separate PostHog projects for website vs plugin.
+#
+# Fingerprints below stay so gitleaks does not re-flag the historical commits.
 7d986dc37ea617048d7beadd80b609b08e57125d:website/src/app/providers.tsx:generic-api-key:7
 362585872ce32c868819cbe3213f3f266c517ca5:packages/openclaw-plugin/src/telemetry.ts:generic-api-key:21
 
