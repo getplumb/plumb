@@ -16,10 +16,19 @@ concurrency:
   group: publish
   cancel-in-progress: false
 
+# Default the GITHUB_TOKEN to read-only. This job holds NPM_TOKEN, so it should
+# not also inherit the repo-wide default write scopes.
+permissions:
+  contents: read
+
 jobs:
   publish:
     name: Build, Test & Publish
     runs-on: ubuntu-latest
+
+    # contents: write is needed only to create the GitHub Release below.
+    permissions:
+      contents: write
 
     steps:
       - uses: actions/checkout@v4
@@ -37,6 +46,10 @@ jobs:
 
       - name: Build all packages
         run: pnpm build
+        env:
+          # Optional. If this secret is unset the bundle ships an empty PostHog
+          # key and telemetry silently no-ops, which is a safe default.
+          POSTHOG_KEY: ${{ secrets.POSTHOG_KEY }}
 
       - name: Run tests
         run: pnpm test

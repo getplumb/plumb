@@ -46,8 +46,12 @@ async function main() {
     // The plugin does not use LLM APIs in this MVP release — fact extraction
     // is disabled, so these env reads are dead code that esbuild will tree-shake.
     define: {
-      // PostHog public analytics key — injected at build time (safe to embed in bundle)
-      'process.env.POSTHOG_KEY': JSON.stringify('phc_zODHLfFXk0LZXbOn98Wd0i1BMg8QJT3P5LIortpGyut'),
+      // PostHog public analytics key (phc_ project token), read from the build
+      // environment. Never hardcode the literal here: it lands in a public repo,
+      // and gitleaks does not flag this file. Set POSTHOG_KEY in the publish
+      // environment to enable telemetry. If it is unset the bundle ships an empty
+      // key, PostHog rejects the capture call, and telemetry silently no-ops.
+      'process.env.POSTHOG_KEY': JSON.stringify(process.env.POSTHOG_KEY ?? ''),
       'process.env.OPENAI_API_KEY': 'undefined',
       'process.env.ANTHROPIC_API_KEY': 'undefined',
       'process.env.GEMINI_API_KEY': 'undefined',
