@@ -1,0 +1,35 @@
+[Unit]
+Description=Plumb wiki search instance (shared 127.0.0.1:18795 via SO_REUSEPORT, admin port %i)
+
+[Service]
+ExecStart=/usr/bin/node /home/openclaw-host/plumb-services/wiki-search/src/server.js
+WorkingDirectory=/home/openclaw-host/plumb-services/wiki-search
+# All instances share the client-facing port; the kernel balances connections
+# and drops a dead instance's socket instantly. The instance name (%i) doubles
+# as the per-instance admin port, the only way to health-check THIS instance.
+Environment=PORT=18795
+Environment=REUSE_PORT=1
+Environment=ADMIN_PORT=%i
+Environment=INSTANCE_ID=%i
+Environment=WIKI_DB_PATH=/home/openclaw-host/.plumb/wiki.db
+Environment=WIKI_ROOT=/home/openclaw-host/.plumb/wiki
+Environment=WIKI_SEARCH_MODE=fast-hybrid
+# Keep the embedder resident permanently (Clay approved 2026-08-10): real
+# traffic is bursty, and the 5-min idle shutdown made almost every burst-entry
+# query pay the ~430ms cold spawn.
+Environment=WIKI_EMBEDDER_IDLE_MS=0
+# Per-instance memory budget (measured peak 243MB under load): the engine's
+# guard degrades vector search to BM25 (visible in /health) before cgroup
+# pressure, which sits below MemoryMax so the OOM killer stays last resort.
+Environment=WIKI_SEARCH_FAST_GUARD_BYTES=419430400
+Environment=WIKI_SEARCH_GUARD_BYTES=419430400
+MemoryHigh=500M
+MemoryMax=640M
+Restart=always
+RestartSec=2
+# A wedged (e.g. SIGSTOPped) process never handles SIGTERM; without this the
+# watchdog's restart would stall on systemd's 90s default before the SIGKILL.
+TimeoutStopSec=10
+
+[Install]
+WantedBy=default.target

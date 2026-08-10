@@ -36,15 +36,53 @@ makes the benchmarked engine the deployed engine, decoupled from both terra-chat
   self-spawned service instance. Same scoring code as
   `plumb-benchmark/real-wiki/v4/eval-v7.mjs`.
 
-## Deployment (2026-08-09)
+## Deployment (multi-instance since 2026-08-10)
 
 - Deployed copy: `~/plumb-services/wiki-search/` (own `node_modules`, model
   cache vendored at `node_modules/@xenova/transformers/.cache`). No references
   into `~/.openclaw` at runtime.
-- Unit: `~/.config/systemd/user/plumb-wiki-search.service`
-  (port 18795, loopback, `Restart=always`, `MemoryMax=1G`, guard 800MB).
-- Update flow: edit in this package, `npm test`, copy changed files to
-  `~/plumb-services/wiki-search/`, `systemctl --user restart plumb-wiki-search`.
+- **Two instances** of the systemd template `plumb-wiki-search@.service`
+  (copy in `systemd/` here): `@18801` and `@18802`. All instances bind the
+  shared client port `127.0.0.1:18795` with `SO_REUSEPORT`
+  (`REUSE_PORT=1`): the kernel balances new connections and stops routing to a
+  dead socket instantly, so an instance crash costs clients nothing (drilled:
+  SIGKILL under a 200-request loop, zero errors). The instance name is the
+  per-instance **admin port** (`ADMIN_PORT=%i` serving the same routes), the
+  only way to health-check a specific instance. Per-instance caps:
+  `MemoryHigh=500M`/`MemoryMax=640M`, guard 400MB, `TimeoutStopSec=10` (a
+  wedged process never handles SIGTERM; without this a watchdog restart stalls
+  90s before the SIGKILL).
+- The multi-instance changes to `src/server.js` are transport-only, marked
+  `// Service patch (multi-instance ...)`: `INSTANCE_ID` (logs, `/health`,
+  `x-plumb-instance` response header), `REUSE_PORT`, `ADMIN_PORT`. Defaults
+  keep plain single-instance behavior; the engine is untouched.
+- **Update flow (zero downtime):** edit in this package, `npm test`, copy
+  changed files to `~/plumb-services/wiki-search/`, then rolling restart:
+  `systemctl --user restart plumb-wiki-search@18801`, wait for
+  `curl -s 127.0.0.1:18801/health` to show `embedder.resident: true`, then the
+  same for `@18802`. Never restart both at once.
+- **Watchdog:** registry job `plumb-wiki-search-watchdog` (every minute,
+  `jobs/src/jobs/plumb-wiki-search-watchdog.ts`) restarts an instance whose
+  admin `/health` fails two probes 2s apart. It exists solely for the
+  alive-but-wedged case; dead instances are systemd's job. Drilled with
+  SIGSTOP: detected, restarted, recovered, exit 0.
+- **Telemetry:** injection (`plumb.wiki_injection`, written by
+  `hooks/plumb-wiki-service-injection.mjs`, deployed at
+  `~/.claude/hooks/`) and MCP search (`plumb.wiki_search`, written by
+  `src/mcp-server.mjs`) events both carry `instance` from the
+  `x-plumb-instance` header. The traffic exporter
+  (`~/.openclaw-dev/observability/plumb-claude-code-traffic-exporter`, :9467)
+  labels all traffic series by instance and polls both admin `/health`
+  endpoints for `plumb_wiki_search_instance_up`, embedder state, coverage,
+  RSS, uptime, and a pid-change restart counter.
+- Measured 2026-08-10 (2 instances, shared port, 4-core host): connection
+  spread ~50/50; throughput ~75 RPS at c50-c100 with zero errors, i.e. the
+  same ceiling as one instance, because at saturation both instances contend
+  for the same 4 cores (the embedder's ORT threads already use most of them).
+  Multi-instance here buys failover and zero-downtime deploys, not peak RPS.
+- Rollback: single-instance unit `plumb-wiki-search.service` is still on disk,
+  disabled. `systemctl --user stop 'plumb-wiki-search@*' && systemctl --user
+  start plumb-wiki-search` restores the 2026-08-09 topology.
 
 ## Operational notes
 

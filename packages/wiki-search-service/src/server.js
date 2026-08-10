@@ -31,6 +31,21 @@ const WIKI_ROOT = process.env.WIKI_ROOT || join(homedir(), '.plumb', 'wiki')
 // underlying promise is abandoned (it settles into a resolved race, harmless).
 const SEARCH_TIMEOUT_MS = Number(process.env.SEARCH_TIMEOUT_MS) || 10_000
 
+// Service patch (multi-instance, 2026-08-10): identity and bind options for
+// running N copies of this service behind one shared port.
+//   INSTANCE_ID  labels every log line, /health, and the x-plumb-instance
+//                response header so clients and telemetry can attribute work.
+//   REUSE_PORT=1 binds PORT with SO_REUSEPORT; the kernel balances new
+//                connections across instances and stops routing to a socket
+//                the moment its owner dies.
+//   ADMIN_PORT   optional second listener serving the same routes, because the
+//                shared port cannot target a specific instance for /health.
+const INSTANCE_ID = process.env.INSTANCE_ID || 'single'
+const REUSE_PORT = process.env.REUSE_PORT === '1'
+const ADMIN_PORT = process.env.ADMIN_PORT !== undefined && process.env.ADMIN_PORT !== ''
+  ? Number(process.env.ADMIN_PORT)
+  : undefined
+
 const VERSION = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version
 const STARTED_AT = Date.now()
 const navigator = createWikiNavigator({ wikiRoot: WIKI_ROOT, wikiDbPath: WIKI_DB_PATH })
@@ -42,7 +57,8 @@ const VALIDATION_ERRORS = new Set([
 ])
 
 function log(entry) {
-  process.stdout.write(`${JSON.stringify({ ts: new Date().toISOString(), ...entry })}\n`)
+  // Service patch (multi-instance): instance label on every line.
+  process.stdout.write(`${JSON.stringify({ ts: new Date().toISOString(), instance: INSTANCE_ID, ...entry })}\n`)
 }
 
 function send(res, status, body) {
@@ -50,6 +66,10 @@ function send(res, status, body) {
   res.writeHead(status, {
     'content-type': 'application/json; charset=utf-8',
     'content-length': Buffer.byteLength(payload),
+    // Service patch (multi-instance): attribution header. The /search body must
+    // stay byte-identical to the engine output (parity contract), so the
+    // instance id rides a header instead.
+    'x-plumb-instance': INSTANCE_ID,
   })
   res.end(payload)
   return status
@@ -71,6 +91,7 @@ const routes = {
       body: {
         ok: true,
         service: 'plumb-wiki-search',
+        instance: INSTANCE_ID,
         version: VERSION,
         pid: process.pid,
         uptimeMs: Date.now() - STARTED_AT,
@@ -101,7 +122,9 @@ const routes = {
   '/resolve': async (params) => ({ status: 200, body: { path: navigator.resolve(params.get('title') || '') } }),
 }
 
-const server = createServer(async (req, res) => {
+// Service patch (multi-instance): named handler shared by the main listener
+// and the optional per-instance admin listener.
+async function handleRequest(req, res) {
   const started = performance.now()
   const url = new URL(req.url, `http://${HOST}:${PORT}`)
   const route = routes[url.pathname]
@@ -125,11 +148,24 @@ const server = createServer(async (req, res) => {
     else status = send(res, 500, { error: message })
   }
   log({ route: url.pathname, status, elapsedMs: Math.round((performance.now() - started) * 100) / 100, ...extra })
-})
+}
 
-server.listen(PORT, HOST, async () => {
+const server = createServer(handleRequest)
+
+// Service patch (multi-instance): per-instance admin listener. Started before
+// the shared port so a watchdog can see an instance that is up but still
+// waiting for the shared port (e.g. during cutover while another process holds
+// a non-reusePort bind on it).
+const adminServer = ADMIN_PORT !== undefined ? createServer(handleRequest) : null
+if (adminServer) {
+  adminServer.listen(ADMIN_PORT, HOST, () => {
+    log({ event: 'admin_listening', host: HOST, port: adminServer.address().port })
+  })
+}
+
+server.listen({ port: PORT, host: HOST, reusePort: REUSE_PORT }, async () => {
   // PORT=0 binds an ephemeral port (tests); report the real one.
-  log({ event: 'listening', host: HOST, port: server.address().port, version: VERSION, searchMode: getWikiSearchMode() })
+  log({ event: 'listening', host: HOST, port: server.address().port, reusePort: REUSE_PORT, version: VERSION, searchMode: getWikiSearchMode() })
   // Warm the index and resident embedder so the first real query is fast, and
   // log what mode warmup actually achieved (bm25-* here means degraded).
   try {
@@ -144,6 +180,7 @@ server.listen(PORT, HOST, async () => {
 for (const signal of ['SIGTERM', 'SIGINT']) {
   process.once(signal, () => {
     log({ event: 'shutdown', signal })
+    if (adminServer) adminServer.close()
     server.close(() => process.exit(0))
     // systemd kills the whole cgroup (embedder child included); this timer just
     // bounds a graceful close for manual runs.

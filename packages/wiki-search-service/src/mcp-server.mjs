@@ -10,6 +10,7 @@
 // Tool names, input schemas, and output text formats mirror the old server so
 // sessions, prompts, and the queue worker see no interface change.
 import { randomUUID } from 'node:crypto'
+import { appendFileSync, mkdirSync } from 'node:fs'
 import { appendFile, mkdir } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -20,6 +21,29 @@ import { z } from 'zod'
 const SERVICE = process.env.PLUMB_WIKI_SERVICE_URL || 'http://127.0.0.1:18795'
 const QUEUE_PATH = process.env.PLUMB_WIKI_QUEUE_PATH || join(homedir(), '.plumb', 'wiki-queue.jsonl')
 const FETCH_DEADLINE_MS = Number(process.env.PLUMB_MCP_FETCH_DEADLINE_MS) || 5000
+const TELEMETRY_PATH =
+  process.env.PLUMB_TRAFFIC_TELEMETRY_PATH ?? '/home/openclaw-host/.plumb/telemetry/claude-code-traffic.jsonl'
+
+// plumb.wiki_search telemetry, same event shape the old @getplumb/plumb MCP
+// server wrote (the traffic exporter graphs it), plus backend and the serving
+// instance (x-plumb-instance header, multi-instance deployment 2026-08-10).
+// Counts and timings only, never query text.
+function recordSearchTelemetry(entry) {
+  try {
+    mkdirSync(dirname(TELEMETRY_PATH), { recursive: true })
+    appendFileSync(
+      TELEMETRY_PATH,
+      JSON.stringify({
+        ts: new Date().toISOString(),
+        event: 'plumb.wiki_search',
+        backend: 'wiki-search-service',
+        ...entry,
+      }) + '\n',
+    )
+  } catch {
+    // Telemetry must never break a tool call.
+  }
+}
 
 function textResult(text, isError = false) {
   return { content: [{ type: 'text', text }], isError }
@@ -27,6 +51,8 @@ function textResult(text, isError = false) {
 
 const errorMessage = (err) => (err instanceof Error ? err.message : String(err))
 
+// Returns { body, instance } so callers can attribute the response to a
+// service instance; the body itself stays untouched engine output.
 async function service(path) {
   const controller = new AbortController()
   const deadline = setTimeout(() => controller.abort(), FETCH_DEADLINE_MS)
@@ -34,7 +60,7 @@ async function service(path) {
     const response = await fetch(`${SERVICE}${path}`, { signal: controller.signal })
     const body = await response.json().catch(() => ({}))
     if (!response.ok) throw new Error(body.error || `wiki-search service HTTP ${response.status}`)
-    return body
+    return { body, instance: response.headers.get('x-plumb-instance') || undefined }
   } catch (err) {
     if (err?.name === 'AbortError') throw new Error(`wiki-search service timed out after ${FETCH_DEADLINE_MS}ms`)
     throw err
@@ -55,10 +81,19 @@ server.tool(
     topK: z.number().int().optional().describe('Maximum number of results to return (default: 5, max: 10)'),
   },
   async (args) => {
+    const k = Math.max(1, Math.min(args.topK ?? 5, 10))
+    const started = performance.now()
     try {
-      const k = Math.max(1, Math.min(args.topK ?? 5, 10))
-      const payload = await service(`/search?q=${encodeURIComponent(args.query)}&topK=${k}`)
+      const { body: payload, instance } = await service(`/search?q=${encodeURIComponent(args.query)}&topK=${k}`)
       const results = payload.results ?? []
+      recordSearchTelemetry({
+        status: 'ok',
+        instance,
+        searchMode: payload.mode,
+        resultCount: results.length,
+        topK: k,
+        elapsedMs: Math.round(performance.now() - started),
+      })
       if (results.length === 0) return textResult('No wiki pages found matching this query.')
       const lines = [`Wiki search results for "${args.query}":`, '']
       results.forEach((r, i) => {
@@ -69,6 +104,12 @@ server.tool(
       })
       return textResult(lines.join('\n'))
     } catch (err) {
+      recordSearchTelemetry({
+        status: 'error',
+        topK: k,
+        resultCount: 0,
+        elapsedMs: Math.round(performance.now() - started),
+      })
       return textResult(`Error searching wiki: ${errorMessage(err)}`, true)
     }
   },
@@ -83,7 +124,7 @@ server.tool(
   async (args) => {
     try {
       const relPath = args.path.endsWith('.md') ? args.path : `${args.path}.md`
-      const page = await service(`/page?path=${encodeURIComponent(relPath)}`)
+      const { body: page } = await service(`/page?path=${encodeURIComponent(relPath)}`)
       const lines = [`# ${page.title ?? relPath}`, '']
       lines.push(`**Path:** ${page.path}`)
       lines.push(`**Type:** ${page.type}`)
@@ -107,7 +148,7 @@ server.tool(
   },
   async (args) => {
     try {
-      const { tree } = await service('/tree')
+      const { body: { tree } } = await service('/tree')
       let nodes = tree
       const target = (args.directory ?? '').replace(/^\/+|\/+$/g, '')
       if (target) {
@@ -147,7 +188,7 @@ server.tool(
   async (args) => {
     try {
       const relPath = args.path.endsWith('.md') ? args.path : `${args.path}.md`
-      const { outbound, inbound } = await service(`/links?path=${encodeURIComponent(relPath)}`)
+      const { body: { outbound, inbound } } = await service(`/links?path=${encodeURIComponent(relPath)}`)
       const lines = [`Outbound links (${outbound.length}):`]
       if (outbound.length === 0) lines.push('  (none)')
       for (const link of outbound) {

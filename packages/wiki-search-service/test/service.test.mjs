@@ -10,7 +10,7 @@
 import { test, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
-import { once } from 'node:events'
+import { get as httpGet } from 'node:http'
 
 const SNAPSHOT = '/home/openclaw-host/.openclaw/workspace/plumb-benchmark/real-wiki/artifacts/v7-snapshot-20260807'
 const TEST_DB = process.env.WIKI_TEST_DB || `${SNAPSHOT}/wiki.db`
@@ -66,13 +66,49 @@ async function startService(extraEnv = {}) {
 
 async function stopService(service) {
   if (!service) return
-  service.child.kill('SIGTERM')
-  await once(service.child, 'exit').catch(() => {})
+  // The multi-instance tests kill children mid-test; 'exit' never re-fires for
+  // an already-dead child, so check liveness inside the promise.
+  await new Promise(resolve => {
+    if (service.child.exitCode !== null || service.child.signalCode !== null) return resolve()
+    service.child.once('exit', resolve)
+    service.child.kill('SIGTERM')
+  })
 }
 
 async function getJson(service, path) {
   const response = await fetch(service.url(path))
   return { status: response.status, body: await response.json() }
+}
+
+// fetch() pools keep-alive connections per origin, which would pin every
+// request to whichever instance accepted the first one. SO_REUSEPORT balances
+// per NEW connection, so the multi-instance tests force one fresh connection
+// per request (agent: false) and surface the attribution header.
+function freshGet(port, path) {
+  return new Promise((resolve, reject) => {
+    const req = httpGet({ host: '127.0.0.1', port, path, agent: false }, res => {
+      let raw = ''
+      res.setEncoding('utf8')
+      res.on('data', chunk => { raw += chunk })
+      res.on('end', () => {
+        try {
+          resolve({ status: res.statusCode, instance: res.headers['x-plumb-instance'], body: JSON.parse(raw) })
+        } catch (error) {
+          reject(error)
+        }
+      })
+    })
+    req.on('error', reject)
+  })
+}
+
+async function adminPortOf(service) {
+  for (let i = 0; i < 100; i += 1) {
+    const entry = service.logs.find(e => e.event === 'admin_listening')
+    if (entry) return entry.port
+    await new Promise(r => setTimeout(r, 50))
+  }
+  throw new Error('admin listener never came up')
 }
 
 async function waitForWarmup(service) {
@@ -381,5 +417,73 @@ test('search deadline converts a too-slow query into 503, not a hang', async () 
     assert.match(body.error, /timed out/)
   } finally {
     await stopService(isolated)
+  }
+})
+
+// ── Service patch (multi-instance) coverage ──────────────────────────────────
+
+test('instance identity: response header, health field, log labels, admin listener', async () => {
+  const isolated = await startService({ INSTANCE_ID: 'ident-a', ADMIN_PORT: '0' })
+  try {
+    await waitForWarmup(isolated)
+    const main = await freshGet(isolated.port, '/health')
+    assert.equal(main.status, 200)
+    assert.equal(main.instance, 'ident-a', 'x-plumb-instance header must carry the id')
+    assert.equal(main.body.instance, 'ident-a', '/health body must carry the id')
+    for (const entry of isolated.logs) {
+      assert.equal(entry.instance, 'ident-a', `log entry missing instance label: ${JSON.stringify(entry)}`)
+    }
+    // The admin listener serves the same routes and identifies the same instance.
+    const adminPort = await adminPortOf(isolated)
+    assert.notEqual(adminPort, isolated.port)
+    const admin = await freshGet(adminPort, '/health')
+    assert.equal(admin.status, 200)
+    assert.equal(admin.instance, 'ident-a')
+    const search = await freshGet(adminPort, '/search?q=admin+listener+probe&topK=2')
+    assert.equal(search.status, 200)
+  } finally {
+    await stopService(isolated)
+  }
+})
+
+test('default single-instance mode is unchanged: id "single", no admin listener', async () => {
+  const { status, instance, body } = await freshGet(service.port, '/health')
+  assert.equal(status, 200)
+  assert.equal(instance, 'single')
+  assert.equal(body.instance, 'single')
+  assert.ok(!service.logs.some(e => e.event === 'admin_listening'))
+})
+
+test('two reusePort instances share one port; killing one leaves zero client errors', async () => {
+  const a = await startService({ INSTANCE_ID: 'pair-a', REUSE_PORT: '1' })
+  let b
+  try {
+    await waitForWarmup(a)
+    b = await startService({ INSTANCE_ID: 'pair-b', REUSE_PORT: '1', PORT: String(a.port) })
+    await waitForWarmup(b)
+    assert.equal(b.port, a.port, 'both instances must share the port')
+    // The kernel hashes each fresh connection's ephemeral source port, so a
+    // short run of independent connections must reach both instances.
+    const seen = new Set()
+    for (let i = 0; i < 40 && seen.size < 2; i += 1) {
+      const r = await freshGet(a.port, '/health')
+      assert.equal(r.status, 200)
+      seen.add(r.instance)
+    }
+    assert.deepEqual([...seen].sort(), ['pair-a', 'pair-b'], 'kernel must spread connections across both')
+    // Failover: SIGKILL one instance; every subsequent request must succeed
+    // and be served by the survivor. No LB, no retry logic, just the kernel
+    // dropping the dead socket.
+    a.child.kill('SIGKILL')
+    await stopService(a)
+    await new Promise(r => setTimeout(r, 100))
+    for (let i = 0; i < 30; i += 1) {
+      const r = await freshGet(a.port, `/search?q=survivor+probe+${i}&topK=2`)
+      assert.equal(r.status, 200, `request ${i} failed after instance kill`)
+      assert.equal(r.instance, 'pair-b')
+    }
+  } finally {
+    await stopService(b)
+    await stopService(a)
   }
 })
