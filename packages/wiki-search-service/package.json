@@ -1,0 +1,19 @@
+{
+  "name": "@getplumb/wiki-search-service",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Standalone loopback HTTP service around the benchmarked wikiNavigator wiki-search engine (extracted verbatim from terra-chat 2026-08-09). Single retrieval backend for the Claude Code injection hook, the Claude Code MCP server, and the Terra Console wiki surface.",
+  "engines": {
+    "node": ">=22.5"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test 'test/*.test.mjs'"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@xenova/transformers": "2.17.2",
+    "zod": "^4.4.3"
+  }
+}
