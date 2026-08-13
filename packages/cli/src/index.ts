@@ -14,7 +14,10 @@ import { wikiEmbedCommand } from './commands/wiki-embed.js';
 import { wikiDreamScanCommand } from './commands/wiki-dream-scan.js';
 import { wikiDreamWriteCommand } from './commands/wiki-dream-write.js';
 import { wikiLintCommand } from './commands/wiki-lint.js';
+import { wikiSurgicalRepairCommand } from './commands/wiki-surgical-repair.js';
 import { wikiDreamCommand } from './commands/wiki-dream.js';
+import { wikiContextualBackfillCommand } from './commands/wiki-contextual-backfill.js';
+import { wikiCoverageGateCommand } from './commands/wiki-coverage-gate.js';
 
 // Read version from package.json
 const __filename = fileURLToPath(import.meta.url);
@@ -119,6 +122,54 @@ wikiCmd
   });
 
 wikiCmd
+  .command('contextual-backfill')
+  .description('Backfill opt-in contextual child embeddings into the wiki sidecar table')
+  .option('--db <path>', 'Path to wiki.db (defaults to ~/.plumb/wiki.db)')
+  .option('--model <model>', 'Contextual embedding model. E017 supports only Xenova/bge-small-en-v1.5')
+  .option('--limit <n>', 'Maximum chunks to process this run', parseInt)
+  .option('--batch-size <n>', 'Maximum chunks to process before returning interrupted=true', parseInt)
+  .option('--verbose', 'Print per-chunk progress')
+  .option('--json', 'Print machine-readable stats')
+  .action(async (options) => {
+    await wikiContextualBackfillCommand({
+      db: options.db,
+      model: options.model,
+      limit: options.limit,
+      batchSize: options.batchSize,
+      verbose: options.verbose,
+      json: options.json,
+    });
+  });
+
+wikiCmd
+  .command('coverage-gate')
+  .description(
+    'Deterministic check that wiki_pages matches the wiki tree on disk: missing pages, ghost rows, and the wiki_chunks/wiki_chunk_context_embeddings gap. Exits nonzero on any violation.',
+  )
+  .option('--wiki <path>', 'Wiki root directory (defaults to ~/.plumb/wiki)')
+  .option('--db <path>', 'Path to wiki.db (defaults to ~/.plumb/wiki.db)')
+  .option('--json', 'Print machine-readable report')
+  .option(
+    '--remediate',
+    'Additive only: re-index missing and stale pages and backfill any contextual gap, then re-check. Never deletes rows.',
+  )
+  .option(
+    '--prune',
+    'Delete index rows for pages that are gone or now excluded (ghosts). Index rows only, never files. Refuses to remove more than 20% of the index without --force.',
+  )
+  .option('--force', 'Bypass the --prune blast-radius guardrail.')
+  .action(async (options) => {
+    await wikiCoverageGateCommand({
+      wiki: options.wiki,
+      db: options.db,
+      json: options.json,
+      remediate: options.remediate,
+      prune: options.prune,
+      force: options.force,
+    });
+  });
+
+wikiCmd
   .command('dream-scan')
   .description('Nightly Haiku catch-up scan: compare today\'s facts vs wiki, enqueue missed items')
   .option('--db <path>', 'Path to memory database (defaults to ~/.plumb/memory.db)')
@@ -177,8 +228,22 @@ wikiCmd
   });
 
 wikiCmd
+  .command('dream-repair')
+  .description('Deterministic surgical wiki repair: broken wikilinks and frontmatter only')
+  .option('--wiki <path>', 'Wiki root directory (defaults to ~/.plumb/wiki)')
+  .option('--date <YYYY-MM-DD>', 'Date string (defaults to today)')
+  .option('--dry-run', 'Print repairs but do not write files')
+  .action(async (options) => {
+    await wikiSurgicalRepairCommand({
+      wiki: options.wiki,
+      date: options.date,
+      dryRun: options.dryRun,
+    });
+  });
+
+wikiCmd
   .command('dream')
-  .description('Nightly wiki dream cron: catch-up(Haiku) → link-rebuild → lint → git commit + push')
+  .description('Nightly wiki dream cron: catch-up → link-rebuild → lint → surgical repair → refactor → commit + push')
   .option('--wiki <path>', 'Wiki root directory (defaults to ~/.plumb/wiki)')
   .option('--db <path>', 'Path to memory database (defaults to ~/.plumb/memory.db)')
   .option('--wiki-db <path>', 'Path to wiki.db (defaults to ~/.plumb/wiki.db)')

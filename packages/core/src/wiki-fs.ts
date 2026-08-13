@@ -316,6 +316,131 @@ const SKIP_FILENAMES = new Set([
 /** Filename prefixes to skip (meta reports, audits, evals). */
 const SKIP_PREFIXES = ['AUDIT_', 'EVAL_', 'REPORT_'];
 
+/** Declarative exclusion file at the wiki root. */
+export const PLUMBIGNORE_FILENAME = '.plumbignore';
+
+/**
+ * A parsed `.plumbignore`: the wiki's retrieval boundary.
+ *
+ * Exists because directory-level exclusion had no representation at all.
+ * `SKIP_FILENAMES`/`SKIP_PREFIXES` are tested only against *filenames*, so a
+ * folder named `_transcripts/` was walked into and its `call.md` indexed —
+ * underscore-prefixing a folder did nothing. Hardcoding a second folder name
+ * next to `archive` would have worked once and then needed a code change and
+ * a release for every future boundary decision.
+ *
+ * Deliberately a *retrieval* boundary and nothing else. An ignored page stays
+ * a real file: still on disk, still committed and pushed to the backup repo,
+ * still searchable in Obsidian, still readable by anyone who opens it. All it
+ * loses is a `wiki_pages` row, so Plumb's own retrieval never surfaces it.
+ *
+ * Supported syntax, deliberately a small documented subset of gitignore
+ * rather than a half-accurate imitation of all of it:
+ *
+ *   `# comment`      whole-line comment; blank lines ignored
+ *   `transcripts/`   a directory: excludes it and everything beneath it
+ *   `a/b/c.md`       a path containing `/`: anchored at the wiki root, exact
+ *                    match or prefix-with-`/`
+ *   `scratch`        a bare name: matches any path segment, file or directory
+ *   `*.draft.md`     a glob (`*` never crosses `/`): matched against basename
+ *
+ * NOT supported: negation (`!`), `**`, and character classes. A `!` line is
+ * inert rather than silently reinterpreted — so a pattern meant to re-include
+ * something leaves it excluded. That direction is chosen on purpose: for a
+ * boundary whose whole job is keeping material out of retrieval, the safe
+ * failure is excluding too much (visible: the page stops being findable) not
+ * too little (invisible: raw material silently enters the index).
+ */
+export interface PlumbIgnore {
+  /** Raw pattern lines, comments and blanks stripped. For display and audit. */
+  readonly patterns: readonly string[];
+  /** True if this wiki-relative path is excluded. `isDir` selects dir semantics. */
+  matches(relPath: string, isDir: boolean): boolean;
+}
+
+function globToRegExp(glob: string): RegExp {
+  // `*` matches within a single path segment; everything else is literal.
+  const source = glob
+    .split('*')
+    .map((part) => part.replace(/[.+?^${}()|[\]\\]/g, '\\$&'))
+    .join('[^/]*');
+  return new RegExp(`^${source}$`);
+}
+
+/** Build a matcher from raw `.plumbignore` text. Exported for tests and tooling. */
+export function parsePlumbIgnore(text: string): PlumbIgnore {
+  const patterns: string[] = [];
+  for (const rawLine of text.split('\n')) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#')) continue;
+    patterns.push(line);
+  }
+
+  const dirPrefixes: string[] = [];
+  const anchored: string[] = [];
+  const bareNames: string[] = [];
+  const globs: RegExp[] = [];
+
+  for (const pattern of patterns) {
+    if (pattern.startsWith('!')) continue; // unsupported; see the doc comment
+    if (pattern.endsWith('/')) {
+      dirPrefixes.push(pattern.slice(0, -1).replace(/^\/+/, ''));
+    } else if (pattern.includes('/')) {
+      anchored.push(pattern.replace(/^\/+/, ''));
+    } else if (pattern.includes('*')) {
+      globs.push(globToRegExp(pattern));
+    } else {
+      bareNames.push(pattern);
+    }
+  }
+
+  return {
+    patterns,
+    matches(relPath: string, isDir: boolean): boolean {
+      const path = relPath.split('\\').join('/').replace(/^\/+/, '');
+      if (!path) return false;
+      const segments = path.split('/');
+      const basename = segments[segments.length - 1] ?? '';
+
+      for (const prefix of dirPrefixes) {
+        if (path === prefix || path.startsWith(`${prefix}/`)) return true;
+      }
+      for (const target of anchored) {
+        if (path === target || path.startsWith(`${target}/`)) return true;
+      }
+      for (const name of bareNames) {
+        if (segments.includes(name)) return true;
+      }
+      // A directory name is not meaningfully a "*.md" style match, so globs
+      // apply to the basename of either kind without special-casing isDir.
+      for (const re of globs) {
+        if (re.test(basename)) return true;
+      }
+      return false;
+    },
+  };
+}
+
+/** Empty matcher used when no `.plumbignore` exists. */
+const NO_IGNORE: PlumbIgnore = { patterns: [], matches: () => false };
+
+/**
+ * Load `.plumbignore` from the wiki root. A missing file is not an error —
+ * it simply means no extra exclusions.
+ *
+ * The coverage gate reads the boundary through `listWikiPages()`, which calls
+ * this, so the indexer and the gate can never disagree about what is excluded.
+ * That single-source property is what keeps "excluded on purpose" and
+ * "missing by accident" distinguishable.
+ */
+export async function loadPlumbIgnore(wikiRoot: string): Promise<PlumbIgnore> {
+  try {
+    return parsePlumbIgnore(await readFile(join(wikiRoot, PLUMBIGNORE_FILENAME), 'utf8'));
+  } catch {
+    return NO_IGNORE;
+  }
+}
+
 /**
  * Recursively list all wiki page .md files under wikiRoot.
  * Skips metadata files (SCHEMA.md, index.md, log.md, REVIEW.md, _index.md).
@@ -325,10 +450,11 @@ const SKIP_PREFIXES = ['AUDIT_', 'EVAL_', 'REPORT_'];
  */
 export async function listWikiPages(
   wikiRoot: string,
-  { includeArchive = false }: { includeArchive?: boolean } = {},
+  { includeArchive = false, ignore }: { includeArchive?: boolean; ignore?: PlumbIgnore } = {},
 ): Promise<string[]> {
   const results: string[] = [];
-  await walk(wikiRoot, wikiRoot, results, includeArchive);
+  const rules = ignore ?? (await loadPlumbIgnore(wikiRoot));
+  await walk(wikiRoot, wikiRoot, results, includeArchive, rules);
   return results.sort();
 }
 
@@ -337,6 +463,7 @@ async function walk(
   dir: string,
   results: string[],
   includeArchive: boolean,
+  ignore: PlumbIgnore,
 ): Promise<void> {
   let entries: string[];
   try {
@@ -360,8 +487,13 @@ async function walk(
       continue;
     }
 
+    // Tested for directories as well as files, which is the whole point:
+    // pruning the walk here means an ignored folder is never descended into,
+    // so nothing inside it can be indexed regardless of its filenames.
+    if (ignore.matches(relEntry, isDir)) continue;
+
     if (isDir) {
-      await walk(wikiRoot, absEntry, results, includeArchive);
+      await walk(wikiRoot, absEntry, results, includeArchive, ignore);
     } else if (
       extname(entry) === '.md' &&
       !SKIP_FILENAMES.has(entry) &&
