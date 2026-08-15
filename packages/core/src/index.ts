@@ -166,3 +166,17 @@ export type {
   WikiCorpus,
   WikiCorpusPage,
 } from './wiki-integrity.js';
+// Before/after structural readings, so an automated writer can be held to a
+// post-condition instead of a prompt instruction. See wiki-verify.ts.
+export {
+  snapshotWikiStructure,
+  newStructureFindings,
+  structureFindingKeyParts,
+  verifyWikiStructure,
+} from './wiki-verify.js';
+export type {
+  WikiStructureSnapshot,
+  StructureFinding,
+  StructureFindingKind,
+  WikiVerifyResult,
+} from './wiki-verify.js';

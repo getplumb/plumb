@@ -19,6 +19,7 @@ import { wikiDreamCommand } from './commands/wiki-dream.js';
 import { wikiContextualBackfillCommand } from './commands/wiki-contextual-backfill.js';
 import { wikiCoverageGateCommand } from './commands/wiki-coverage-gate.js';
 import { wikiIntegrityCommand } from './commands/wiki-integrity.js';
+import { wikiVerifyEditCommand } from './commands/wiki-verify-edit.js';
 
 // Read version from package.json
 const __filename = fileURLToPath(import.meta.url);
@@ -188,6 +189,24 @@ wikiCmd
       json: options.json,
       // commander maps `--no-write` onto `options.write === false`
       noWrite: options.write === false,
+    });
+  });
+
+wikiCmd
+  .command('verify-edit')
+  .description(
+    "Before/after structural reading, for holding an automated writer to a post-condition. With --before, reports only the link and frontmatter findings the interval INTRODUCED and exits 1 if there are any; without it, just writes a baseline. File-only and DB-free, unlike `plumb wiki integrity`.",
+  )
+  .option('--wiki <path>', 'Wiki root directory (defaults to ~/.plumb/wiki)')
+  .option('--before <path>', 'Previous snapshot to compare against; omit to take a baseline only')
+  .option('--out <path>', 'Where to write the reading just taken, for reuse as the next baseline')
+  .option('--json', 'Print the machine-readable verdict to stdout')
+  .action(async (options) => {
+    await wikiVerifyEditCommand({
+      wiki: options.wiki,
+      before: options.before,
+      out: options.out,
+      json: options.json,
     });
   });
 
