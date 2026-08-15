@@ -22,6 +22,15 @@ import type { WikiFrontmatter } from '@getplumb/core';
 // Valid enum values (from SCHEMA.md §2 and §3)
 // ---------------------------------------------------------------------------
 
+/**
+ * SCHEMA.md §2. This is the WRITE gate: a type not listed here is rejected by
+ * WaaS, so a type the schema allows and this list omits is a page the wiki
+ * cannot create.
+ *
+ * The last four were added 2026-08-15, when the schema caught up with the four
+ * directories the wiki had already grown. SCHEMA.md §2.1 enumerates the four
+ * lists that have to move together; this is one of them.
+ */
 export const VALID_TYPES = [
   'person',
   'company',
@@ -31,6 +40,10 @@ export const VALID_TYPES = [
   'concept',
   'story',
   'life',
+  'education',
+  'preference',
+  'source',
+  'transcript',
 ] as const;
 
 export type ValidWikiType = (typeof VALID_TYPES)[number];

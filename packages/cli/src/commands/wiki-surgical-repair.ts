@@ -23,6 +23,14 @@ const MAX_TOUCHED_PAGES = 10;
 const MAX_REPAIRS_PER_PAGE = 5;
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
+/**
+ * SCHEMA.md §2, inverted. Last four added 2026-08-15 with the rest of §2; see
+ * §2.1 for the full set of lists that move together.
+ *
+ * `transcripts` is listed for completeness only. This command enumerates via
+ * `listWikiPages`, which honours `.plumbignore`, and `transcripts/` is ignored
+ * — so no raw transcript is ever reachable from here.
+ */
 const TYPE_BY_DIR: Record<string, string> = {
   people: 'person',
   companies: 'company',
@@ -32,6 +40,10 @@ const TYPE_BY_DIR: Record<string, string> = {
   concepts: 'concept',
   stories: 'story',
   life: 'life',
+  education: 'education',
+  preferences: 'preference',
+  sources: 'source',
+  transcripts: 'transcript',
 };
 
 export interface WikiSurgicalRepairOptions {

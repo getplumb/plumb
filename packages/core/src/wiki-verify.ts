@@ -70,11 +70,15 @@ export type StructureFindingKind = 'link' | 'frontmatter' | 'placement';
 /**
  * Top-level directories a wiki page may live in.
  *
- * The eight `type` directories SCHEMA.md §2 defines, plus four the wiki grew
- * without the schema catching up (`education`, `preferences`, `sources`,
- * `transcripts`) and `archive` for retired pages. Enumerated from the live tree
- * on 2026-08-14 rather than from the schema alone, because the schema was
- * already behind reality and a check that fired on real pages would be noise.
+ * The twelve `type` directories SCHEMA.md §2 defines, plus `archive` for
+ * retired pages.
+ *
+ * Enumerated from the live tree on 2026-08-14 rather than from the schema,
+ * because at the time the schema defined only eight and the wiki had grown
+ * four more (`education`, `preferences`, `sources`, `transcripts`) — a check
+ * built from the schema alone would have fired on real pages. On 2026-08-15
+ * the schema gained those four and the two lists agree again; SCHEMA.md §2.1
+ * records the set of lists that have to move together when a type is added.
  *
  * WHY THIS EXISTS. On 2026-08-14 the queue worker processed a `[DOC]` fact
  * whose text ended `File: memory/docs/2026-08-04-zapier-sdk-jd.md` — a path in
