@@ -20,6 +20,7 @@ import { wikiContextualBackfillCommand } from './commands/wiki-contextual-backfi
 import { wikiCoverageGateCommand } from './commands/wiki-coverage-gate.js';
 import { wikiIntegrityCommand } from './commands/wiki-integrity.js';
 import { wikiVerifyEditCommand } from './commands/wiki-verify-edit.js';
+import { wikiFanoutCommand } from './commands/wiki-fanout.js';
 
 // Read version from package.json
 const __filename = fileURLToPath(import.meta.url);
@@ -206,6 +207,30 @@ wikiCmd
       wiki: options.wiki,
       before: options.before,
       out: options.out,
+      json: options.json,
+    });
+  });
+
+wikiCmd
+  .command('fanout-candidates')
+  .description(
+    'Which OTHER pages carry a claim a just-applied fact changes. Candidates are the inbound wikilinks of the edited pages unioned with search hits, each returned with the lines that actually name the entity. Read-only; deciding what to do with them is the caller\'s job.',
+  )
+  .requiredOption('--pages <paths>', 'Comma-separated wiki-relative paths the primary edit wrote')
+  .option('--wiki <path>', 'Wiki root directory (defaults to ~/.plumb/wiki)')
+  .option('--db <path>', 'Path to wiki.db (defaults to ~/.plumb/wiki.db)')
+  .option('--query <text>', 'Free text to search for, usually the queued fact; omit to skip search')
+  .option('--limit <n>', 'Cap on candidates returned', '8')
+  .option('--top-k <n>', 'How many search results to union in', '10')
+  .option('--json', 'Print the machine-readable candidate set to stdout')
+  .action(async (options) => {
+    await wikiFanoutCommand({
+      wiki: options.wiki,
+      db: options.db,
+      pages: options.pages,
+      query: options.query,
+      limit: options.limit,
+      topK: options.topK,
       json: options.json,
     });
   });

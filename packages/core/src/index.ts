@@ -174,6 +174,23 @@ export {
   structureFindingKeyParts,
   verifyWikiStructure,
 } from './wiki-verify.js';
+// Which OTHER pages a single fact should touch. See wiki-fanout.ts for why the
+// inbound wikilink graph is the propagation index.
+export {
+  collectFanoutCandidates,
+  entityNamesForPage,
+  findEntityMentions,
+  DEFAULT_FANOUT_LIMIT,
+  DEFAULT_MAX_EXCERPTS,
+} from './wiki-fanout.js';
+export type {
+  FanoutCandidate,
+  FanoutExcerpt,
+  FanoutOptions,
+  FanoutPageInput,
+  FanoutReason,
+  FanoutResult,
+} from './wiki-fanout.js';
 export type {
   WikiStructureSnapshot,
   StructureFinding,
