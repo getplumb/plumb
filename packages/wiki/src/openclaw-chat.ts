@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 
@@ -32,13 +33,30 @@ function gatewayToken(): string | undefined {
   if (envToken) return envToken;
 
   // Cron shell commands do not always inherit gateway auth env. For local-only
-  // maintenance workflows, read the configured gateway token directly without
-  // ever printing it.
+  // maintenance workflows, resolve the configured gateway token without ever
+  // printing it. The token may be either a legacy string or a SecretRef object.
   const configPath = process.env['OPENCLAW_CONFIG'] ?? join(homedir(), '.openclaw', 'openclaw.json');
   try {
     if (!existsSync(configPath)) return undefined;
     const parsed = JSON.parse(readFileSync(configPath, 'utf8')) as { gateway?: { auth?: { token?: unknown } } };
-    return typeof parsed.gateway?.auth?.token === 'string' ? parsed.gateway.auth.token : undefined;
+    const configured = parsed.gateway?.auth?.token;
+    if (typeof configured === 'string') return configured;
+    if (configured && typeof configured === 'object') {
+      const id = (configured as { id?: unknown }).id;
+      if (typeof id !== 'string' || !id) return undefined;
+      const providerPath = join(homedir(), '.openclaw', 'workspace', 'onepassword_secret_provider.py');
+      if (!existsSync(providerPath)) return undefined;
+      const stdout = execFileSync('python3', [providerPath], {
+        input: JSON.stringify({ protocolVersion: 1, provider: 'onepassword', ids: [id] }),
+        encoding: 'utf8',
+        timeout: 30_000,
+        stdio: ['pipe', 'pipe', 'ignore'],
+      });
+      const resolved = JSON.parse(stdout) as { values?: Record<string, unknown> };
+      const token = resolved.values?.[id];
+      return typeof token === 'string' && token ? token : undefined;
+    }
+    return undefined;
   } catch {
     return undefined;
   }

@@ -5,9 +5,10 @@
  *   1. OpenClaw GPT 5.5 catch-up scan - compares today's facts/chat vs wiki, enqueues missed items
  *   2. Deterministic link-graph rebuild - full DELETE + re-insert from markdown source
  *   3. Lint report - orphans, broken links, stale pages, frontmatter, dead-letter queue
- *   4. Orphan resolver - add safe backlinks for semantically connected orphan pages
- *   5. Page refactor - H2-boundary splits for oversized pages
- *   6. Single git commit + push
+ *   4. Surgical repair - deterministic broken-wikilink/frontmatter fixes only
+ *   5. Orphan resolver - add safe backlinks for semantically connected orphan pages
+ *   6. Page refactor - H2-boundary splits for oversized pages
+ *   7. Single git commit + push
  *
  * Most content writes happen via the normal wiki-worker (picks up enqueued items).
  * This keeps dream cost low and SLO predictable.
@@ -40,6 +41,8 @@ import { wikiDreamScanCommand } from './wiki-dream-scan.js';
 import type { WikiDreamScanResult } from './wiki-dream-scan.js';
 import { wikiLinkRebuildCommand } from './wiki-link-rebuild.js';
 import { wikiLintCommand } from './wiki-lint.js';
+import { wikiSurgicalRepairCommand } from './wiki-surgical-repair.js';
+import type { WikiSurgicalRepairResult } from './wiki-surgical-repair.js';
 import { wikiRefactorPhase } from '@getplumb/wiki';
 import type { RefactorPhaseResult } from '@getplumb/wiki';
 
@@ -131,6 +134,7 @@ async function gitCommitAndPush(
   wikiRoot: string,
   today: string,
   enqueuedCount: number,
+  repairResult: WikiSurgicalRepairResult,
   dryRun: boolean,
 ): Promise<void> {
   console.log('\nGit commit phase…');
@@ -154,6 +158,10 @@ async function gitCommitAndPush(
   const parts: string[] = ['link-graph + lint'];
   if (enqueuedCount > 0) {
     parts.push(`${enqueuedCount} catch-up item${enqueuedCount !== 1 ? 's' : ''} enqueued`);
+  }
+  const totalRepairs = repairResult.wikilinksRepaired + repairResult.frontmatterRepaired;
+  if (totalRepairs > 0) {
+    parts.push(`${totalRepairs} surgical repair${totalRepairs !== 1 ? 's' : ''}`);
   }
   const commitMsg = `dream: ${today} — ${parts.join(', ')}`;
 
@@ -721,7 +729,7 @@ export async function wikiDreamCommand(options: WikiDreamOptions = {}): Promise<
   console.log(`  date:    ${today}`);
   console.log(`  wiki:    ${wikiRoot}`);
   console.log(`  wiki.db: ${wikiDbPath}`);
-  console.log('  phases:  catch-up(OpenClaw GPT 5.5) -> link-rebuild -> lint -> orphan-resolver -> refactor(OpenClaw GPT 5.5/deterministic) -> commit');
+  console.log('  phases:  catch-up(OpenClaw GPT 5.5) -> link-rebuild -> lint -> surgical-repair -> re-lint -> orphan-resolver -> refactor(OpenClaw GPT 5.5/deterministic) -> commit');
   if (dryRun) console.log('  [dry-run mode — no writes, no commits, no API calls]');
   console.log('');
 
@@ -730,7 +738,7 @@ export async function wikiDreamCommand(options: WikiDreamOptions = {}): Promise<
 
   // --- Phase 1: OpenClaw GPT 5.5 catch-up scan ---
   console.log('\n' + '─'.repeat(60));
-  console.log('Phase 1 of 6: OpenClaw GPT 5.5 catch-up scan');
+  console.log('Phase 1 of 7: OpenClaw GPT 5.5 catch-up scan');
   console.log('─'.repeat(60));
 
   let scanResult: WikiDreamScanResult = {
@@ -759,7 +767,7 @@ export async function wikiDreamCommand(options: WikiDreamOptions = {}): Promise<
 
   // --- Phase 2: Link-graph rebuild ---
   console.log('\n' + '─'.repeat(60));
-  console.log('Phase 2 of 6: Deterministic link-graph rebuild');
+  console.log('Phase 2 of 7: Deterministic link-graph rebuild');
   console.log('─'.repeat(60));
 
   try {
@@ -776,7 +784,7 @@ export async function wikiDreamCommand(options: WikiDreamOptions = {}): Promise<
 
   // --- Phase 3: Lint report ---
   console.log('\n' + '─'.repeat(60));
-  console.log('Phase 3 of 6: Wiki lint');
+  console.log('Phase 3 of 7: Wiki lint');
   console.log('─'.repeat(60));
 
   try {
@@ -789,12 +797,66 @@ export async function wikiDreamCommand(options: WikiDreamOptions = {}): Promise<
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`  Warning: lint failed: ${msg}`);
-    console.error('  (continuing with refactor phase)');
+    console.error('  (continuing with surgical repair phase)');
   }
 
-  // --- Phase 4: Orphan resolver ---
+  // --- Phase 4: Surgical repair ---
   console.log('\n' + '─'.repeat(60));
-  console.log('Phase 4 of 6: Orphan resolver');
+  console.log('Phase 4 of 7: Surgical repair');
+  console.log('─'.repeat(60));
+
+  let repairResult: WikiSurgicalRepairResult = {
+    pagesExamined: 0,
+    pagesTouched: 0,
+    wikilinksRepaired: 0,
+    frontmatterRepaired: 0,
+    skippedAmbiguous: 0,
+    skippedUnsafe: 0,
+  };
+
+  try {
+    repairResult = await wikiSurgicalRepairCommand({
+      wiki: wikiRoot,
+      date: today,
+      dryRun,
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`  Warning: surgical repair failed: ${msg}`);
+    console.error('  (continuing with re-lint phase)');
+  }
+
+  // Rebuild and re-lint after surgical repairs so the run records remaining debt.
+  console.log('\n' + '─'.repeat(60));
+  console.log('Phase 4b of 7: Post-repair link-graph rebuild + lint');
+  console.log('─'.repeat(60));
+
+  try {
+    await wikiLinkRebuildCommand({
+      wiki: wikiRoot,
+      db: wikiDbPath,
+      dryRun,
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`  Warning: post-repair link-graph rebuild failed: ${msg}`);
+  }
+
+  try {
+    await wikiLintCommand({
+      wiki: wikiRoot,
+      ...(options.sessions !== undefined ? { sessions: options.sessions } : {}),
+      date: today,
+      dryRun,
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`  Warning: post-repair lint failed: ${msg}`);
+  }
+
+  // --- Phase 5: Orphan resolver ---
+  console.log('\n' + '─'.repeat(60));
+  console.log('Phase 5 of 7: Orphan resolver');
   console.log('─'.repeat(60));
 
   let orphanResult: OrphanResolverResult = {
@@ -812,9 +874,9 @@ export async function wikiDreamCommand(options: WikiDreamOptions = {}): Promise<
     console.error('  (continuing with refactor phase)');
   }
 
-  // --- Phase 5: Page refactor (H2-boundary splits) ---
+  // --- Phase 6: Page refactor (H2-boundary splits) ---
   console.log('\n' + '─'.repeat(60));
-  console.log('Phase 5 of 6: Page refactor (H2-boundary splits)');
+  console.log('Phase 6 of 7: Page refactor (H2-boundary splits)');
   console.log('─'.repeat(60));
 
   let refactorResult: RefactorPhaseResult = {
@@ -850,11 +912,11 @@ export async function wikiDreamCommand(options: WikiDreamOptions = {}): Promise<
   // --- Weekly cost roll-up (Sundays only) ---
   await maybeAppendWeeklyRollup(wikiDbPath, wikiRoot, today, dryRun);
 
-  // --- Phase 6: Git commit + push ---
+  // --- Phase 7: Git commit + push ---
   console.log('\n' + '─'.repeat(60));
-  console.log('Phase 6 of 6: Git commit phase');
+  console.log('Phase 7 of 7: Git commit phase');
   console.log('─'.repeat(60));
-  await gitCommitAndPush(wikiRoot, today, scanResult.enqueuedCount, dryRun);
+  await gitCommitAndPush(wikiRoot, today, scanResult.enqueuedCount, repairResult, dryRun);
 
   // --- Final summary ---
   console.log('\n' + '═'.repeat(60));
@@ -870,6 +932,9 @@ export async function wikiDreamCommand(options: WikiDreamOptions = {}): Promise<
   }
   if (orphanResult.examined > 0) {
     console.log(`  Orphans:         ${orphanResult.backlinksAdded} backlink(s), ${orphanResult.reviewItems} review item(s) from ${orphanResult.orphans} orphan(s)`);
+  }
+  if (repairResult.pagesExamined > 0) {
+    console.log(`  Surgical repair: ${repairResult.wikilinksRepaired} wikilink(s), ${repairResult.frontmatterRepaired} frontmatter repair(s), ${repairResult.skippedAmbiguous + repairResult.skippedUnsafe} skipped`);
   }
   console.log(`  Elapsed:         ${formatElapsed(elapsedMs)}`);
   console.log('═'.repeat(60));

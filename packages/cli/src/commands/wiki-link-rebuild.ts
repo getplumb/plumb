@@ -21,7 +21,10 @@ import {
   openDb,
   applyWikiSchema,
   listWikiPages,
-  extractWikilinks,
+  parseWikilinks,
+  resolveWikilink,
+  buildResolveIndex,
+  type WikiPageInput,
   parseFrontmatter,
   extractTitle,
 } from '@getplumb/core';
@@ -92,8 +95,7 @@ export async function rebuildWikiLinks(
       const absPath = join(wikiRoot, relPath);
       try {
         const raw = readFileSync(absPath, 'utf8');
-        const { body } = parseFrontmatter(raw);
-        linkCount += extractWikilinks(body).length;
+        linkCount += parseWikilinks(raw).filter((l) => l.target.length > 0).length;
       } catch {
         // skip unreadable pages
       }
@@ -111,25 +113,37 @@ export async function rebuildWikiLinks(
     db.exec('PRAGMA foreign_keys = ON');
     applyWikiSchema(db);
 
-    // Build title → page_id map from wiki_pages for resolution
+    // Resolution index, from the canonical resolver.
+    //
+    // REWIRED 2026-08-14. This command had its OWN title map and slug rule —
+    // the fourth independent link resolver in the repo — and because it
+    // truncates and rebuilds all of `wiki_links`, it would silently undo the
+    // fix in `syncWikiLinks` on its next run. Anything that writes the link
+    // graph must resolve the same way as everything that reads it.
     const pageRows = db.exec({
-      sql: 'SELECT id, title FROM wiki_pages',
+      sql: 'SELECT id, path, title FROM wiki_pages',
       rowMode: 'object',
       returnValue: 'resultRows',
-    }) as Array<{ id: string; title: string }>;
+    }) as Array<{ id: string; path: string; title: string }>;
 
-    const titleToId = new Map<string, string>();
-    const slugToId = new Map<string, string>();
+    // Built from the FILES, not from `wiki_pages`, because `wiki_pages` has no
+    // aliases column and aliases are the tier most cross-references match on
+    // (`[[Clay]]`, `[[Sandra Waters]]`, `[[O3]]`). This command already reads
+    // every page, so the file-based index costs nothing extra here.
+    const corpus: WikiPageInput[] = [];
+    const relToId = new Map<string, string>();
     for (const row of pageRows) {
-      if (row.title) {
-        titleToId.set(row.title.toLowerCase(), row.id);
-      }
-      if (row.id) {
-        // Also index by basename slug (last segment after /)
-        const slug = row.id.replace(/^.*\//, '').toLowerCase();
-        slugToId.set(slug, row.id);
+      if (!row.path) continue;
+      relToId.set(row.path, row.id);
+    }
+    for (const relPath of relPaths) {
+      try {
+        corpus.push({ rel: relPath, text: readFileSync(join(wikiRoot, relPath), 'utf8') });
+      } catch {
+        // Unreadable pages simply cannot be link targets.
       }
     }
+    const resolveIndex = buildResolveIndex(corpus);
 
     // Step 2: Truncate wiki_links (deterministic clean slate)
     db.exec('DELETE FROM wiki_links');
@@ -148,15 +162,10 @@ export async function rebuildWikiLinks(
         continue;
       }
 
-      let body: string;
-      try {
-        ({ body } = parseFrontmatter(raw));
-      } catch {
-        body = raw;
-      }
-
-      const targets = extractWikilinks(body);
-      if (targets.length === 0) {
+      // The resolver reads `aliases:` from the frontmatter itself, so the whole
+      // file is parsed rather than the body alone.
+      const links = parseWikilinks(raw);
+      if (links.length === 0) {
         pagesProcessed++;
         continue;
       }
@@ -164,27 +173,23 @@ export async function rebuildWikiLinks(
       // Derive source_page_id: relPath without .md
       const sourcePageId = relPath.replace(/\.md$/, '');
 
-      for (const target of targets) {
-        // Strip alias: [[Name|display]] → "Name"
-        const targetName = (target.split('|')[0] ?? target).trim();
-        if (!targetName) continue;
+      const seen = new Set<string>();
+      for (const link of links) {
+        // Same-page `[[#anchor]]` links are intra-page navigation, not edges.
+        if (link.target.length === 0) continue;
+        if (seen.has(link.target)) continue;
+        seen.add(link.target);
 
-        // Try to resolve to a page ID
-        const lowerTitle = targetName.toLowerCase();
-        const slug = targetName
-          .toLowerCase()
-          .replace(/[^a-z0-9\s-]/g, '')
-          .replace(/\s+/g, '-')
-          .replace(/-+/g, '-')
-          .replace(/^-|-$/g, '');
-
-        const resolvedId = titleToId.get(lowerTitle) ?? slugToId.get(slug) ?? null;
+        const res = resolveWikilink(resolveIndex, relPath, link);
+        // A page naming itself is not an edge; see syncWikiLinks.
+        if (res.targetRel !== null && res.targetRel === relPath) continue;
+        const resolvedId = res.targetRel === null ? null : (relToId.get(res.targetRel) ?? null);
         const resolved = resolvedId !== null ? 1 : 0;
 
         const stmt = db.prepare(
           'INSERT INTO wiki_links (source_page_id, target_title, target_page_id, resolved) VALUES (?, ?, ?, ?)',
         );
-        stmt.bind([sourcePageId, targetName, resolvedId, resolved]);
+        stmt.bind([sourcePageId, link.target, resolvedId, resolved]);
         stmt.step();
         stmt.finalize();
 

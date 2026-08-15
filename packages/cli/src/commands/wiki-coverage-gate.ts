@@ -16,7 +16,14 @@
 
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-import { checkWikiCoverage, remediateWikiCoverage, pruneWikiGhosts } from '@getplumb/core';
+import {
+  checkWikiCoverage,
+  remediateWikiCoverage,
+  pruneWikiGhosts,
+  collectWikiIntegrity,
+  writeIntegrityReport,
+  defaultIntegrityPath,
+} from '@getplumb/core';
 import type { WikiCoverageReport, WikiCoverageRemediation, PruneResult } from '@getplumb/core';
 
 export interface WikiCoverageGateOptions {
@@ -106,6 +113,12 @@ function printRemediation(r: WikiCoverageRemediation): void {
     const s = r.contextual.stats;
     console.log(`  contextual backfill: embedded=${s.embedded} failed=${s.failed} coverage=${(s.coverageRatio * 100).toFixed(1)}%`);
   }
+  if (r.links.ran || r.links.danglingResolved > 0) {
+    console.log(
+      `  link sync: ${r.links.pages} page(s) rebuilt; ` +
+      `${r.links.danglingResolved} of ${r.links.danglingChecked} dangling link(s) now resolve`,
+    );
+  }
   console.log('');
 }
 
@@ -149,16 +162,47 @@ export async function wikiCoverageGateCommand(options: WikiCoverageGateOptions =
     report = await checkWikiCoverage({ wikiRoot, dbPath });
   }
 
+  // Refresh integrity.json on the way out.
+  //
+  // ADDED 2026-08-14. This job is the only deterministic wiki pass that already
+  // runs every 15 minutes, so hanging the artifact off it means the numbers are
+  // never more than a quarter-hour stale without inventing a second cron entry
+  // that could silently stop running — the exact failure that left `wiki_links`
+  // frozen for eleven days.
+  //
+  // It deliberately does NOT change this command's exit code. The coverage
+  // gate's contract is "index and disk agree", and folding link findings and
+  // frontmatter into that would redefine an existing green/red signal Clay
+  // already reads. Threshold enforcement belongs to `plumb wiki integrity` and
+  // to the daily health check, which is where the plan put it.
+  //
+  // Best-effort: a failure to write the artifact must not fail an otherwise
+  // good coverage run.
+  let integrityNote: string | null = null;
+  try {
+    const integrity = await collectWikiIntegrity({ wikiRoot, dbPath });
+    const outPath = defaultIntegrityPath(dbPath);
+    writeIntegrityReport(outPath, integrity);
+    integrityNote = integrity.ok
+      ? `integrity: ok (${outPath})`
+      : `integrity: ${integrity.breaches.length} threshold breach(es) — ` +
+        `${integrity.breaches.map((b) => b.check).join(', ')} (${outPath})`;
+  } catch (err) {
+    integrityNote = `integrity: not written (${err instanceof Error ? err.message : String(err)})`;
+  }
+
   if (options.json) {
     console.log(JSON.stringify({
       ...report,
       ...(prune ? { prune } : {}),
       ...(remediation ? { remediation } : {}),
+      integrity: integrityNote,
     }, null, 2));
   } else {
     if (prune) printPrune(prune);
     if (remediation) printRemediation(remediation);
     printReport(report);
+    if (integrityNote !== null) console.log(integrityNote);
   }
 
   process.exit(report.ok ? 0 : 1);

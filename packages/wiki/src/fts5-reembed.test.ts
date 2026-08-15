@@ -381,6 +381,7 @@ describe('fts5 — WikiSearch returns results using FTS5 BM25', () => {
       searcher.close();
     }
   });
+
 });
 
 // ---------------------------------------------------------------------------

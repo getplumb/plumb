@@ -22,7 +22,8 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
-    "plumb-mcp": "./dist/index.js"
+    "plumb-mcp": "./dist/index.js",
+    "plumb-mcp-claude-wiki": "./dist/claude-wiki.js"
   },
   "files": [
     "dist",

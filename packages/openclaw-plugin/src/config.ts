@@ -38,6 +38,14 @@ export interface PlumbPluginConfig {
 
   /** Path to the wiki SQLite database. Defaults to ~/.plumb/wiki.db */
   wikiDbPath?: string;
+
+  /** E017 opt-in contextual wiki child retrieval. Default mode=off. */
+  contextualRetrieval?: {
+    mode?: 'off' | 'shadow' | 'active';
+    model?: string;
+    parentTokenBudgets?: number[];
+    maxParentTokens?: number;
+  };
 }
 
 export const DEFAULT_CONFIG: PlumbPluginConfig = {

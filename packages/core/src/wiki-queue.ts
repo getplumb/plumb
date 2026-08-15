@@ -136,12 +136,17 @@ export async function updateQueueItemStatus(
 
   const updated = items.map((item): WikiQueueItem => {
     if (item.id !== id) return item;
-    return {
+    const next: WikiQueueItem = {
       ...item,
       status,
       ...(processedAt !== undefined && { processed_at: processedAt }),
-      ...(error !== undefined && { error }),
     };
+    if (status === 'done') {
+      delete next.error;
+    } else if (error !== undefined) {
+      next.error = error;
+    }
+    return next;
   });
 
   const content = updated.map((item) => JSON.stringify(item)).join('\n') + '\n';

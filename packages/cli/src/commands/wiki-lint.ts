@@ -20,22 +20,8 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { appendFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-import { listWikiPages, parseFrontmatter, extractTitle } from '@getplumb/core';
-import { extractWikilinks } from '@getplumb/core';
-
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
-/** Required frontmatter fields per SCHEMA.md */
-const REQUIRED_FRONTMATTER_FIELDS: ReadonlyArray<string> = [
-  'type',
-  'created',
-  'updated',
-  'source_refs',
-  'tags',
-  'confidence',
-];
+import { analyzeLinks, collectWikiCorpus } from '@getplumb/core';
+import type { LinkFinding, WikiPageInput, WikiCorpusPage } from '@getplumb/core';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -59,12 +45,8 @@ interface OrphanPage {
   path: string;
 }
 
-interface BrokenLink {
-  /** Source page containing the broken wikilink */
-  sourcePath: string;
-  /** The wikilink target that could not be resolved */
-  target: string;
-}
+/** Link defects, already classified by the canonical resolver. */
+type LinkIssues = LinkFinding[];
 
 interface FrontmatterIssue {
   /** Wiki-relative path */
@@ -83,7 +65,7 @@ interface DeadLetterItem {
 
 interface LintReport {
   orphanPages: OrphanPage[];
-  brokenLinks: BrokenLink[];
+  linkIssues: LinkIssues;
   frontmatterIssues: FrontmatterIssue[];
   deadLetterItems: DeadLetterItem[];
 }
@@ -97,182 +79,65 @@ function nowHHMM(): string {
 }
 
 // ---------------------------------------------------------------------------
-// Title-to-path index
+// Corpus enumeration
 // ---------------------------------------------------------------------------
 
-interface PageInfo {
-  relPath: string;
-  title: string;
-  aliases: string[];
-  updated: string;
-  frontmatterMissing: string[];
-}
-
 /**
- * Scan all wiki pages, parse frontmatter + title, extract wikilinks.
- * Returns page info array and the full link map (sourcePath → link targets).
+ * REWIRED 2026-08-14. This file used to enumerate the wiki itself:
+ * `listAllMarkdown`, `isGeneratedPage`, the `.plumbignore` orphan-exemption
+ * rule, the required-frontmatter list and `buildPageIndex` were all private
+ * here. They now live in `collectWikiCorpus` in `@getplumb/core`, which
+ * `collectWikiIntegrity` also uses.
+ *
+ * Same reason this file's link detection was replaced earlier the same day. Two
+ * copies of "which files count, and how is each one classified" WILL drift, and
+ * a linter and a health gate that quietly disagree about the corpus is exactly
+ * how this wiki came to have three link detectors reporting 96, 329 and a third
+ * number about the same 320 files. One enumeration, two consumers, one answer.
  */
-/**
- * Convert a wikilink target to a filesystem-style slug:
- * lowercase, alphanumerics + dashes only, spaces → dashes, collapse repeats.
- * Used as a fallback resolver when a [[Target]] doesn't match any H1 title
- * but does match a page basename (e.g. [[claude-code]] → tools/claude-code.md).
- */
-function slugifyLinkTarget(target: string): string {
-  return target
-    .toLowerCase()
-    .replace(/[^a-z0-9\s-]/g, '')
-    .replace(/\s+/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-|-$/g, '');
-}
-
-async function buildPageIndex(wikiRoot: string): Promise<{
-  pages: PageInfo[];
-  linkMap: Map<string, string[]>;
-  titleToPath: Map<string, string>;
-  slugToPath: Map<string, string>;
-}> {
-  const relPaths = await listWikiPages(wikiRoot);
-  const pages: PageInfo[] = [];
-  const linkMap = new Map<string, string[]>();
-  const titleToPath = new Map<string, string>();
-  const slugToPath = new Map<string, string>();
-
-  for (const relPath of relPaths) {
-    const absPath = join(wikiRoot, relPath);
-    let raw: string;
-    try {
-      raw = readFileSync(absPath, 'utf8');
-    } catch {
-      continue;
-    }
-
-    let frontmatter: Record<string, unknown> = {};
-    let body = '';
-    try {
-      const parsed = parseFrontmatter(raw);
-      frontmatter = parsed.frontmatter as unknown as Record<string, unknown>;
-      body = parsed.body;
-    } catch {
-      // Can't parse frontmatter — record all required fields as missing
-      frontmatter = {};
-      body = raw;
-    }
-
-    const title = extractTitle(body) ?? relPath.replace(/\.md$/, '');
-    const updated = String(frontmatter['updated'] ?? '');
-
-    // Check for missing required frontmatter fields
-    const missingFields = REQUIRED_FRONTMATTER_FIELDS.filter((field) => {
-      const val = frontmatter[field];
-      if (val === undefined || val === null || val === '') return true;
-      // source_refs and tags must be arrays (not empty strings)
-      if (field === 'source_refs' || field === 'tags') {
-        return !Array.isArray(val);
-      }
-      return false;
-    });
-
-    const aliasesRaw = frontmatter['aliases'];
-    const aliases = Array.isArray(aliasesRaw)
-      ? aliasesRaw.filter((alias): alias is string => typeof alias === 'string' && alias.trim().length > 0)
-      : [];
-
-    pages.push({ relPath, title, aliases, updated, frontmatterMissing: missingFields });
-    titleToPath.set(title.toLowerCase(), relPath);
-
-    // Also index by basename slug for lowercase/hyphenated wikilinks
-    const baseSlug = relPath.replace(/^.*\//, '').replace(/\.md$/, '').toLowerCase();
-    slugToPath.set(baseSlug, relPath);
-
-    // Index any aliases declared in frontmatter (aliases: [Clay, Clay W])
-    if (aliases.length > 0) {
-      for (const alias of aliases) {
-        titleToPath.set(alias.toLowerCase(), relPath);
-      }
-    }
-
-    // Extract wikilinks from body
-    const links = extractWikilinks(body);
-    linkMap.set(relPath, links);
-  }
-
-  return { pages, linkMap, titleToPath, slugToPath };
-}
 
 // ---------------------------------------------------------------------------
 // Lint checks
 // ---------------------------------------------------------------------------
 
 /**
- * Check 1: Semantic orphan pages — pages that no other content page links to.
- * A page is NOT an orphan if its title, alias, or basename slug appears as a
- * wikilink target in any other indexed wiki page.
+ * Checks 1 and 2: orphan pages and link defects, both from the canonical
+ * resolver in `@getplumb/core`.
+ *
+ * REPLACED 2026-08-14. This file previously carried its own title map, its own
+ * `slugifyLinkTarget`, and its own orphan rule — one of three such
+ * implementations in the repo, which reported 96 broken links where the nightly
+ * dream reported 329. Roughly 70% of its findings were false: same-page
+ * `[[#anchor]]` links it could not follow, `[[path.md]]` links whose files
+ * exist, and `[[wikilink]]` written inside backticks in prose about wikilinks.
+ * Nothing that noisy is actionable, so the real defects were never fixed.
+ *
+ * Link defects are now reported in classes with distinct remedies rather than
+ * one "broken" pile: a missing page is a page to create, an ambiguous name is a
+ * human decision, and a stale `#anchor` is a one-line edit.
  */
-function detectOrphans(pages: PageInfo[], linkMap: Map<string, string[]>): OrphanPage[] {
-  // Build the set of all link targets (lowercased titles AND their slugified forms)
-  const linkedTitles = new Set<string>();
-  const linkedSlugs = new Set<string>();
-  for (const targets of linkMap.values()) {
-    for (const t of targets) {
-      const name = t.split('|')[0] ?? t;
-      linkedTitles.add(name.toLowerCase());
-      const slug = slugifyLinkTarget(name);
-      if (slug) linkedSlugs.add(slug);
-    }
-  }
-
-  const orphans: OrphanPage[] = [];
-  for (const page of pages) {
-    const possibleTargets = [page.title, ...page.aliases].map((name) => name.toLowerCase());
-    const baseSlug = page.relPath.replace(/^.*\//, '').replace(/\.md$/, '').toLowerCase();
-    if (possibleTargets.some((target) => linkedTitles.has(target))) continue;
-    if (possibleTargets.some((target) => {
-      const slug = slugifyLinkTarget(target);
-      return slug.length > 0 && linkedSlugs.has(slug);
-    })) continue;
-    if (linkedSlugs.has(baseSlug)) continue;
-    orphans.push({ path: page.relPath });
-  }
-
-  return orphans;
-}
-
-/**
- * Check 2: Broken wikilinks — [[Target]] targets that don't resolve to any page.
- * Checks against (1) the title-to-path map (case-insensitive) and
- * (2) a basename-slug fallback so [[claude-code]] resolves to tools/claude-code.md.
- */
-function detectBrokenLinks(
-  linkMap: Map<string, string[]>,
-  titleToPath: Map<string, string>,
-  slugToPath: Map<string, string>,
-): BrokenLink[] {
-  const broken: BrokenLink[] = [];
-
-  for (const [sourcePath, targets] of linkMap.entries()) {
-    for (const target of targets) {
-      // Strip alias: [[Name|display]] → use the part before the pipe
-      const targetName = target.split('|')[0] ?? target;
-      const lowerTitle = targetName.toLowerCase();
-      if (titleToPath.has(lowerTitle)) continue;
-      const slug = slugifyLinkTarget(targetName);
-      if (slug && slugToPath.has(slug)) continue;
-      broken.push({ sourcePath, target });
-    }
-  }
-
-  return broken;
+function detectLinkIssues(
+  corpus: readonly WikiPageInput[],
+  generated: readonly string[],
+  orphanExempt: readonly string[],
+): { orphans: OrphanPage[]; findings: LinkFinding[] } {
+  const result = analyzeLinks([...corpus], {
+    generatedPages: [...generated],
+    orphanExempt: [...orphanExempt],
+  });
+  return {
+    orphans: result.orphans.map((path) => ({ path })),
+    findings: [...result.findings],
+  };
 }
 
 /**
  * Check 3: Frontmatter inconsistencies — missing required fields.
  */
-function detectFrontmatterIssues(pages: PageInfo[]): FrontmatterIssue[] {
+function detectFrontmatterIssues(pages: readonly WikiCorpusPage[]): FrontmatterIssue[] {
   return pages
-    .filter((p) => p.frontmatterMissing.length > 0)
-    .map((p) => ({ path: p.relPath, missingFields: p.frontmatterMissing }));
+    .filter((p) => p.missingFrontmatter.length > 0)
+    .map((p) => ({ path: p.rel, missingFields: [...p.missingFrontmatter] }));
 }
 
 /**
@@ -310,7 +175,7 @@ function formatReport(
 ): string {
   const totalIssues =
     report.orphanPages.length +
-    report.brokenLinks.length +
+    report.linkIssues.length +
     report.frontmatterIssues.length +
     report.deadLetterItems.length;
 
@@ -329,12 +194,28 @@ function formatReport(
   }
   lines.push('');
 
-  // Broken wikilinks
-  lines.push(`**Broken wikilinks** (target not found): ${report.brokenLinks.length}`);
-  if (report.brokenLinks.length > 0) {
-    for (const b of report.brokenLinks) {
-      lines.push(`- ${b.sourcePath} → [[${b.target}]]`);
-    }
+  // Link defects, split by remedy. Lumping these together is what made the old
+  // report unactionable: a missing page, an ambiguous name and a renamed
+  // heading want three different fixes from two different actors.
+  const unresolved = report.linkIssues.filter((f) => f.status === 'unresolved');
+  const ambiguous = report.linkIssues.filter((f) => f.status === 'ambiguous');
+  const anchorMissing = report.linkIssues.filter((f) => f.status === 'anchor-missing');
+
+  lines.push(`**Missing pages** (link target does not exist — the page-creation backlog): ${unresolved.length}`);
+  for (const f of unresolved) {
+    lines.push(`- ${f.page}:${f.line} → [[${f.target}]]`);
+  }
+  lines.push('');
+
+  lines.push(`**Ambiguous link targets** (several pages answer to the name — needs a human): ${ambiguous.length}`);
+  for (const f of ambiguous) {
+    lines.push(`- ${f.page}:${f.line} → [[${f.target}]] — ${f.candidates.join(' | ')}`);
+  }
+  lines.push('');
+
+  lines.push(`**Stale heading anchors** (page resolves, heading renamed): ${anchorMissing.length}`);
+  for (const f of anchorMissing) {
+    lines.push(`- ${f.page}:${f.line} → [[${f.raw}]]`);
   }
   lines.push('');
 
@@ -367,11 +248,7 @@ function formatReport(
 // log.md appending
 // ---------------------------------------------------------------------------
 
-async function appendToLog(
-  wikiRoot: string,
-  entry: string,
-  dryRun: boolean,
-): Promise<void> {
+async function appendToLog(wikiRoot: string, entry: string, dryRun: boolean): Promise<void> {
   const logPath = join(wikiRoot, 'log.md');
 
   if (dryRun) {
@@ -381,11 +258,7 @@ async function appendToLog(
   }
 
   if (!existsSync(logPath)) {
-    writeFileSync(
-      logPath,
-      '# Wiki Activity Log\n\nAppend-only. New entries go at the top (newest first). Never edit or delete past entries.\n\n---\n',
-      'utf8',
-    );
+    writeFileSync(logPath, '# Wiki Activity Log\n\nAppend-only. New entries go at the top (newest first). Never edit or delete past entries.\n\n---\n', 'utf8');
   }
 
   try {
@@ -410,8 +283,7 @@ async function appendToLog(
 export async function wikiLintCommand(options: WikiLintOptions = {}): Promise<void> {
   const today = options.date ?? new Date().toISOString().slice(0, 10);
   const wikiRoot = options.wiki ?? join(homedir(), '.plumb', 'wiki');
-  const deadLetterPath =
-    options.deadLetter ?? join(homedir(), '.plumb', 'wiki-queue-dead.jsonl');
+  const deadLetterPath = options.deadLetter ?? join(homedir(), '.plumb', 'wiki-queue-dead.jsonl');
   const dryRun = options.dryRun ?? false;
   const timeStr = nowHHMM();
 
@@ -426,8 +298,8 @@ export async function wikiLintCommand(options: WikiLintOptions = {}): Promise<vo
 
   // --- Build page index ---
   console.log('\nScanning wiki pages…');
-  const { pages, linkMap, titleToPath, slugToPath } = await buildPageIndex(wikiRoot);
-  console.log(`  Found ${pages.length} page(s).`);
+  const { pages, corpus, generated, orphanExempt } = await collectWikiCorpus(wikiRoot);
+  console.log(`  Found ${pages.length} content page(s), ${generated.length} generated.`);
 
   if (pages.length === 0) {
     console.log('No pages to lint.');
@@ -437,11 +309,11 @@ export async function wikiLintCommand(options: WikiLintOptions = {}): Promise<vo
   // --- Run lint checks ---
   console.log('\nRunning lint checks…');
 
-  const orphanPages = detectOrphans(pages, linkMap);
+  const { orphans: orphanPages, findings: linkIssues } = detectLinkIssues(corpus, generated, orphanExempt);
   console.log(`  Orphan pages:       ${orphanPages.length}`);
-
-  const brokenLinks = detectBrokenLinks(linkMap, titleToPath, slugToPath);
-  console.log(`  Broken wikilinks:   ${brokenLinks.length}`);
+  console.log(`  Missing pages:      ${linkIssues.filter((f) => f.status === 'unresolved').length}`);
+  console.log(`  Ambiguous targets:  ${linkIssues.filter((f) => f.status === 'ambiguous').length}`);
+  console.log(`  Stale anchors:      ${linkIssues.filter((f) => f.status === 'anchor-missing').length}`);
 
   const frontmatterIssues = detectFrontmatterIssues(pages);
   console.log(`  Frontmatter issues: ${frontmatterIssues.length}`);
@@ -451,13 +323,14 @@ export async function wikiLintCommand(options: WikiLintOptions = {}): Promise<vo
 
   const report: LintReport = {
     orphanPages,
-    brokenLinks,
+    linkIssues,
     frontmatterIssues,
     deadLetterItems,
   };
+
   const totalIssues =
     orphanPages.length +
-    brokenLinks.length +
+    linkIssues.length +
     frontmatterIssues.length +
     deadLetterItems.length;
 

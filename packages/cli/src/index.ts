@@ -18,6 +18,7 @@ import { wikiSurgicalRepairCommand } from './commands/wiki-surgical-repair.js';
 import { wikiDreamCommand } from './commands/wiki-dream.js';
 import { wikiContextualBackfillCommand } from './commands/wiki-contextual-backfill.js';
 import { wikiCoverageGateCommand } from './commands/wiki-coverage-gate.js';
+import { wikiIntegrityCommand } from './commands/wiki-integrity.js';
 
 // Read version from package.json
 const __filename = fileURLToPath(import.meta.url);
@@ -166,6 +167,27 @@ wikiCmd
       remediate: options.remediate,
       prune: options.prune,
       force: options.force,
+    });
+  });
+
+wikiCmd
+  .command('integrity')
+  .description(
+    'Every deterministic structural fact about the wiki in one pass — link findings by class, orphans, frontmatter, index/disk agreement, chunk/contextual gap, link-graph resolved/unresolved. Writes integrity.json and exits nonzero on a threshold breach.',
+  )
+  .option('--wiki <path>', 'Wiki root directory (defaults to ~/.plumb/wiki)')
+  .option('--db <path>', 'Path to wiki.db (defaults to ~/.plumb/wiki.db)')
+  .option('--out <path>', 'Where to write integrity.json (defaults to ~/.plumb/integrity.json)')
+  .option('--json', 'Print the full machine-readable report to stdout')
+  .option('--no-write', 'Compute and report without writing the artifact')
+  .action(async (options) => {
+    await wikiIntegrityCommand({
+      wiki: options.wiki,
+      db: options.db,
+      out: options.out,
+      json: options.json,
+      // commander maps `--no-write` onto `options.write === false`
+      noWrite: options.write === false,
     });
   });
 

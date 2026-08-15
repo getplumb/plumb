@@ -329,7 +329,7 @@ export class WikiService {
       stmt.finalize();
 
       // Rebuild wiki_links for this page.
-      syncWikiLinks(db, pageId, body);
+      syncWikiLinks(db, pageId, body, this.wikiRoot);
 
       // Append wiki_changelog entry.
       const isNew = this.#isNewPage(db, pageId);

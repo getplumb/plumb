@@ -94,6 +94,36 @@ export const CREATE_WIKI_CHUNKS_INDEXES = [
 ];
 
 /**
+ * wiki_chunk_context_embeddings — opt-in contextual child embeddings sidecar.
+ *
+ * This table deliberately does not overwrite wiki_chunks.embedding. Plain child
+ * embeddings remain the canonical fallback path for rollback-safe retrieval.
+ */
+export const CREATE_WIKI_CHUNK_CONTEXT_EMBEDDINGS_TABLE = `
+  CREATE TABLE IF NOT EXISTS wiki_chunk_context_embeddings (
+    chunk_id     INTEGER NOT NULL REFERENCES wiki_chunks(id) ON DELETE CASCADE,
+    page_id      TEXT    NOT NULL REFERENCES wiki_pages(id),
+    chunk_index  INTEGER NOT NULL,
+    model        TEXT    NOT NULL,
+    source_hash  TEXT    NOT NULL,
+    context_hash TEXT    NOT NULL,
+    status       TEXT    NOT NULL DEFAULT 'pending',
+    dimensions   INTEGER,
+    embedding    TEXT,
+    embed_error  TEXT,
+    created_at   TEXT    NOT NULL DEFAULT (datetime('now')),
+    updated_at   TEXT    NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (chunk_id, model)
+  )
+`;
+
+export const CREATE_WIKI_CHUNK_CONTEXT_EMBEDDINGS_INDEXES = [
+  `CREATE INDEX IF NOT EXISTS idx_wiki_context_embed_status ON wiki_chunk_context_embeddings (status)`,
+  `CREATE INDEX IF NOT EXISTS idx_wiki_context_embed_page ON wiki_chunk_context_embeddings (page_id, chunk_index)`,
+  `CREATE INDEX IF NOT EXISTS idx_wiki_context_embed_model ON wiki_chunk_context_embeddings (model)`,
+];
+
+/**
  * wiki_fts — FTS5 virtual table over wiki_chunks for BM25 keyword search.
  *
  * Uses content= mode pointing at wiki_chunks so SQLite manages the FTS index
@@ -230,6 +260,9 @@ export function applyWikiSchema(db: WasmDb): void {
 
   db.exec(CREATE_WIKI_CHUNKS_TABLE);
   for (const idx of CREATE_WIKI_CHUNKS_INDEXES) db.exec(idx);
+
+  db.exec(CREATE_WIKI_CHUNK_CONTEXT_EMBEDDINGS_TABLE);
+  for (const idx of CREATE_WIKI_CHUNK_CONTEXT_EMBEDDINGS_INDEXES) db.exec(idx);
 
   db.exec(CREATE_WIKI_LINKS_TABLE);
   for (const idx of CREATE_WIKI_LINKS_INDEXES) db.exec(idx);

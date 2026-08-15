@@ -24,7 +24,7 @@
 
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
 import { execSync } from 'node:child_process';
 import {
@@ -74,6 +74,18 @@ const MIN_RELEVANCE_SCORE = 0.005;
 
 /** Max candidates to pass to the routing LLM. */
 const MAX_SEARCH_CANDIDATES = 10;
+
+const ROUTE_PATH_ALIASES: Record<string, string> = {
+  // Router sometimes invents a descriptive slug for the existing Plumb 2.0 page.
+  'projects/plumb-20-wiki-system.md': 'projects/plumb-20.md',
+};
+
+function resolveRoutedPagePath(wikiRoot: string, routedPath: string): string {
+  if (existsSync(join(wikiRoot, routedPath))) return routedPath;
+  const alias = ROUTE_PATH_ALIASES[routedPath];
+  if (alias && existsSync(join(wikiRoot, alias))) return alias;
+  return routedPath;
+}
 
 // ---------------------------------------------------------------------------
 // Sonnet prompts
@@ -129,32 +141,129 @@ interface RoutingResult {
 // LLM API calls
 // ---------------------------------------------------------------------------
 
+function readOpenClawEnvFile(): void {
+  const envPath = process.env.OPENCLAW_ENV_FILE || join(homedir(), '.openclaw', '.env');
+  try {
+    const text = readFileSync(envPath, 'utf8');
+    for (const line of text.split(/\r?\n/)) {
+      const match = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)=(.*)\s*$/);
+      if (!match) continue;
+      const key = match[1];
+      if (!key || process.env[key] !== undefined) continue;
+      let value = match[2] ?? '';
+      value = value.trim();
+      if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+        value = value.slice(1, -1);
+      }
+      process.env[key] = value;
+    }
+  } catch {
+    // Optional convenience file.
+  }
+}
+
+function readGatewayTokenFromOpenClawConfig(): string {
+  const configPath = process.env.OPENCLAW_CONFIG_FILE || join(homedir(), '.openclaw', 'openclaw.json');
+  try {
+    const raw = readFileSync(configPath, 'utf8');
+    const parsed = JSON.parse(raw) as { gateway?: { auth?: { token?: unknown } } };
+    const token = parsed.gateway?.auth?.token;
+    if (typeof token === 'string' && token.length > 0 && !token.startsWith('__OPEN')) {
+      return token;
+    }
+  } catch {
+    // Fall through to the external secret provider.
+  }
+  return '';
+}
+
+function resolveOpenClawGatewayToken(): string {
+  if (process.env.OPENCLAW_GATEWAY_TOKEN) return process.env.OPENCLAW_GATEWAY_TOKEN;
+  readOpenClawEnvFile();
+  if (process.env.OPENCLAW_GATEWAY_TOKEN) return process.env.OPENCLAW_GATEWAY_TOKEN;
+
+  const configToken = readGatewayTokenFromOpenClawConfig();
+  if (configToken) return configToken;
+
+  const provider = process.env.PLUMB_SECRET_PROVIDER || '/home/openclaw-host/.openclaw/workspace/onepassword_secret_provider.py';
+  const req = JSON.stringify({ protocolVersion: 1, provider: 'onepassword', ids: ['prod_config.gateway.auth.token'] });
+  try {
+    const out = execSync(`${provider}`, {
+      input: req,
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: process.env,
+      timeout: 30_000,
+    });
+    const data = JSON.parse(out) as { values?: Record<string, unknown> };
+    const token = data.values?.['prod_config.gateway.auth.token'];
+    if (typeof token === 'string' && token.length > 0) return token;
+  } catch {
+    // Let the gateway return a clear 401 below if no usable token was found.
+  }
+  return '';
+}
+
+function gatewayModelFor(model: string): string {
+  if (process.env.PLUMB_OPENCLAW_MODEL) return process.env.PLUMB_OPENCLAW_MODEL;
+  if (/haiku/i.test(model) && process.env.PLUMB_OPENCLAW_SMALL_MODEL) {
+    return process.env.PLUMB_OPENCLAW_SMALL_MODEL;
+  }
+  return 'openclaw';
+}
+
 async function callLLM(
   model: string,
   system: string,
   userContent: string,
   maxTokens: number,
 ): Promise<string> {
-  // Use bracket notation to avoid esbuild define replacement.
-  const apiKey = process.env['ANTHROPIC_API_KEY'];
-  if (!apiKey) {
-    throw new Error('ANTHROPIC_API_KEY not set — cannot call LLM');
+  const gatewayUrl = (process.env.OPENCLAW_GATEWAY_URL || 'http://127.0.0.1:18789').replace(/\/$/, '');
+  const token = resolveOpenClawGatewayToken();
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  const controller = new AbortController();
+  const timeoutMs = Number(process.env.PLUMB_OPENCLAW_TIMEOUT_MS || 120_000);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  let response: Response;
+  try {
+    response = await fetch(`${gatewayUrl}/v1/chat/completions`, {
+      method: 'POST',
+      headers,
+      signal: controller.signal,
+      body: JSON.stringify({
+        model: gatewayModelFor(model),
+        max_tokens: maxTokens,
+        temperature: 0,
+        messages: [
+          { role: 'system', content: system },
+          { role: 'user', content: userContent },
+        ],
+      }),
+    });
+  } catch (err) {
+    throw new Error(`OpenClaw gateway LLM request failed: ${err}`);
+  } finally {
+    clearTimeout(timeout);
   }
 
-  // Dynamic import keeps @anthropic-ai/sdk external in the esbuild bundle.
-  const AnthropicModule = await import('@anthropic-ai/sdk');
-  const Anthropic = AnthropicModule.default;
-  const client = new Anthropic({ apiKey });
+  const body = await response.text();
+  if (!response.ok) {
+    throw new Error(`OpenClaw gateway LLM request failed with HTTP ${response.status}: ${body.slice(0, 500)}`);
+  }
 
-  const response = await client.messages.create({
-    model,
-    max_tokens: maxTokens,
-    system,
-    messages: [{ role: 'user', content: userContent }],
-  });
+  let data: unknown;
+  try {
+    data = JSON.parse(body);
+  } catch (err) {
+    throw new Error(`OpenClaw gateway LLM returned invalid JSON: ${err}`);
+  }
 
-  const text = response.content[0]?.type === 'text' ? response.content[0].text.trim() : '';
-  if (!text) throw new Error(`LLM (${model}) returned empty response`);
+  const text = (data as { choices?: Array<{ message?: { content?: string } }> })
+    ?.choices?.[0]?.message?.content?.trim?.() || '';
+  if (!text) throw new Error(`OpenClaw gateway LLM (${gatewayModelFor(model)}) returned empty response`);
   return text;
 }
 
@@ -190,23 +299,23 @@ function extractPageMeta(content: string, fallbackTitle: string): PageMeta {
   // Parse frontmatter block
   const fmMatch = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
   if (fmMatch) {
-    const fm = fmMatch[1];
+    const fm = fmMatch[1] ?? '';
 
     const typeMatch = fm.match(/^type:\s*(.+)$/m);
-    if (typeMatch) result.type = typeMatch[1].trim();
+    if (typeMatch) result.type = (typeMatch[1] ?? '').trim();
 
     const summaryMatch = fm.match(/^summary:\s*(.+)$/m);
-    if (summaryMatch) result.summary = summaryMatch[1].trim();
+    if (summaryMatch) result.summary = (summaryMatch[1] ?? '').trim();
 
     // Parse inline arrays like [foo, bar] or flow-style
     const aliasesMatch = fm.match(/^aliases:\s*\[([^\]]*)\]/m);
     if (aliasesMatch) {
-      result.aliases = aliasesMatch[1].split(',').map((s) => s.trim()).filter(Boolean);
+      result.aliases = (aliasesMatch[1] ?? '').split(',').map((s) => s.trim()).filter(Boolean);
     } else {
       // Block list style
       const aliasBlock = fm.match(/^aliases:\s*\n((?:\s*-[^\n]*\n?)*)/m);
       if (aliasBlock) {
-        result.aliases = aliasBlock[1]
+        result.aliases = (aliasBlock[1] ?? '')
           .split('\n')
           .map((l) => l.replace(/^\s*-\s*/, '').trim())
           .filter(Boolean);
@@ -215,11 +324,11 @@ function extractPageMeta(content: string, fallbackTitle: string): PageMeta {
 
     const tagsMatch = fm.match(/^tags:\s*\[([^\]]*)\]/m);
     if (tagsMatch) {
-      result.tags = tagsMatch[1].split(',').map((s) => s.trim()).filter(Boolean);
+      result.tags = (tagsMatch[1] ?? '').split(',').map((s) => s.trim()).filter(Boolean);
     } else {
       const tagBlock = fm.match(/^tags:\s*\n((?:\s*-[^\n]*\n?)*)/m);
       if (tagBlock) {
-        result.tags = tagBlock[1]
+        result.tags = (tagBlock[1] ?? '')
           .split('\n')
           .map((l) => l.replace(/^\s*-\s*/, '').trim())
           .filter(Boolean);
@@ -322,7 +431,7 @@ async function processQueueItem(
   // Build candidate summaries (frontmatter only — no full content to keep tokens low)
   const candidateLines: string[] = [];
   for (let i = 0; i < candidates.length; i++) {
-    const c = candidates[i];
+    const c = candidates[i]!;
     const absPath = join(wikiRoot, c.path);
     let meta: PageMeta = { type: c.type, summary: '', aliases: [], tags: [], firstParagraph: c.snippet };
 
@@ -378,8 +487,9 @@ async function processQueueItem(
   }
 
   if (routing.create_new) {
-    logger.warn(`[plumb:wiki-queue] Router requested new page ${routing.create_new.path} for item ${item.id} — auto-creation not yet implemented; marking done`);
-    await updateQueueItemStatus(item.id, 'done', undefined, queuePath);
+    const error = `router requested new page ${routing.create_new.path}, but auto-creation is not implemented: ${routing.reason}`;
+    logger.warn(`[plumb:wiki-queue] ${error} — marking failed for review`);
+    await updateQueueItemStatus(item.id, 'failed', error, queuePath);
     return;
   }
 
@@ -389,9 +499,12 @@ async function processQueueItem(
     return;
   }
 
-  // Collect pages to update: primary + any secondary_mentions
+  // Collect pages to update: primary + any secondary_mentions. Resolve known
+  // historical/router slug aliases before attempting writes.
   const secondaryMentions: string[] = Array.isArray(routing.secondary_mentions) ? routing.secondary_mentions : [];
-  const pagesToUpdate = [routing.primary_target, ...secondaryMentions];
+  const pagesToUpdate = Array.from(new Set(
+    [routing.primary_target, ...secondaryMentions].map((path) => resolveRoutedPagePath(wikiRoot, path)),
+  ));
 
   logger.info(`[plumb:wiki-queue] Will update ${pagesToUpdate.length} page(s): ${pagesToUpdate.join(', ')}`);
 
@@ -553,6 +666,34 @@ export function startWikiQueueWorker(options: WikiQueueWorkerOptions = {}): Retu
     debug: (s: string) => console.debug(s),
   };
 
+  // ---- TERRA PATCH 2026-08-05 (tb_169): in-gateway queue worker DEFAULT-OFF ----
+  // Queue draining is owned out-of-process by
+  //   workspace/scripts/plumb/plumb_claude_queue_worker.py
+  // invoked from Linux cron. Running this in-gateway worker alongside it made
+  // this one win the claim race (~60s tick vs 5min) and then fail items on the
+  // gateway /v1/chat/completions auth issue, destroying queued facts.
+  //
+  // Default-off so a future rebuild/redeploy cannot silently resurrect it.
+  // Re-enable without a code change by setting PLUMB_WIKI_QUEUE_WORKER=enabled
+  // in the gateway environment.
+  //
+  // NOTE: the currently deployed bundle at
+  //   ~/.openclaw/extensions/plumb/dist/index.js
+  // carries the equivalent patch as an unconditional early return (applied
+  // 2026-08-05 to avoid rebuilding from this tree, which has unrelated
+  // uncommitted work). Both are disabled-by-default; only the re-enable
+  // mechanism differs. Aligning them is safe to do on the next real redeploy.
+  if (process.env.PLUMB_WIKI_QUEUE_WORKER !== "enabled") {
+    logger.info(
+      "[plumb:wiki-queue] Worker DISABLED by Terra patch (tb_169); out-of-process Claude Code cron worker owns the queue. " +
+        "Set PLUMB_WIKI_QUEUE_WORKER=enabled to restore the in-gateway worker.",
+    );
+    const inert = setInterval(() => {}, 2147483647);
+    inert.unref?.();
+    return inert;
+  }
+  // ---- end Terra patch ----
+
   logger.info(`[plumb:wiki-queue] Worker started (interval: ${intervalMs}ms)`);
 
   return setInterval(() => {
@@ -560,4 +701,10 @@ export function startWikiQueueWorker(options: WikiQueueWorkerOptions = {}): Retu
       logger.error(`[plumb:wiki-queue] Worker tick error: ${err}`);
     });
   }, intervalMs);
+}
+
+/** Explicit idempotent worker shutdown helper. */
+export function stopWikiQueueWorker(interval: ReturnType<typeof setInterval> | undefined | null): void {
+  if (!interval) return;
+  clearInterval(interval);
 }

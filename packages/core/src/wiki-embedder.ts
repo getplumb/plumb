@@ -20,7 +20,8 @@ import { readFile } from 'node:fs/promises';
 import { listWikiPages, parseFrontmatter, extractTitle, hashContent } from './wiki-fs.js';
 import { WikiStore } from './wiki-schema.js';
 import { embed } from './embedder.js';
-import { serializeEmbedding } from './vector-search.js';
+import { serializeWikiEmbeddingBlob } from './vector-search.js';
+import { backfillContextualEmbeddings, DEFAULT_CONTEXTUAL_MODEL } from './wiki-contextual-embeddings.js';
 import type { WasmDb } from './wasm-db.js';
 
 // ---------------------------------------------------------------------------
@@ -50,6 +51,10 @@ export interface WikiEmbedderOptions {
   dbPath?: string;
   /** Print progress to stdout. Defaults to false. */
   verbose?: boolean;
+  /** Explicitly refresh contextual sidecar embeddings for changed/new chunks. Default false. */
+  contextualRefresh?: boolean;
+  /** Contextual model to refresh. Only Xenova/bge-small-en-v1.5 is supported in E017. */
+  contextualModel?: string;
 }
 
 export interface WikiEmbedStats {
@@ -76,37 +81,159 @@ export interface WikiEmbedStats {
 export interface WikiChunk {
   content: string;
   section: string;
+  /** Inclusive start offset in the markdown body after frontmatter parsing. */
+  charStart: number;
+  /** Exclusive end offset in the markdown body after frontmatter parsing. */
+  charEnd: number;
+}
+
+type SpanChunk = WikiChunk;
+
+/** Tiny chunks below this size are merged into a neighbor when possible. */
+const MIN_INFORMATION_CHARS = 80;
+
+function trimSpan(text: string, start = 0): { content: string; charStart: number; charEnd: number } | null {
+  const leading = text.match(/^\s*/)?.[0].length ?? 0;
+  const trailing = text.match(/\s*$/)?.[0].length ?? 0;
+  const charStart = start + leading;
+  const charEnd = start + text.length - trailing;
+  if (charEnd <= charStart) return null;
+  return { content: text.slice(leading, text.length - trailing), charStart, charEnd };
+}
+
+function informationScore(text: string): number {
+  return text
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/[\W_]+/g, '')
+    .length;
+}
+
+function isTinyLowInformation(chunk: SpanChunk): boolean {
+  if (chunk.content.length >= MIN_INFORMATION_CHARS) return false;
+  const words = chunk.content.match(/[\p{L}\p{N}]+/gu) ?? [];
+  return words.length <= 4 || informationScore(chunk.content) < 40;
+}
+
+function mergeChunks(a: SpanChunk, b: SpanChunk): SpanChunk {
+  const content = `${a.content}\n\n${b.content}`.trim();
+  return {
+    content,
+    section: a.section || b.section,
+    charStart: Math.min(a.charStart, b.charStart),
+    charEnd: Math.max(a.charEnd, b.charEnd),
+  };
 }
 
 /**
  * Split text paragraphs into chunks up to targetChars each.
  * Never splits mid-paragraph. Returns plain strings.
  */
-function splitParagraphs(text: string, targetChars: number): string[] {
-  const paragraphs = text
-    .split(/\n{2,}/)
-    .map((p) => p.trim())
-    .filter((p) => p.length > 0);
+function splitOversizedSpan(text: string, start: number, maxChars: number, section: string): SpanChunk[] {
+  const chunks: SpanChunk[] = [];
+  let cursor = 0;
 
-  const chunks: string[] = [];
-  let current = '';
+  while (cursor < text.length) {
+    while (cursor < text.length && /\s/.test(text[cursor]!)) cursor++;
+    if (cursor >= text.length) break;
 
-  for (const para of paragraphs) {
-    if (current.length === 0) {
-      current = para;
-    } else if (current.length + 2 + para.length <= targetChars) {
-      current += '\n\n' + para;
-    } else {
-      chunks.push(current);
-      current = para;
+    const remaining = text.length - cursor;
+    if (remaining <= maxChars) {
+      const trimmed = trimSpan(text.slice(cursor), start + cursor);
+      if (trimmed) chunks.push({ ...trimmed, section });
+      break;
     }
-  }
 
-  if (current.length > 0) {
-    chunks.push(current);
+    const windowText = text.slice(cursor, cursor + maxChars + 1);
+    const boundaryPatterns = [/\n{2,}/g, /(?<=[.!?])\s+/g, /\n/g, /\s+/g];
+    let cut = -1;
+    for (const pattern of boundaryPatterns) {
+      for (const match of windowText.matchAll(pattern)) {
+        const end = (match.index ?? 0) + match[0].length;
+        if (end > 0 && end <= maxChars) cut = Math.max(cut, end);
+      }
+      if (cut >= Math.floor(maxChars * 0.5)) break;
+    }
+    if (cut <= 0) cut = maxChars;
+
+    const trimmed = trimSpan(text.slice(cursor, cursor + cut), start + cursor);
+    if (trimmed) chunks.push({ ...trimmed, section });
+    cursor += cut;
   }
 
   return chunks;
+}
+
+function splitParagraphsWithSpans(text: string, targetChars: number, section: string, start = 0): SpanChunk[] {
+  const paragraphs: SpanChunk[] = [];
+  const paragraphPattern = /\S[\s\S]*?(?=\n{2,}|$)/g;
+  for (const match of text.matchAll(paragraphPattern)) {
+    const raw = match[0]!;
+    const trimmed = trimSpan(raw, start + (match.index ?? 0));
+    if (!trimmed) continue;
+    if (trimmed.content.length > targetChars) {
+      paragraphs.push(...splitOversizedSpan(trimmed.content, trimmed.charStart, targetChars, section));
+    } else {
+      paragraphs.push({ ...trimmed, section });
+    }
+  }
+
+  const chunks: SpanChunk[] = [];
+  let current: SpanChunk | null = null;
+  for (const para of paragraphs) {
+    if (!current) {
+      current = para;
+    } else {
+      const merged = mergeChunks(current, para);
+      if (merged.content.length <= targetChars) current = merged;
+      else {
+        chunks.push(current);
+        current = para;
+      }
+    }
+  }
+  if (current) chunks.push(current);
+  return chunks;
+}
+
+/**
+ * Split text paragraphs into chunks up to targetChars each.
+ * Paragraphs larger than targetChars are split deterministically at sentence,
+ * line, word, then hard character boundaries. Returns plain strings.
+ */
+function splitParagraphs(text: string, targetChars: number): string[] {
+  return splitParagraphsWithSpans(text, targetChars, '', 0).map((chunk) => chunk.content);
+}
+
+function mergeTinyChunks(chunks: SpanChunk[], maxChars: number): SpanChunk[] {
+  const result: SpanChunk[] = [];
+
+  for (const chunk of chunks) {
+    if (!isTinyLowInformation(chunk)) {
+      result.push(chunk);
+      continue;
+    }
+
+    const previous = result[result.length - 1];
+    const nextMergeWouldFit = previous ? mergeChunks(previous, chunk).content.length <= maxChars : false;
+    if (previous && nextMergeWouldFit) {
+      result[result.length - 1] = mergeChunks(previous, chunk);
+    } else {
+      result.push(chunk);
+    }
+  }
+
+  for (let i = 0; i < result.length - 1; i++) {
+    const current = result[i]!;
+    if (!isTinyLowInformation(current)) continue;
+    const next = result[i + 1]!;
+    const merged = mergeChunks(current, next);
+    if (merged.content.length <= maxChars) {
+      result.splice(i, 2, merged);
+      i--;
+    }
+  }
+
+  return result;
 }
 
 /**
@@ -119,52 +246,44 @@ function splitParagraphs(text: string, targetChars: number): string[] {
  *   3. Any content before the first H2 is treated as section '' and chunked
  *      by paragraphs as before.
  *   4. H2 sections larger than H2_SUBCHUNK_CHARS are further split by
- *      paragraph boundaries to stay within the sub-chunk budget.
+ *      paragraph, sentence, line, word, then hard character boundaries.
+ *   5. Tiny low-information chunks are merged into neighbors when possible.
  *
  * @param text        The page body (everything after the frontmatter ---).
  * @param targetChars Sub-chunk character budget within an H2 section (default: 1200 ≈ 300 tokens).
  * @returns Array of WikiChunk objects (content + section name).
  */
 export function chunkByH2(text: string, targetChars = H2_SUBCHUNK_CHARS): WikiChunk[] {
-  // Split body into H2-delimited sections.
-  // Lines starting with exactly "## " begin a new section.
-  const lines = text.split('\n');
-  const sections: Array<{ heading: string; body: string }> = [];
+  if (targetChars < 1) throw new Error('targetChars must be positive');
 
-  let currentHeading = '';
-  let currentLines: string[] = [];
+  const headings = [...text.matchAll(/^## .+$/gm)].map((match) => ({
+    index: match.index ?? 0,
+    line: match[0]!,
+    heading: match[0]!.slice(3).trim(),
+  }));
 
-  for (const line of lines) {
-    if (/^## /.test(line)) {
-      // Flush previous section
-      sections.push({ heading: currentHeading, body: currentLines.join('\n') });
-      currentHeading = line.slice(3).trim();
-      currentLines = [line]; // Include heading line in the body for context
-    } else {
-      currentLines.push(line);
+  const sections: Array<{ heading: string; body: string; start: number }> = [];
+  if (headings.length === 0) {
+    sections.push({ heading: '', body: text, start: 0 });
+  } else {
+    if (headings[0]!.index > 0) sections.push({ heading: '', body: text.slice(0, headings[0]!.index), start: 0 });
+    for (let i = 0; i < headings.length; i++) {
+      const h = headings[i]!;
+      const end = headings[i + 1]?.index ?? text.length;
+      sections.push({ heading: h.heading, body: text.slice(h.index, end), start: h.index });
     }
   }
-  // Flush last section
-  sections.push({ heading: currentHeading, body: currentLines.join('\n') });
 
   const result: WikiChunk[] = [];
 
   for (const section of sections) {
-    const bodyTrimmed = section.body.trim();
+    const bodyTrimmed = trimSpan(section.body, section.start);
     if (!bodyTrimmed) continue;
-
-    if (bodyTrimmed.length <= targetChars) {
-      result.push({ content: bodyTrimmed, section: section.heading });
-    } else {
-      // Sub-chunk the section by paragraphs
-      const subChunks = splitParagraphs(bodyTrimmed, targetChars);
-      for (const sub of subChunks) {
-        result.push({ content: sub, section: section.heading });
-      }
-    }
+    if (bodyTrimmed.content.length <= targetChars) result.push({ ...bodyTrimmed, section: section.heading });
+    else result.push(...splitParagraphsWithSpans(bodyTrimmed.content, targetChars, section.heading, bodyTrimmed.charStart));
   }
 
-  return result;
+  return mergeTinyChunks(result, targetChars);
 }
 
 /**
@@ -221,7 +340,7 @@ function getStoredHash(db: WasmDb, pageId: string): string | null {
 }
 
 /**
- * Upsert a wiki_pages row (INSERT OR REPLACE).
+ * Upsert a wiki_pages row without replacing/deleting the row.
  */
 function upsertWikiPage(
   db: WasmDb,
@@ -239,9 +358,21 @@ function upsertWikiPage(
   contentHash: string,
 ): void {
   const stmt = db.prepare(`
-    INSERT OR REPLACE INTO wiki_pages
+    INSERT INTO wiki_pages
       (id, path, type, title, created, updated, confidence, tags, source_refs, status, word_count, content_hash)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      path = excluded.path,
+      type = excluded.type,
+      title = excluded.title,
+      created = excluded.created,
+      updated = excluded.updated,
+      confidence = excluded.confidence,
+      tags = excluded.tags,
+      source_refs = excluded.source_refs,
+      status = excluded.status,
+      word_count = excluded.word_count,
+      content_hash = excluded.content_hash
   `);
   stmt.bind([
     pageId,
@@ -280,15 +411,47 @@ function insertChunk(
   chunkIndex: number,
   content: string,
   section: string,
-  embeddingJson: string,
+  // Raw float32 BLOB, not JSON text (2026-08-13). See
+  // serializeWikiEmbeddingBlob for why, and why the memory system's
+  // serializeEmbedding was deliberately left alone.
+  embeddingBlob: Uint8Array,
 ): void {
   const stmt = db.prepare(`
     INSERT INTO wiki_chunks (page_id, chunk_index, content, section, embed_status, embed_model, embedding)
     VALUES (?, ?, ?, ?, 'done', ?, ?)
   `);
-  stmt.bind([pageId, chunkIndex, content, section, EMBED_MODEL, embeddingJson]);
+  stmt.bind([pageId, chunkIndex, content, section, EMBED_MODEL, embeddingBlob]);
   stmt.step();
   stmt.finalize();
+}
+
+
+function existingContextualModelsForPage(db: WasmDb, pageId: string): string[] {
+  const stmt = db.prepare('SELECT DISTINCT model FROM wiki_chunk_context_embeddings WHERE page_id = ?');
+  stmt.bind([pageId]);
+  const models: string[] = [];
+  while (stmt.step()) {
+    const row = stmt.get({}) as { model?: string };
+    if (row.model) models.push(row.model);
+  }
+  stmt.finalize();
+  return models;
+}
+
+function beginImmediate(db: WasmDb): void {
+  db.exec('BEGIN IMMEDIATE');
+}
+
+function commit(db: WasmDb): void {
+  db.exec('COMMIT');
+}
+
+function rollback(db: WasmDb): void {
+  try {
+    db.exec('ROLLBACK');
+  } catch {
+    // Ignore rollback errors; preserve original failure.
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -307,6 +470,7 @@ export async function runWikiEmbed(options: WikiEmbedderOptions = {}): Promise<W
   const wikiRoot = options.wikiRoot ?? join(homedir(), '.plumb', 'wiki');
   const dbPath = options.dbPath ?? join(homedir(), '.plumb', 'wiki.db');
   const verbose = options.verbose ?? false;
+  const contextualModel = options.contextualModel ?? DEFAULT_CONTEXTUAL_MODEL;
 
   const stats: WikiEmbedStats = { total: 0, skipped: 0, embedded: 0, errors: 0, chunks: 0 };
 
@@ -376,7 +540,7 @@ export async function runWikiEmbed(options: WikiEmbedderOptions = {}): Promise<W
         const chunks = chunkByH2(body);
 
         // --- Embed each chunk ---
-        const embeddedChunks: Array<{ content: string; section: string; embeddingJson: string }> = [];
+        const embeddedChunks: Array<{ content: string; section: string; embeddingBlob: Uint8Array }> = [];
         let chunkFailed = false;
 
         for (const wikiChunk of chunks) {
@@ -385,7 +549,7 @@ export async function runWikiEmbed(options: WikiEmbedderOptions = {}): Promise<W
             embeddedChunks.push({
               content: wikiChunk.content,
               section: wikiChunk.section,
-              embeddingJson: serializeEmbedding(vec),
+              embeddingBlob: serializeWikiEmbeddingBlob(vec),
             });
           } catch (err) {
             // If any chunk fails to embed, mark the whole page as failed.
@@ -401,28 +565,46 @@ export async function runWikiEmbed(options: WikiEmbedderOptions = {}): Promise<W
           continue;
         }
 
-        // --- Write to DB (atomic: upsert page, replace chunks) ---
-        upsertWikiPage(
-          db,
-          pageId,
-          relPath,
-          frontmatter.type ?? 'unknown',
-          title,
-          frontmatter.created ?? '',
-          frontmatter.updated ?? '',
-          frontmatter.confidence ?? 'medium',
-          JSON.stringify(frontmatter.tags ?? []),
-          JSON.stringify(frontmatter.source_refs ?? []),
-          frontmatter.status ?? 'active',
-          wordCount,
-          currentHash,
-        );
+        // --- Write to DB atomically: upsert page, replace chunks, cascade old sidecars ---
+        const provisionedContextualModels = existingContextualModelsForPage(db, pageId);
+        beginImmediate(db);
+        try {
+          upsertWikiPage(
+            db,
+            pageId,
+            relPath,
+            frontmatter.type ?? 'unknown',
+            title,
+            frontmatter.created ?? '',
+            frontmatter.updated ?? '',
+            frontmatter.confidence ?? 'medium',
+            JSON.stringify(frontmatter.tags ?? []),
+            JSON.stringify(frontmatter.source_refs ?? []),
+            frontmatter.status ?? 'active',
+            wordCount,
+            currentHash,
+          );
 
-        deleteChunksForPage(db, pageId);
+          deleteChunksForPage(db, pageId);
 
-        for (let i = 0; i < embeddedChunks.length; i++) {
-          const chunk = embeddedChunks[i]!;
-          insertChunk(db, pageId, i, chunk.content, chunk.section, chunk.embeddingJson);
+          for (let i = 0; i < embeddedChunks.length; i++) {
+            const chunk = embeddedChunks[i]!;
+            insertChunk(db, pageId, i, chunk.content, chunk.section, chunk.embeddingBlob);
+          }
+          commit(db);
+        } catch (err) {
+          rollback(db);
+          throw err;
+        }
+
+        const shouldRefreshContextual = options.contextualRefresh || provisionedContextualModels.includes(contextualModel);
+        if (shouldRefreshContextual) {
+          await backfillContextualEmbeddings({
+            db,
+            model: contextualModel,
+            pageIds: [pageId],
+            verbose,
+          });
         }
 
         stats.embedded++;

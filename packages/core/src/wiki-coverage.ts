@@ -48,8 +48,10 @@
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { access, readFile } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import { listWikiPages, hashContent } from './wiki-fs.js';
 import { WikiStore } from './wiki-schema.js';
+import { syncWikiLinks, resolveLinksToPage } from './wiki-links.js';
 import { runWikiEmbed, type WikiEmbedStats } from './wiki-embedder.js';
 import {
   backfillContextualEmbeddings,
@@ -321,6 +323,15 @@ export interface WikiCoverageRemediation {
   targeted: string[];
   embed: { ran: boolean; stats: WikiEmbedStats | null };
   contextual: { ran: boolean; stats: ContextualBackfillStats | null };
+  /**
+   * Link-graph repair for this pass.
+   *
+   * `pages` counts pages whose own outbound rows were rebuilt (they changed).
+   * `danglingChecked`/`danglingResolved` cover the other direction: links on
+   * OTHER pages that were pointing at nothing and now have a target, because a
+   * page they name was created during this pass.
+   */
+  links: { ran: boolean; pages: number; danglingChecked: number; danglingResolved: number };
   /** True if anything was actually written. False on a clean no-op run. */
   healed: boolean;
 }
@@ -389,12 +400,71 @@ export async function remediateWikiCoverage(
     ? await checkWikiCoverage({ wikiRoot, dbPath })
     : afterEmbed;
 
+  // Link graph, for exactly the pages just re-indexed.
+  //
+  // ADDED 2026-08-14. Nothing in the current cron set maintained `wiki_links`
+  // at all: the legacy `plumb wiki dream` CLI called `link-rebuild`, the
+  // TypeScript nightly dream that replaced it on 2026-08-08 does not, and the
+  // Claude queue worker edits page FILES directly rather than going through
+  // WaaS, which is the only caller of `syncWikiLinks`. The table had been
+  // frozen since 2026-08-03 — pages created after that date had no link rows at
+  // all — so `plumb_wiki_links` was serving an eleven-day-old graph.
+  //
+  // It lives here for the same reason the stale-page check does (WI-2): the
+  // pass that already knows which pages changed is the one that can fix them,
+  // so there is no separate trigger left to die quietly. Best-effort by design;
+  // a link-sync failure must not fail an otherwise successful re-index.
+  let linksSynced = 0;
+  let danglingChecked = 0;
+  let danglingResolved = 0;
+  if (targeted.length > 0) {
+    const store = await WikiStore.create({ dbPath });
+    try {
+      for (const relPath of targeted) {
+        try {
+          const raw = readFileSync(join(wikiRoot, relPath), 'utf8');
+          syncWikiLinks(store.db, relPath.replace(/\.md$/, ''), raw, wikiRoot);
+          linksSynced++;
+        } catch {
+          // A page that cannot be read was already counted as drift above.
+        }
+      }
+
+      // The OTHER direction, added 2026-08-14.
+      //
+      // The loop above only rewrites rows whose SOURCE page changed. A page
+      // being CREATED is the case that needs the reverse: every page that
+      // already linked to it is still carrying `resolved = 0` and will keep
+      // carrying it until that page happens to change for an unrelated reason.
+      // Live instance: creating `companies/itron.md` left
+      // `people/lauren-gilmore.md`'s `[[Itron]]` row unresolved. A full
+      // `link-rebuild` masks this; the incremental path that actually runs
+      // every 15 minutes does not, so between rebuilds the graph drifts one
+      // way — under-reporting inbound edges to exactly the newest pages.
+      //
+      // Gated on `before.missing` rather than on `targeted`, because only a
+      // page that was ABSENT from the index can turn someone else's dangling
+      // link into a resolvable one. Re-indexing an edited page cannot, and
+      // paying for a whole-graph sweep on every content edit would make the
+      // common case (a page Clay just edited) the expensive one.
+      if (before.missing.length > 0) {
+        const swept = resolveLinksToPage(store.db, wikiRoot);
+        danglingChecked = swept.checked;
+        danglingResolved = swept.resolved;
+      }
+    } finally {
+      store.close();
+    }
+  }
+
   return {
     before,
     after,
     targeted,
     embed: { ran: embedStats !== null, stats: embedStats },
     contextual: { ran: contextualStats !== null, stats: contextualStats },
-    healed: embedStats !== null || contextualStats !== null,
+    links: { ran: linksSynced > 0, pages: linksSynced, danglingChecked, danglingResolved },
+    healed:
+      embedStats !== null || contextualStats !== null || linksSynced > 0 || danglingResolved > 0,
   };
 }

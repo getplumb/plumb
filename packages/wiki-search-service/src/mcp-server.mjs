@@ -45,6 +45,10 @@ function recordSearchTelemetry(entry) {
   }
 }
 
+// Same 4-chars-per-token approximation the injection hook uses, so
+// "avg tokens / search" and "avg tokens / injection" are comparable numbers.
+const estimateTokens = (text) => Math.ceil(text.length / 4)
+
 function textResult(text, isError = false) {
   return { content: [{ type: 'text', text }], isError }
 }
@@ -86,28 +90,35 @@ server.tool(
     try {
       const { body: payload, instance } = await service(`/search?q=${encodeURIComponent(args.query)}&topK=${k}`)
       const results = payload.results ?? []
+      let text = 'No wiki pages found matching this query.'
+      if (results.length > 0) {
+        const lines = [`Wiki search results for "${args.query}":`, '']
+        results.forEach((r, i) => {
+          const section = r.section ? ` — ${r.section}` : ''
+          lines.push(`${i + 1}. **${r.title}** (${r.path}) [${r.type}]${section} score: ${r.score.toFixed(4)}`)
+          lines.push(`   ${String(r.snippet || '').replace(/\s+/g, ' ').trim()}`)
+          lines.push('')
+        })
+        text = lines.join('\n')
+      }
+      // tokensUsed is measured on the text actually handed back to the model,
+      // which is why the result block is built before the telemetry write.
       recordSearchTelemetry({
         status: 'ok',
         instance,
         searchMode: payload.mode,
         resultCount: results.length,
+        tokensUsed: estimateTokens(text),
         topK: k,
         elapsedMs: Math.round(performance.now() - started),
       })
-      if (results.length === 0) return textResult('No wiki pages found matching this query.')
-      const lines = [`Wiki search results for "${args.query}":`, '']
-      results.forEach((r, i) => {
-        const section = r.section ? ` — ${r.section}` : ''
-        lines.push(`${i + 1}. **${r.title}** (${r.path}) [${r.type}]${section} score: ${r.score.toFixed(4)}`)
-        lines.push(`   ${String(r.snippet || '').replace(/\s+/g, ' ').trim()}`)
-        lines.push('')
-      })
-      return textResult(lines.join('\n'))
+      return textResult(text)
     } catch (err) {
       recordSearchTelemetry({
         status: 'error',
         topK: k,
         resultCount: 0,
+        tokensUsed: 0,
         elapsedMs: Math.round(performance.now() - started),
       })
       return textResult(`Error searching wiki: ${errorMessage(err)}`, true)

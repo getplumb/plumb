@@ -79,6 +79,34 @@ export {
   getOutboundLinks,
   getInboundLinks,
 } from './wiki-links.js';
+export type { DanglingLinkResolution } from './wiki-links.js';
+// The canonical wikilink resolver. Anything asking "does this link resolve?"
+// must go through here so there is one answer; see the header of wiki-resolve.ts
+// for the three disagreeing detectors this replaces.
+export {
+  analyzeLinks,
+  buildResolveIndex,
+  buildResolveIndexFromMeta,
+  extractAliases,
+  extractHeadings,
+  extractTitleFromBody,
+  maskNonProse,
+  normalizeHeading,
+  normalizePath,
+  parseWikilinks,
+  resolveWikilink,
+  slugify,
+} from './wiki-resolve.js';
+export type {
+  LinkFinding,
+  LinkGraphResult,
+  ParsedWikilink,
+  Resolution,
+  ResolutionStatus,
+  ResolveIndex,
+  WikiPageInput,
+  WikiPageMeta,
+} from './wiki-resolve.js';
 export {
   appendToQueue,
   readQueue,
@@ -116,3 +144,25 @@ export type {
   PruneOptions,
   PruneResult,
 } from './wiki-coverage.js';
+// The single source of truth for wiki structural health. Anything reporting
+// "is the wiki healthy?" must come from here; see the header of
+// wiki-integrity.ts for why three partial answers were worse than one.
+export {
+  collectWikiIntegrity,
+  collectWikiCorpus,
+  evaluateIntegrity,
+  isGeneratedWikiPage,
+  frontmatterKeysPresent,
+  writeIntegrityReport,
+  readIntegrityReport,
+  defaultIntegrityPath,
+  INTEGRITY_THRESHOLDS,
+  REQUIRED_FRONTMATTER_FIELDS,
+} from './wiki-integrity.js';
+export type {
+  WikiIntegrityOptions,
+  WikiIntegrityReport,
+  IntegrityBreach,
+  WikiCorpus,
+  WikiCorpusPage,
+} from './wiki-integrity.js';
