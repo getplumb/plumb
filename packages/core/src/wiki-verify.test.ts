@@ -118,7 +118,9 @@ describe('alias collision on a page nobody edited (2026-08-14, tools/claude.md)'
   it('is clean before the edit', async () => {
     const root = makeWiki(HAIKU_WIKI);
     const before = await snapshotWikiStructure(root);
-    expect(before.totals).toEqual({ unresolved: 0, ambiguous: 0, anchorMissing: 0, frontmatter: 0 });
+    expect(before.totals).toEqual({
+      unresolved: 0, ambiguous: 0, anchorMissing: 0, frontmatter: 0, placement: 0,
+    });
   });
 
   it('is caught, and is attributed to a page the edit never touched', async () => {
@@ -441,5 +443,81 @@ describe('newStructureFindings', () => {
     expect(verdict.newFindings).toEqual([]);
     // ...but the reading itself is not clean, which is the caller's business.
     expect(after.totals.frontmatter).toBe(6);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Placement
+// ---------------------------------------------------------------------------
+
+describe('a page filed outside the schema directories (queue item 8b422737, 2026-08-14)', () => {
+  // The real fact ended: "File: memory/docs/2026-08-04-zapier-sdk-jd.md" — a
+  // path in the separate OpenClaw memory store, named as a REFERENCE to where
+  // the source document lives. The worker read it as a destination and created
+  // that path inside the wiki.
+  it('is a finding even when the page is otherwise schema-clean', () => {
+    const before = makeWiki({
+      'companies/zapier.md': page({ type: 'company', title: 'Zapier' }),
+    });
+    const after = makeWiki({
+      'companies/zapier.md': page({ type: 'company', title: 'Zapier' }),
+      // Valid frontmatter and a real H1 — the case B1 could NOT already catch,
+      // since the live incident was reverted only because it lacked frontmatter.
+      'memory/docs/2026-08-04-zapier-sdk-jd.md': page({
+        type: 'project',
+        title: 'Zapier SDK Job Description',
+      }),
+    });
+
+    return (async () => {
+      const b = await snapshotWikiStructure(before);
+      const a = await snapshotWikiStructure(after);
+      const introduced = newStructureFindings(b, a);
+
+      expect(b.totals.placement).toBe(0);
+      expect(a.totals.placement).toBe(1);
+      const placement = introduced.filter((f) => f.kind === 'placement');
+      expect(placement).toHaveLength(1);
+      expect(placement[0]!.page).toBe('memory/docs/2026-08-04-zapier-sdk-jd.md');
+      expect(placement[0]!.detail).toContain('memory/');
+    })();
+  });
+
+  it('does not fire on any directory the live wiki actually uses', async () => {
+    const root = makeWiki({
+      'people/clay-waters.md': page({ type: 'person', title: 'Clay Waters' }),
+      'companies/zapier.md': page({ type: 'company', title: 'Zapier' }),
+      'tools/plumb.md': page({ type: 'tool', title: 'Plumb' }),
+      'projects/plumb-20.md': page({ type: 'project', title: 'Plumb 2.0' }),
+      'interviews/samsara-loop.md': page({ type: 'interview', title: 'Samsara Loop' }),
+      'concepts/rag.md': page({ type: 'concept', title: 'RAG' }),
+      'stories/digital-twin-rebuild.md': page({ type: 'story', title: 'Digital Twin Rebuild' }),
+      'life/health-fitness-wellness.md': page({ type: 'life', title: 'Health' }),
+      'education/mit-sloan-agentic-ai-course.md': page({ type: 'concept', title: 'MIT Sloan' }),
+      'preferences/interview-call-notes-and-recording.md': page({ type: 'concept', title: 'Call Notes' }),
+      'sources/some-source.md': page({ type: 'concept', title: 'A Source' }),
+      'archive/companies-flyio-2026-08-14.md': page({ type: 'company', title: 'Fly.io' }),
+      // Root-level files are legitimate and exempt.
+      'index.md': '# Index\n',
+      'glossary.md': '# Glossary\n',
+    });
+
+    const snap = await snapshotWikiStructure(root);
+    expect(snap.totals.placement).toBe(0);
+  });
+
+  it('a page already misplaced before the edit cancels and cannot fail a good edit', async () => {
+    const files = { 'memory/docs/stray.md': page({ type: 'project', title: 'Stray' }) };
+    const before = makeWiki(files);
+    const after = makeWiki({
+      ...files,
+      'companies/zapier.md': page({ type: 'company', title: 'Zapier' }),
+    });
+
+    const b = await snapshotWikiStructure(before);
+    const a = await snapshotWikiStructure(after);
+    expect(b.totals.placement).toBe(1);
+    expect(a.totals.placement).toBe(1);
+    expect(newStructureFindings(b, a).filter((f) => f.kind === 'placement')).toEqual([]);
   });
 });

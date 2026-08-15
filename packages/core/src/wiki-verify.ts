@@ -61,8 +61,46 @@
 import { analyzeLinks } from './wiki-resolve.js';
 import { collectWikiCorpus } from './wiki-integrity.js';
 
-/** `link` covers the three resolver classes; `frontmatter` is one per missing field. */
-export type StructureFindingKind = 'link' | 'frontmatter';
+/**
+ * `link` covers the three resolver classes; `frontmatter` is one per missing
+ * field; `placement` is one per page filed outside the schema's directories.
+ */
+export type StructureFindingKind = 'link' | 'frontmatter' | 'placement';
+
+/**
+ * Top-level directories a wiki page may live in.
+ *
+ * The eight `type` directories SCHEMA.md §2 defines, plus four the wiki grew
+ * without the schema catching up (`education`, `preferences`, `sources`,
+ * `transcripts`) and `archive` for retired pages. Enumerated from the live tree
+ * on 2026-08-14 rather than from the schema alone, because the schema was
+ * already behind reality and a check that fired on real pages would be noise.
+ *
+ * WHY THIS EXISTS. On 2026-08-14 the queue worker processed a `[DOC]` fact
+ * whose text ended `File: memory/docs/2026-08-04-zapier-sdk-jd.md` — a path in
+ * the separate OpenClaw memory store, mentioned as a REFERENCE to where the
+ * source document lives. The worker read it as a destination and created
+ * `memory/docs/...` inside the wiki: a new top-level directory the schema does
+ * not define. B1 reverted it, but only incidentally, because the new file had
+ * no frontmatter. A page that landed in a bogus directory WITH valid
+ * frontmatter would have passed every check and quietly split the wiki's
+ * structure in two.
+ *
+ * Root-level `.md` files are exempt: `index.md`, `log.md`, `SCHEMA.md`,
+ * `REVIEW.md`, `glossary.md` and the dated AUDIT_/EVAL_ reports all live there
+ * legitimately.
+ */
+export const ALLOWED_PAGE_DIRS: ReadonlySet<string> = new Set([
+  'people', 'companies', 'tools', 'projects', 'interviews', 'concepts',
+  'stories', 'life', 'education', 'preferences', 'sources', 'transcripts',
+  'archive',
+]);
+
+/** Top-level directory of a wiki-relative path, or '' for a root-level file. */
+function topLevelDir(rel: string): string {
+  const i = rel.indexOf('/');
+  return i === -1 ? '' : rel.slice(0, i);
+}
 
 export interface StructureFinding {
   readonly kind: StructureFindingKind;
@@ -99,6 +137,7 @@ export interface WikiStructureSnapshot {
     readonly ambiguous: number;
     readonly anchorMissing: number;
     readonly frontmatter: number;
+    readonly placement: number;
   };
 }
 
@@ -131,6 +170,10 @@ function linkKey(page: string, status: string, target: string, anchor: string | 
   ].join(KEY_SEP);
 }
 
+function placementKey(page: string, dir: string): string {
+  return ["placement", page, dir].join(KEY_SEP);
+}
+
 function frontmatterKey(page: string, field: string): string {
   return ["frontmatter", page, field].join(KEY_SEP);
 }
@@ -160,7 +203,7 @@ export async function snapshotWikiStructure(wikiRoot: string): Promise<WikiStruc
   });
 
   const findings: StructureFinding[] = [];
-  const totals = { unresolved: 0, ambiguous: 0, anchorMissing: 0, frontmatter: 0 };
+  const totals = { unresolved: 0, ambiguous: 0, anchorMissing: 0, frontmatter: 0, placement: 0 };
 
   for (const f of graph.findings) {
     findings.push({
@@ -186,6 +229,26 @@ export async function snapshotWikiStructure(wikiRoot: string): Promise<WikiStruc
       });
       totals.frontmatter++;
     }
+  }
+
+  // Placement is checked over the whole corpus rather than only over added
+  // files, for the same reason link findings are: the snapshot is subtracted
+  // against a baseline, so a page that was already misplaced cancels out and
+  // only a NEWLY misplaced one registers. That keeps this free of any notion of
+  // "which file did the model touch", which the worker deliberately derives
+  // from a byte diff rather than from the model's own report.
+  for (const { rel } of corpus) {
+    const dir = topLevelDir(rel);
+    if (dir === '' || ALLOWED_PAGE_DIRS.has(dir)) continue;
+    findings.push({
+      kind: 'placement',
+      page: rel,
+      key: placementKey(rel, dir),
+      detail:
+        `[placement] ${rel}: top-level directory \`${dir}/\` is not a wiki page directory. ` +
+        `A path named inside a fact refers to a file elsewhere on disk; it is not a destination in the wiki.`,
+    });
+    totals.placement++;
   }
 
   return {
