@@ -455,13 +455,15 @@ describe('WikiService (filesystem-only)', () => {
 
 describe('schema constants', () => {
   test('VALID_TYPES contains all SCHEMA.md §2 types', () => {
-    // The last four were added 2026-08-15, when §2 caught up with the four
-    // directories the wiki had already grown. This list is the WaaS WRITE
-    // gate, so a type §2 allows and this omits is a page the wiki cannot
-    // create — which is why the assertion is exact-length, not just subset.
+    // Four were added 2026-08-15, when §2 caught up with the four directories
+    // the wiki had already grown; `conversation` was added 2026-08-21 when
+    // indexed conversation summaries were split out of the `transcripts/` tree.
+    // This list is the WaaS WRITE gate, so a type §2 allows and this omits is a
+    // page the wiki cannot create — which is why the assertion is exact-length,
+    // not just subset.
     const expected = [
       'person', 'company', 'tool', 'project', 'interview', 'concept', 'story', 'life',
-      'education', 'preference', 'source', 'transcript',
+      'education', 'preference', 'source', 'transcript', 'conversation',
     ];
     for (const t of expected) {
       assert.ok((VALID_TYPES as readonly string[]).includes(t), `VALID_TYPES should include "${t}"`);

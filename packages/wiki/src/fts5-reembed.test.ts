@@ -369,14 +369,35 @@ describe('fts5 — WikiSearch returns results using FTS5 BM25', () => {
     }
   });
 
-  test('fts5 — search results are deduplicated by page (one per page)', async () => {
+  test('fts5 — search results are deduplicated by page SECTION, not by page', async () => {
+    // This test asserted one-result-per-page until 2026-08-21, and had been
+    // failing since section-level ranking landed. The old invariant was not
+    // merely restated — it was deliberately dropped. `wiki-search.ts` says so
+    // at the point it stopped collapsing rows: "Do not deduplicate by page
+    // here. Multiple sections from the same page may be independently
+    // relevant; context assembly owns final budget-stage de-duplication."
+    //
+    // A long page whose Overview and whose Research section both answer the
+    // query should be able to offer both, ranked separately. What must never
+    // happen is the SAME section coming back twice, which would be one chunk
+    // leaking through as two results.
     const searcher = await WikiSearch.create({ wikiRoot, dbPath, preCheck: false });
     try {
-      // Skynet has 2 chunks — only one result should appear per page
       const results = await searcher.search('skynet AI', 10);
-      const paths = results.map((r) => r.path);
-      const uniquePaths = new Set(paths);
-      assert.equal(paths.length, uniquePaths.size, 'no duplicate pages in results');
+      const keys = results.map((r) => `${r.path}\u0000${r.section}`);
+      assert.equal(
+        keys.length,
+        new Set(keys).size,
+        `same page+section returned more than once: ${JSON.stringify(results.map((r) => [r.path, r.section]))}`,
+      );
+
+      // And the behaviour the old assertion was really reaching for: a page
+      // may repeat, but only with a DIFFERENT section each time.
+      const repeated = results.filter((r) => r.path === 'companies/skynet.md');
+      if (repeated.length > 1) {
+        const sections = repeated.map((r) => r.section);
+        assert.equal(new Set(sections).size, sections.length, 'a repeated page must vary by section');
+      }
     } finally {
       searcher.close();
     }

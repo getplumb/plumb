@@ -97,7 +97,7 @@ export type StructureFindingKind = 'link' | 'frontmatter' | 'placement';
 export const ALLOWED_PAGE_DIRS: ReadonlySet<string> = new Set([
   'people', 'companies', 'tools', 'projects', 'interviews', 'concepts',
   'stories', 'life', 'education', 'preferences', 'sources', 'transcripts',
-  'archive',
+  'conversations', 'archive',
 ]);
 
 /** Top-level directory of a wiki-relative path, or '' for a root-level file. */

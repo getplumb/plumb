@@ -30,6 +30,13 @@ import type { WikiFrontmatter } from '@getplumb/core';
  * The last four were added 2026-08-15, when the schema caught up with the four
  * directories the wiki had already grown. SCHEMA.md §2.1 enumerates the four
  * lists that have to move together; this is one of them.
+ *
+ * `conversation` (2026-08-21) is the indexed summary of one recorded exchange:
+ * a call, interview, meeting or coaching session. It is deliberately NOT
+ * `transcript`, which names the raw verbatim record under `transcripts/` that
+ * `.plumbignore` keeps out of retrieval. The two used to share that directory,
+ * which meant the summary inherited the transcript's exclusion and could never
+ * be searched or linked — see SCHEMA.md §2 and `transcripts/README.md`.
  */
 export const VALID_TYPES = [
   'person',
@@ -44,6 +51,7 @@ export const VALID_TYPES = [
   'preference',
   'source',
   'transcript',
+  'conversation',
 ] as const;
 
 export type ValidWikiType = (typeof VALID_TYPES)[number];

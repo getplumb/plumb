@@ -44,6 +44,7 @@ const TYPE_BY_DIR: Record<string, string> = {
   preferences: 'preference',
   sources: 'source',
   transcripts: 'transcript',
+  conversations: 'conversation',
 };
 
 export interface WikiSurgicalRepairOptions {
