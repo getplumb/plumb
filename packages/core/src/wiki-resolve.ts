@@ -197,7 +197,7 @@ export function parseWikilinks(text: string): ParsedWikilink[] {
  *
  * Aliases are a first-class naming mechanism on this wiki — 22 pages declare
  * them, and they are how most cross-references actually reach their target:
- * `[[Clay]]` → people/clay-waters.md, `[[Sandra Waters]]` → people/sandra.md,
+ * `[[Clay]]` → people/clay-waters.md, `[[Dana Rivera]]` → people/dana.md,
  * `[[O3]]` → concepts/openai-o3.md, `[[Sonnet]]` → tools/anthropic.md.
  *
  * A resolver without this tier reports ~20 live links as pointing at missing

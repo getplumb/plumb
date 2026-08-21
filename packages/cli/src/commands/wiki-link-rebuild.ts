@@ -128,7 +128,7 @@ export async function rebuildWikiLinks(
 
     // Built from the FILES, not from `wiki_pages`, because `wiki_pages` has no
     // aliases column and aliases are the tier most cross-references match on
-    // (`[[Clay]]`, `[[Sandra Waters]]`, `[[O3]]`). This command already reads
+    // (`[[Clay]]`, `[[Dana Rivera]]`, `[[O3]]`). This command already reads
     // every page, so the file-based index costs nothing extra here.
     const corpus: WikiPageInput[] = [];
     const relToId = new Map<string, string>();

@@ -87,7 +87,11 @@ Restart your tool. Plumb will start ingesting conversations and providing memory
 
 ## Packages
 
-This is a monorepo. All packages under `packages/` are MIT licensed. Hosted infrastructure under `hosted/` is BSL 1.1.
+This is a monorepo. Every package under `packages/` is MIT licensed.
+
+The hosted infrastructure (`cloud-store`, `api-server`) is no longer in this
+repository — it moved to a private repo in August 2026. The OSS core never
+depended on it, so nothing here changed as a result.
 
 | Package | Description | License |
 |---|---|---|
@@ -95,8 +99,8 @@ This is a monorepo. All packages under `packages/` are MIT licensed. Hosted infr
 | [`@getplumb/mcp-server`](./packages/mcp-server) | Self-hostable MCP server (stdio) | MIT |
 | [`@getplumb/plumb`](./packages/openclaw-plugin) | OpenClaw agent plugin — auto-ingest + memory injection | MIT |
 | [`plumb-memory`](./packages/cli) | CLI tool — init, status, export, reprocess | MIT |
-| `@getplumb/cloud-store` (hosted) | Postgres/pgvector CloudStore driver | BSL 1.1 |
-| `@getplumb/api-server` (hosted) | Hosted MCP endpoint | BSL 1.1 |
+
+All of the above are MIT. There is no BSL-licensed code in this repository.
 
 ---
 
@@ -104,11 +108,9 @@ This is a monorepo. All packages under `packages/` are MIT licensed. Hosted infr
 
 All packages under `packages/` are MIT licensed — use them however you want. The default LocalStore uses SQLite and lives in `~/.plumb/` on your machine. No network calls, no telemetry.
 
-To run the hosted MCP endpoint yourself:
-1. Clone this repo
-2. Deploy `hosted/api-server` to Fly.io or any Node.js host
-3. Set up Postgres with pgvector (Supabase works well)
-4. Point your MCP config to your deployed endpoint
+To run an MCP server yourself, use [`@getplumb/mcp-server`](./packages/mcp-server),
+which is MIT and speaks stdio. The managed hosted endpoint is a separate,
+closed-source product and is not buildable from this repository.
 
 ---
 
@@ -124,14 +126,14 @@ The Plumb OpenClaw plugin sends anonymous usage events to help us understand how
 
 ## License
 
-**packages/\*** is MIT — use it however you want.
+**Everything in this repository is MIT** — use it however you want.
 
-**hosted/\*** (the cloud driver and API server) is BSL 1.1 — free for non-production use, commercial use requires a license. The OSS core never depends on the BSL code.
-
-BSL 1.1 converts to MIT after 4 years.
+The hosted cloud driver and API server were previously in `hosted/` under BSL
+1.1. They moved to a private repository in August 2026 and are no longer
+distributed here. Their prior contents remain in this repository's git history
+under the BSL terms that applied at the time.
 
 - [`packages/core/LICENSE`](./packages/core/LICENSE) — MIT
-- [`hosted/LICENSE`](./hosted/LICENSE) — BSL 1.1
 
 ---
 

@@ -3,7 +3,7 @@ import { compileSafeFts5Query } from './fts5-query.js';
 
 describe('compileSafeFts5Query', () => {
   test.each([
-    ['claywaters13@gmail.com', '"claywaters13 gmail com"'],
+    ['user@example.com', '"user example com"'],
     ['foo-bar', '"foo bar"'],
     ['"quoted text"', '"quoted text"'],
     ['(parentheses)', '"parentheses"'],
@@ -22,7 +22,7 @@ describe('compileSafeFts5Query', () => {
 
   test('property: compiled output is only quoted operands plus AND/OR operators', () => {
     const samples = [
-      'claywaters13@gmail.com', 'foo-bar', '"quoted text"', 'parentheses (x)',
+      'user@example.com', 'foo-bar', '"quoted text"', 'parentheses (x)',
       'colon:thing', 'OR', 'AND', 'foo OR bar', 'foo AND bar', 'a:b OR c-d AND "e f"',
       'one* two^ three NEAR four', '"quote "" inside"', 'emoji 😊 plus café@example.co.uk',
     ];

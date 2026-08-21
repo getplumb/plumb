@@ -125,7 +125,7 @@ export function syncWikiLinks(
    *
    * `wiki_pages` has no aliases column, and aliases are the tier most
    * cross-references on this wiki actually match on — `[[Clay]]`,
-   * `[[Sandra Waters]]`, `[[O3]]`. Without the root, those links resolve
+   * `[[Dana Rivera]]`, `[[O3]]`. Without the root, those links resolve
    * correctly in the file-based lint and NOT in `wiki_links`, so the two
    * disagree about the same link. Passing the root closes that gap by reading
    * each page's frontmatter from disk.

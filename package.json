@@ -2,7 +2,7 @@
   "name": "plumb",
   "private": true,
   "version": "0.0.0",
-  "description": "Cross-session AI memory — OSS core + hosted cloud layer",
+  "description": "Cross-session AI memory — OSS core",
   "scripts": {
     "build": "turbo run build",
     "test": "turbo run test",

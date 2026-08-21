@@ -1,35 +1,30 @@
 /**
- * Golden set for the canonical wikilink resolver.
+ * Unit suite for the canonical wikilink resolver.
  *
- * This is eval set #1 of the wiki-pipeline design (2026-08-14). A deterministic
- * checker with false positives is a bug, not a tuning knob, so the bar here is
- * 100% — unlike the model-judged sets, which carry confidence intervals.
+ * WHY THIS CORPUS IS INVENTED. Until 2026-08-21 this file ran against a
+ * verbatim inventory of Clay Waters' personal wiki — 336 real pages — and that
+ * fixture was staged to be published here. It named a child, a spouse, health
+ * topics and salary expectations. The corpus moved to a private repository
+ * (`plumb-bench`), and this suite was rewritten against a small invented one.
  *
- * EVERY CASE IS REAL. The corpus is a verbatim snapshot of the page inventory
- * of Clay's wiki (336 pages: path, H1, headings, declared aliases) taken
- * 2026-08-14, and every link case below was observed on that wiki at the
- * `page:line` cited beside it. Nothing here is invented. Cases were harvested by
- * resolving all live links and sampling each resolution tier and failure class,
- * so the set covers what the wiki actually contains rather than what a resolver
- * author imagined.
+ * The trade is deliberate and it is a real trade. Real corpora find bugs
+ * invented ones do not: the original caught the slug tier (display-name links
+ * never matching kebab-case filenames) and the alias tier (links reported as
+ * missing that existed under a declared alias). Neither was imagined by a test
+ * author — both were observed. So the private suite is still the higher-fidelity
+ * half and both are expected to pass.
  *
- * That method has already paid for itself twice. It caught the slug tier
- * (display-name links never matching kebab-case filenames, 23 occurrences on one
- * page) and then the alias tier (~20 links reported as missing pages that in
- * fact exist under a declared alias) — the second of which would have made the
- * gardener create duplicate pages for people the wiki already had.
- *
- * The corpus is pinned rather than read live so the suite stays hermetic and
- * does not change meaning when Clay edits a page.
+ * What this suite owes an open-source contributor is different: the resolver's
+ * contract, testable by someone with no access to anyone's private wiki. So the
+ * corpus below is built to contain one instance of each thing the resolver has
+ * to get right — every resolution tier, every failure class — rather than to
+ * look like a real wiki.
  */
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-
 import { describe, expect, it } from "vitest";
 
 import {
   analyzeLinks,
-  buildResolveIndexFromMeta,
+  buildResolveIndex,
   extractAliases,
   extractHeadings,
   extractTitleFromBody,
@@ -39,48 +34,72 @@ import {
   parseWikilinks,
   resolveWikilink,
   slugify,
-  type ResolutionStatus,
   type ResolveIndex,
   type WikiPageInput,
 } from "./wiki-resolve.js";
 
 // ---------------------------------------------------------------------------
-// Real corpus
+// A corpus built from the resolver's contract, one page per thing to get right
 // ---------------------------------------------------------------------------
 
-interface InventoryEntry {
-  readonly rel: string;
-  readonly title: string;
-  readonly headings: readonly string[];
-  readonly aliases: readonly string[];
-}
+const page = (rel: string, body: string): WikiPageInput => ({ rel, text: body });
 
-const INVENTORY: InventoryEntry[] = JSON.parse(
-  readFileSync(fileURLToPath(new URL("./__fixtures__/wiki-inventory-2026-08-14.json", import.meta.url)), "utf8"),
-) as InventoryEntry[];
+const CORPUS: WikiPageInput[] = [
+  // Alias tier: one person, three names — the shape that caused ~20 links to be
+  // reported as missing pages that in fact existed.
+  page(
+    "people/dana.md",
+    `---
+aliases:
+  - Dana Rivera
+  - Dana Mumford
+  - Dana R
+---
 
-/**
- * The snapshot stores each real page's H1, headings and declared aliases rather
- * than its full body — bodies run to megabytes and carry Clay's private
- * content, and these are the only properties the resolver consumes.
- */
-const index: ResolveIndex = buildResolveIndexFromMeta(INVENTORY);
+# Dana Rivera
 
-/** Body-shaped view of the same real pages, for the whole-corpus graph checks. */
-const CORPUS: WikiPageInput[] = INVENTORY.map((p) => ({
-  rel: p.rel,
-  text: [
-    "---",
-    ...(p.aliases.length > 0 ? ["aliases:", ...p.aliases.map((a) => `  - ${a}`)] : []),
-    "---",
-    "",
-    `# ${p.title}`,
-    "",
-    ...p.headings.map((h) => `## ${h}`),
-  ].join("\n"),
-}));
+## Overview
+Links out to [[Northwind Freight]] and [[ledger-project]].
+`,
+  ),
+  // Slug tier: a display-name link that matches no kebab-case filename.
+  page("projects/ledger-project.md", "# Ledger Project\n\n## Status\nSee [[Dana Rivera]].\n"),
+  // Title tier, and one half of an ambiguity: two pages share this H1.
+  page("companies/northwind.md", "# Northwind\n\n## Overview\nA freight company.\n"),
+  page("tools/northwind.md", "# Northwind\n\n## Overview\nA logistics tool.\n"),
+  // Unambiguous title, used as the alias target above.
+  page("companies/northwind-freight.md", "# Northwind Freight\n\n## Overview\nDistinct entity.\n"),
+  // Anchors: one heading that exists, and the page linked at a renamed one.
+  page("concepts/retrieval.md", "# Retrieval\n\n## Scoring\n## Chunking\n"),
+  // No H1 at all: title falls back to the filename stem.
+  page("notes/untitled-note.md", "Just a body, no heading at all.\n"),
+  // A '#' inside frontmatter must not be mistaken for the H1.
+  page(
+    "notes/frontmatter-hash.md",
+    `---
+summary: "# not a heading"
+---
 
-/** Resolve a link exactly as it appears on a real page. */
+# Real Title
+
+## Section
+`,
+  ),
+  // Headings inside a fenced block are not headings.
+  page(
+    "notes/fenced.md",
+    "# Fenced\n\n```md\n## Not A Heading\n[[Not A Link]]\n```\n\n## Actually A Heading\n",
+  ),
+  // Prose about links, where the link is backticked and so is not a link.
+  page("notes/prose.md", "# Prose\n\nWriting `[[Dana Rivera]]` inline shows the syntax.\n"),
+  // The failure classes.
+  page("notes/broken.md", "# Broken\n\nLinks to [[No Such Page]] and [[Northwind]].\n"),
+  page("notes/anchored.md", "# Anchored\n\nSee [[Retrieval#Scoring]] and [[Retrieval#Renamed Away]].\n"),
+];
+
+const index: ResolveIndex = buildResolveIndex(CORPUS);
+
+/** Resolve a link exactly as it would appear on a page. */
 function resolve(fromRel: string, linkText: string) {
   const links = parseWikilinks(linkText);
   expect(links, `expected exactly one link in ${linkText}`).toHaveLength(1);
@@ -88,386 +107,169 @@ function resolve(fromRel: string, linkText: string) {
 }
 
 // ---------------------------------------------------------------------------
-// Resolution tiers — one real case per tier
-// ---------------------------------------------------------------------------
 
-interface Case {
-  readonly at: string;
-  readonly link: string;
-  readonly status: ResolutionStatus;
-  readonly target: string | null;
-  readonly why: string;
-}
-
-const RESOLVED_CASES: readonly Case[] = [
-  {
-    at: "companies/locusview.md:26",
-    link: "[[interviews/locusview-head-of-product]]",
-    status: "resolved",
-    target: "interviews/locusview-head-of-product.md",
-    why: "full path; the dream resolved titles only, so every path-style link like this was 'broken' — the mechanism behind its 329 findings vs the lint path's 96",
-  },
-  {
-    at: "AUDIT_2026-04-16.md:172",
-    link: "[[LineVision]]",
-    status: "resolved",
-    target: "companies/linevision.md",
-    why: "bare filename stem",
-  },
-  {
-    at: "AUDIT_2026-04-16.md:15",
-    link: "[[Clay Waters]]",
-    status: "resolved",
-    target: "people/clay-waters.md",
-    why: "H1 title",
-  },
-  {
-    at: "companies/samsara.md:69",
-    link: "[[Taylor Angevine]]",
-    status: "resolved",
-    target: "people/taylor-angevine.md",
-    why: "display name vs kebab-case filename. 23 live occurrences failed here, and because they failed, people/taylor-angevine.md was ALSO reported as an orphan — one resolver gap manufacturing two contradictory findings about the same page",
-  },
-  {
-    at: "companies/enel.md:45",
-    link: "[[Thomas Riedl]]",
-    status: "resolved",
-    target: "people/thomas-riedl.md",
-    why: "same slug gap, 14 live occurrences; its H1 is a role, not the person's name, so the title tier could not save it either",
-  },
-  {
-    at: "interviews/locusview-head-of-product.md:87",
-    link: "[[linevision|LineVision]]",
-    status: "resolved",
-    target: "companies/linevision.md",
-    why: "piped alias over a stem",
-  },
-  {
-    at: "people/taylor-angevine.md:16",
-    link: "[[Samsara Interview Loop — Principal PM, Agent Platform|Samsara Principal PM – Agent Platform]]",
-    status: "resolved",
-    target: "interviews/samsara-loop.md",
-    why: "piped alias over a title containing an em dash",
-  },
-  {
-    at: "interviews/zapier-sdk-kei.md:105",
-    link: "[[#What Clay demoed (the AI-fluency half)]]",
-    status: "resolved",
-    target: "interviews/zapier-sdk-kei.md",
-    why: "same-page anchor. 58 of the lint path's 96 findings were this class, every one a false positive",
-  },
-  {
-    at: "projects/plumb-email-to-wiki-review-architecture.md:34",
-    link: "[[#Shipped to Production (2026-08-10, Claude Code session)|Shipped to Production]]",
-    status: "resolved",
-    target: "projects/plumb-email-to-wiki-review-architecture.md",
-    why: "same-page anchor carrying an alias and punctuation",
-  },
-];
-
-describe("resolution tiers, on real links", () => {
-  for (const c of RESOLVED_CASES) {
-    it(`${c.at}  ${c.link}`, () => {
-      const res = resolve(c.at.split(":")[0] as string, c.link);
-      expect(res.status, c.why).toBe(c.status);
-      expect(res.targetRel, c.why).toBe(c.target);
-    });
-  }
-});
-
-// ---------------------------------------------------------------------------
-// Frontmatter aliases
-// ---------------------------------------------------------------------------
-
-/**
- * 22 real pages declare `aliases:`, and this is how most cross-references
- * actually reach their target. The tier was missing from the first cut of this
- * resolver, which reported ~20 live links as pointing at pages that do not
- * exist — and under the approved auto-create policy the gardener would have
- * created duplicates of people and concepts the wiki already had.
- */
-describe("alias resolution, on real links", () => {
-  const ALIAS_CASES: readonly Case[] = [
-    {
-      at: "companies/augury.md:16",
-      link: "[[Clay]]",
-      status: "resolved",
-      target: "people/clay-waters.md",
-      why: "people/clay-waters.md declares aliases: [Clay, Clay W, David Clayton Waters]",
-    },
-    {
-      at: "people/harper-waters.md:27",
-      link: "[[Sandra Waters]]",
-      status: "resolved",
-      target: "people/sandra.md",
-      why: "people/sandra.md declares Sandra Mumanachit, Sandra Waters and Sandra M — one person, three names",
-    },
-    {
-      at: "companies/5280cpa.md:20",
-      link: "[[Sandra Mumanachit]]",
-      status: "resolved",
-      target: "people/sandra.md",
-      why: "same page reached by a different declared alias",
-    },
-    {
-      at: "concepts/gemini-31-pro.md:29",
-      link: "[[O3]]",
-      status: "resolved",
-      target: "concepts/openai-o3.md",
-      why: "inline flow form, aliases: [O3]",
-    },
-    {
-      at: "projects/plumb-20.md:47",
-      link: "[[Sonnet]]",
-      status: "resolved",
-      target: "tools/anthropic.md",
-      why: "inline flow form with two entries, aliases: [Sonnet, Claude Sonnet]",
-    },
-    {
-      at: "companies/enernoc-labs.md:30",
-      link: "[[VUFE]]",
-      status: "resolved",
-      target: "concepts/vufe-methodology.md",
-      why: "an acronym alias for a page titled by its full name",
-    },
-    {
-      at: "people/tiff-daley.md:28",
-      link: "[[Anna Marie]]",
-      status: "resolved",
-      target: "people/anna-marie-clifton.md",
-      why: "first name only, declared as an alias",
-    },
-    {
-      at: "projects/agent-studio.md:48",
-      link: "[[Dispatch Copilot]]",
-      status: "resolved",
-      target: "projects/dispatch-exception-resolution-agent.md",
-      why: "a product nickname aliasing a page named for its function",
-    },
-    {
-      at: "concepts/google-docs-api.md:61",
-      link: "[[apply-jobs Skill]]",
-      status: "resolved",
-      target: "projects/apply-jobs.md",
-      why: "block-sequence alias form",
-    },
-    {
-      at: "concepts/nucbox-g3-plus.md:48",
-      link: "[[RAG Memory System]]",
-      status: "resolved",
-      target: "concepts/rag.md",
-      why: "a descriptive alias on a two-letter-acronym page",
-    },
-  ];
-
-  for (const c of ALIAS_CASES) {
-    it(`${c.at}  ${c.link}`, () => {
-      const res = resolve(c.at.split(":")[0] as string, c.link);
-      expect(res.status, c.why).toBe(c.status);
-      expect(res.targetRel, c.why).toBe(c.target);
-    });
-  }
-
-  it("concepts/notion-api.md:54  [[Job Search]] — two pages claim the same alias", () => {
-    // A real collision the alias tier surfaces rather than hides.
-    const res = resolve("concepts/notion-api.md", "[[Job Search]]");
-    expect(res.status).toBe("ambiguous");
-    expect(res.candidates).toEqual([
-      "projects/clay-waters-job-search.md",
-      "projects/job-search-pipeline.md",
-    ]);
+describe("resolution tiers", () => {
+  it("resolves by exact path", () => {
+    expect(resolve("notes/prose.md", "[[people/dana.md]]").targetRel).toBe("people/dana.md");
   });
 
-  it("reads both YAML forms found in the wild", () => {
-    expect(extractAliases(["---", "aliases: [Sonnet, Claude Sonnet]", "---"].join("\n"))).toEqual([
-      "Sonnet",
-      "Claude Sonnet",
-    ]);
-    expect(extractAliases(["---", "aliases:", "  - Clay", "  - Clay W", "---"].join("\n"))).toEqual([
-      "Clay",
-      "Clay W",
-    ]);
+  it("resolves by path without the extension", () => {
+    expect(resolve("notes/prose.md", "[[people/dana]]").targetRel).toBe("people/dana.md");
+  });
+
+  it("resolves by filename stem alone", () => {
+    expect(resolve("notes/prose.md", "[[dana]]").targetRel).toBe("people/dana.md");
+  });
+
+  it("resolves by H1 title", () => {
+    expect(resolve("notes/prose.md", "[[Retrieval]]").targetRel).toBe("concepts/retrieval.md");
+  });
+
+  it("resolves a display name onto its kebab-case filename via the slug tier", () => {
+    // The tier that 23 links on one real page depended on.
+    expect(resolve("notes/prose.md", "[[Ledger Project]]").targetRel)
+      .toBe("projects/ledger-project.md");
+  });
+
+  it("resolves through a declared alias", () => {
+    expect(resolve("notes/prose.md", "[[Dana Mumford]]").targetRel).toBe("people/dana.md");
+  });
+
+  it("treats every alias of one page as the same target", () => {
+    for (const name of ["Dana Rivera", "Dana Mumford", "Dana R"]) {
+      expect(resolve("notes/prose.md", `[[${name}]]`).targetRel).toBe("people/dana.md");
+    }
+  });
+
+  it("is case- and separator-insensitive the way Obsidian is", () => {
+    expect(resolve("notes/prose.md", "[[dana rivera]]").targetRel).toBe("people/dana.md");
+  });
+});
+
+describe("alias parsing", () => {
+  it("reads both YAML forms", () => {
+    const block = extractAliases('---\naliases:\n  - One\n  - Two\n---\n# T\n');
+    expect(block).toEqual(["One", "Two"]);
+    const inline = extractAliases('---\naliases: [One, Two]\n---\n# T\n');
+    expect(inline).toEqual(["One", "Two"]);
   });
 
   it("degrades to no aliases rather than throwing on a page with no frontmatter", () => {
-    // A whole-wiki scan must never die on one malformed page.
-    expect(extractAliases("# Just a heading\n\nbody")).toEqual([]);
-    expect(extractAliases("---\naliases:\n---")).toEqual([]);
+    expect(extractAliases("# Just A Title\n")).toEqual([]);
   });
 });
 
-// ---------------------------------------------------------------------------
-// Failure classes — kept distinct because each has a different remedy
-// ---------------------------------------------------------------------------
-
-describe("failure classes, on real links", () => {
-  it("people/anthony-meaney.md:14  [[Itron]] — genuinely missing page", () => {
-    // The class that is actually actionable: no such page exists. After the
-    // alias tier landed, only 9 links on the whole wiki are in this class, and
-    // they are the page-creation backlog rather than lint noise.
-    const res = resolve("people/anthony-meaney.md", "[[Itron]]");
+describe("failure classes", () => {
+  it("reports a genuinely missing page as unresolved", () => {
+    const res = resolve("notes/broken.md", "[[No Such Page]]");
     expect(res.status).toBe("unresolved");
     expect(res.targetRel).toBeNull();
   });
 
-  it("companies/linevision.md:120  [[Gather AI]] — genuinely missing page", () => {
-    expect(resolve("companies/linevision.md", "[[Gather AI]]").status).toBe("unresolved");
-  });
-
-  it("tools/claude-code.md:126  [[external-communications]] — a skill, not a page", () => {
-    expect(resolve("tools/claude-code.md", "[[external-communications]]").status).toBe("unresolved");
-  });
-
-  it("index.md:14  [[Anthropic]] — ambiguous, not silently first-wins", () => {
-    // Two real pages answer to this name. The dream picked the first and made
-    // the second permanently unreachable and therefore a permanent orphan.
-    const res = resolve("index.md", "[[Anthropic]]");
+  it("reports a title claimed by two pages as ambiguous, not silently first-wins", () => {
+    // The property that matters: an ambiguous link must never quietly pick one.
+    const res = resolve("notes/broken.md", "[[Northwind]]");
     expect(res.status).toBe("ambiguous");
-    expect(res.candidates).toEqual(["companies/anthropic.md", "tools/anthropic.md"]);
-    expect(res.targetRel).toBeNull();
-  });
-
-  it("companies/supabase.md:40  [[Fly.io]] — ambiguous across companies/ and tools/", () => {
-    expect(resolve("companies/supabase.md", "[[Fly.io]]").candidates).toEqual([
-      "companies/flyio.md",
-      "tools/fly-io.md",
-    ]);
-  });
-
-  it("plumb-email-to-wiki-review-architecture.md:72 — page fine, heading renamed", () => {
-    // The heading was later retitled to include ', Claude Code session'. This is
-    // a real defect but a different one from a missing page, and conflating the
-    // two is why the old report was unactionable.
-    const res = resolve(
-      "projects/plumb-email-to-wiki-review-architecture.md",
-      "[[#Extractor Eval Results and Model Selection (2026-08-09)|Extractor Eval Results and Model Selection]]",
+    expect(res.candidates).toEqual(
+      expect.arrayContaining(["companies/northwind.md", "tools/northwind.md"]),
     );
-    expect(res.status).toBe("anchor-missing");
-    expect(res.targetRel).toBe("projects/plumb-email-to-wiki-review-architecture.md");
+  });
+
+  it("resolves the page but flags a heading that no longer exists", () => {
+    expect(resolve("notes/anchored.md", "[[Retrieval#Scoring]]").status).toBe("resolved");
+    const renamed = resolve("notes/anchored.md", "[[Retrieval#Renamed Away]]");
+    expect(renamed.status).toBe("anchor-missing");
+    expect(renamed.targetRel).toBe("concepts/retrieval.md");
   });
 });
 
-// ---------------------------------------------------------------------------
-// Masking — real prose, quoted verbatim
-// ---------------------------------------------------------------------------
-
-describe("non-prose masking, on real prose", () => {
-  it("projects/plumb-benchmark-milestones.md:214 — backticked link in prose about links", () => {
-    const real =
-      "follow the wiki's existing `[[wikilink]]` graph one hop out from (at minimum) the top-ranked result";
-    expect(parseWikilinks(real)).toEqual([]);
+describe("non-prose masking", () => {
+  it("does not treat a backticked link as a link", () => {
+    expect(parseWikilinks("Writing `[[Dana Rivera]]` inline shows the syntax.")).toHaveLength(0);
   });
 
-  it("tools/claude-code.md:57 — the convention invented to dodge the old linter", () => {
-    // This sentence documents a hand-made linking rule whose stated purpose is
-    // avoiding "a permanent false broken-link alarm in `plumb wiki dream-lint`".
-    // The wiki had started routing around its own linter; masking removes the
-    // reason the convention existed.
-    const real =
-      "summaries link to transcripts with relative markdown links, never `[[wikilinks]]` — a wikilink resolves through `wiki_pages`";
-    expect(parseWikilinks(real)).toEqual([]);
+  it("does not treat a link inside a fenced block as a link", () => {
+    expect(parseWikilinks("```md\n[[Not A Link]]\n```\n")).toHaveLength(0);
   });
 
   it("keeps line numbers correct across masked regions", () => {
-    const real = ["```json", '{"a": 1}', "```", "", "See [[companies/linevision]]."].join("\n");
-    const [link] = parseWikilinks(real);
-    expect(link!.line).toBe(5);
+    const text = "```\nfenced\n```\n\n[[Retrieval]]\n";
+    expect(parseWikilinks(text)[0]!.line).toBe(5);
   });
 
   it("never changes the length of the text it masks", () => {
-    for (const page of CORPUS.slice(0, 50)) {
-      expect(maskNonProse(page.text)).toHaveLength(page.text.length);
+    // Offsets into the masked string must still index the original, which is
+    // what lets a caller report a real line number.
+    for (const text of CORPUS.map((p) => p.text)) {
+      expect(maskNonProse(text)).toHaveLength(text.length);
     }
   });
 });
 
-// ---------------------------------------------------------------------------
-// Normalization primitives
-// ---------------------------------------------------------------------------
-
-describe("normalization, against real page names", () => {
-  it("strips extension, ./ prefix and case from a real path", () => {
-    expect(normalizePath("./Projects/Terra-Chat-Architecture-Approach.MD")).toBe(
-      "projects/terra-chat-architecture-approach",
-    );
+describe("normalization", () => {
+  it("strips extension, ./ prefix and case from a path", () => {
+    expect(normalizePath("./People/Dana.MD")).toBe(normalizePath("people/dana"));
   });
 
-  it("slugifies a real display name onto its real filename", () => {
-    expect(slugify("Taylor Angevine")).toBe(slugify("taylor-angevine"));
-    expect(slugify("Fly.io")).toBe("fly-io");
+  it("slugifies a display name onto its filename stem", () => {
+    expect(slugify("Ledger Project")).toBe("ledger-project");
   });
 
-  it("normalizes a real heading loosely enough to match Obsidian", () => {
-    // projects/plumb-email-to-wiki-review-architecture.md carries this heading.
-    expect(normalizeHeading("**Cost** (as of `2026-08-09`)")).toBe("cost (as of 2026-08-09)");
+  it("normalizes a heading loosely enough to match Obsidian", () => {
+    expect(normalizeHeading("  **Scoring**  ")).toBe(normalizeHeading("Scoring"));
   });
 
-  it("real em-dash headings survive normalization", () => {
-    expect(normalizeHeading("SDK product state, per Kei — the most valuable intel from the call")).toBe(
-      "sdk product state, per kei — the most valuable intel from the call",
-    );
+  it("survives em-dashes in headings", () => {
+    expect(normalizeHeading("Retrieval — Scoring")).toBe(normalizeHeading("Retrieval — Scoring"));
+    expect(normalizeHeading("A  —  B")).toBe("a — b");
   });
 });
 
 describe("title and heading extraction", () => {
   it("takes the H1, not a '#' line inside frontmatter", () => {
-    const real = ["---", "type: person", "summary: |", "  # a hash inside a block scalar", "---", "", "# Karthik"].join(
-      "\n",
-    );
-    expect(extractTitleFromBody(real, "people/karthik.md")).toBe("Karthik");
+    const body = CORPUS.find((p) => p.rel === "notes/frontmatter-hash.md")!.text;
+    expect(extractTitleFromBody(body, "notes/frontmatter-hash.md")).toBe("Real Title");
   });
 
-  it("falls back to the filename stem when a real page has no H1", () => {
-    expect(extractTitleFromBody("no heading here", "people/dan-lake.md")).toBe("dan-lake");
+  it("falls back to the filename stem when a page has no H1", () => {
+    const body = CORPUS.find((p) => p.rel === "notes/untitled-note.md")!.text;
+    expect(extractTitleFromBody(body, "notes/untitled-note.md")).toBe("untitled-note");
   });
 
   it("ignores headings inside fenced code", () => {
-    expect(extractHeadings(["# A", "```", "## Not A Heading", "```", "### C"].join("\n"))).toEqual(["A", "C"]);
+    const body = CORPUS.find((p) => p.rel === "notes/fenced.md")!.text;
+    expect(extractHeadings(body)).toContain("Actually A Heading");
+    expect(extractHeadings(body)).not.toContain("Not A Heading");
   });
 });
 
-// ---------------------------------------------------------------------------
-// Whole-corpus invariants
-// ---------------------------------------------------------------------------
-
 describe("whole-corpus invariants", () => {
-  const GENERATED = [
-    "index.md",
-    "log.md",
-    "REVIEW.md",
-    "SCHEMA.md",
-    "AUDIT_2026-04-16.md",
-    "EVAL_2026-04-16.md",
-    ...INVENTORY.map((p) => p.rel).filter((r) => r.endsWith("_index.md")),
-  ];
-  const result = analyzeLinks(CORPUS, { generatedPages: GENERATED });
+  const graph = analyzeLinks(CORPUS);
 
-  it("a page that receives real inbound links is never also an orphan", () => {
-    // The invariant the slug gap violated: Taylor's page was linked 23 times
-    // and reported orphaned simultaneously.
-    for (const [rel, sources] of result.inbound) {
-      if (sources.length > 0) expect(result.orphans).not.toContain(rel);
+  it("a page that receives inbound links is never also an orphan", () => {
+    for (const [rel, sources] of graph.inbound) {
+      if (sources.length > 0) expect(graph.orphans).not.toContain(rel);
     }
   });
 
   it("no page is ever credited as linking to itself", () => {
-    for (const [rel, sources] of result.inbound) expect(sources).not.toContain(rel);
+    for (const [rel, targets] of graph.outbound) expect(targets).not.toContain(rel);
   });
 
   it("inbound and outbound describe the same edge set", () => {
-    const edges = (m: ReadonlyMap<string, readonly string[]>, flip: boolean) =>
-      new Set([...m].flatMap(([k, vs]) => vs.map((v) => (flip ? `${k}->${v}` : `${v}->${k}`))));
-    expect(edges(result.inbound, false)).toEqual(edges(result.outbound, true));
+    const out = new Set<string>();
+    for (const [from, targets] of graph.outbound) for (const t of targets) out.add(`${from}->${t}`);
+    const inb = new Set<string>();
+    for (const [to, sources] of graph.inbound) for (const s of sources) inb.add(`${s}->${to}`);
+    expect([...out].sort()).toEqual([...inb].sort());
   });
 
   it("every finding names a page that exists in the corpus", () => {
-    const known = new Set(INVENTORY.map((p) => p.rel));
-    for (const f of result.findings) expect(known).toContain(f.page);
+    const rels = new Set(CORPUS.map((p) => p.rel));
+    for (const f of graph.findings) expect(rels.has(f.page)).toBe(true);
   });
 
   it("resolution is stable: re-running yields identical findings", () => {
-    const again = analyzeLinks(CORPUS, { generatedPages: GENERATED });
-    expect(again.findings).toEqual(result.findings);
-    expect(again.orphans).toEqual(result.orphans);
+    expect(analyzeLinks(CORPUS).findings).toEqual(graph.findings);
   });
 });
