@@ -404,7 +404,7 @@ describe('an edit that repairs an existing finding', () => {
     const root = makeWiki({
       'people/lauren-gilmore.md': page({
         type: 'person',
-        title: 'Lauren Gilmore',
+        title: 'Robin Vance',
         body: 'Director of Global Talent Acquisition at [[Itron]].',
       }),
     });

@@ -68,7 +68,7 @@ interface RawFact {
 
 /**
  * Convert an entity name to a kebab-case filename.
- * "Dylan Sellberg" → "dylan-sellberg"
+ * "Jordan Lee" → "jordan-lee"
  * "OpenAI" → "openai"
  */
 function toSlug(name: string): string {
@@ -82,7 +82,7 @@ function toSlug(name: string): string {
 
 /**
  * Build the relative path for an entity's wiki page.
- * e.g. person "Dylan Sellberg" → "people/dylan-sellberg.md"
+ * e.g. person "Jordan Lee" → "people/jordan-lee.md"
  */
 function entityRelPath(entity: ExtractedEntity): string {
   const dir = TYPE_DIR[entity.type];

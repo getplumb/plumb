@@ -34,10 +34,10 @@ export interface WikiFrontmatter {
 }
 
 export interface WikiPage {
-  /** Relative path from wikiRoot, e.g. "people/dylan-sellberg.md" */
+  /** Relative path from wikiRoot, e.g. "people/jordan-lee.md" */
   path: string;
   frontmatter: WikiFrontmatter;
-  /** H1 title extracted from body, e.g. "Dylan Sellberg". undefined if not found. */
+  /** H1 title extracted from body, e.g. "Jordan Lee". undefined if not found. */
   title: string | undefined;
   /** Markdown body text (everything after the closing frontmatter ---) */
   body: string;
@@ -268,7 +268,7 @@ export function extractTitle(body: string): string | undefined {
  * Read and parse a wiki page from disk.
  *
  * @param wikiRoot  Absolute path to the wiki root directory (e.g. ~/.plumb/wiki)
- * @param relPath   Relative path of the file (e.g. "people/dylan-sellberg.md")
+ * @param relPath   Relative path of the file (e.g. "people/jordan-lee.md")
  */
 export async function readWikiPage(wikiRoot: string, relPath: string): Promise<WikiPage> {
   const absPath = join(wikiRoot, relPath);
@@ -284,7 +284,7 @@ export async function readWikiPage(wikiRoot: string, relPath: string): Promise<W
  * Never deletes existing files — only overwrites with new content.
  *
  * @param wikiRoot    Absolute path to the wiki root directory
- * @param relPath     Relative path (e.g. "people/dylan-sellberg.md")
+ * @param relPath     Relative path (e.g. "people/jordan-lee.md")
  * @param frontmatter Page frontmatter fields
  * @param body        Markdown body (should start with H1 title)
  */
@@ -446,7 +446,7 @@ export async function loadPlumbIgnore(wikiRoot: string): Promise<PlumbIgnore> {
  * Skips metadata files (SCHEMA.md, index.md, log.md, REVIEW.md, _index.md).
  * Excludes files in the archive/ subdirectory.
  *
- * Returns paths relative to wikiRoot, e.g. ["people/dylan-sellberg.md"].
+ * Returns paths relative to wikiRoot, e.g. ["people/jordan-lee.md"].
  */
 export async function listWikiPages(
   wikiRoot: string,

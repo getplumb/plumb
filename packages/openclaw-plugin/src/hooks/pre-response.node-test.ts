@@ -36,7 +36,7 @@ describe('createPreResponseHook — pendingPrompts wiring', () => {
 
     const hook = createPreResponseHook(store, null, false, pendingPrompts);
     const event: PluginHookBeforePromptBuildEvent = {
-      prompt: 'Sender (untrusted metadata):\n```json\n{"channel":"webchat"}\n```\n\nCan you tell me about Chee Chew?',
+      prompt: 'Sender (untrusted metadata):\n```json\n{"channel":"webchat"}\n```\n\nCan you tell me about Rae Lindqvist?',
       messages: [],
     };
     const ctx: PluginHookAgentContext = { sessionId: 'session-first' };
@@ -45,7 +45,7 @@ describe('createPreResponseHook — pendingPrompts wiring', () => {
 
     assert.equal(
       pendingPrompts.get('session-first'),
-      'Can you tell me about Chee Chew?',
+      'Can you tell me about Rae Lindqvist?',
       'extracts user message from envelope'
     );
   });

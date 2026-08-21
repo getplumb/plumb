@@ -33,16 +33,16 @@ describe('extractWikilinks', () => {
   });
 
   test('extracts a single [[Link]]', () => {
-    assert.deepEqual(extractWikilinks('See [[Dylan Sellberg]] for details.'), ['Dylan Sellberg']);
+    assert.deepEqual(extractWikilinks('See [[Jordan Lee]] for details.'), ['Jordan Lee']);
   });
 
   test('extracts multiple [[Link]] targets', () => {
-    const text = 'Mentions [[Samsara]] and [[Dylan Sellberg]] as well as [[AI Frameworks]].';
-    assert.deepEqual(extractWikilinks(text), ['AI Frameworks', 'Dylan Sellberg', 'Samsara']);
+    const text = 'Mentions [[Samsara]] and [[Jordan Lee]] as well as [[AI Frameworks]].';
+    assert.deepEqual(extractWikilinks(text), ['AI Frameworks', 'Jordan Lee', 'Samsara']);
   });
 
   test('extracts target from piped [[Target|Display Text]]', () => {
-    assert.deepEqual(extractWikilinks('See [[Dylan Sellberg|Dylan]] for more.'), ['Dylan Sellberg']);
+    assert.deepEqual(extractWikilinks('See [[Jordan Lee|Jordan]] for more.'), ['Jordan Lee']);
   });
 
   test('deduplicates repeated links to the same target', () => {
@@ -71,9 +71,9 @@ This page is about [[Samsara]] and its relationship to [[AI Frameworks]].
 
 ## Section
 
-See also [[Dylan Sellberg|the person]] for context.
+See also [[Jordan Lee|the person]] for context.
     `.trim();
-    assert.deepEqual(extractWikilinks(text), ['AI Frameworks', 'Dylan Sellberg', 'Samsara']);
+    assert.deepEqual(extractWikilinks(text), ['AI Frameworks', 'Jordan Lee', 'Samsara']);
   });
 
   test('does not extract from fenced code blocks content (regex limitation — documents behavior)', () => {
@@ -138,7 +138,7 @@ describe('syncWikiLinks — real link shapes the title-only resolver dropped', (
     insertPageAt(db, 'src', 'companies/samsara.md', 'Samsara');
     insertPageAt(db, 'taylor', 'people/taylor-angevine.md', 'Samsara Principal PM – Maintenance');
     insertPageAt(db, 'loop', 'interviews/samsara-loop.md', 'Samsara Interview Loop — Principal PM, Agent Platform');
-    insertPageAt(db, 'kei', 'interviews/zapier-sdk-kei.md', 'Zapier SDK Interview — Kei Turner');
+    insertPageAt(db, 'kei', 'interviews/zapier-sdk-kei.md', 'Zapier SDK Interview — Sam Okafor');
   });
 
   afterEach(() => {
@@ -232,13 +232,13 @@ describe('syncWikiLinks', () => {
 
   test('inserts links for all extracted targets', () => {
     insertPage(db, 'page-a', 'Page A');
-    const body = '# Page A\n\nLinks to [[Samsara]] and [[Dylan Sellberg]].';
+    const body = '# Page A\n\nLinks to [[Samsara]] and [[Jordan Lee]].';
     syncWikiLinks(db, 'page-a', body);
 
     const rows = getOutboundLinks(db, 'page-a');
     assert.equal(rows.length, 2);
     const titles = rows.map(r => r.target_title).sort();
-    assert.deepEqual(titles, ['Dylan Sellberg', 'Samsara']);
+    assert.deepEqual(titles, ['Jordan Lee', 'Samsara']);
   });
 
   test('all inserted links are unresolved when targets not in wiki_pages', () => {
@@ -356,7 +356,7 @@ describe('resolveLinksToPage', () => {
     // [[Itron]]." On 2026-08-14 companies/itron.md was created and this row
     // stayed resolved = 0, because syncWikiLinks only rewrites rows whose
     // SOURCE page changed and lauren-gilmore.md had not changed.
-    insertPageAt(db, 'lauren', 'people/lauren-gilmore.md', 'Lauren Gilmore');
+    insertPageAt(db, 'lauren', 'people/lauren-gilmore.md', 'Robin Vance');
     insertDangling('lauren', 'Itron');
 
     let swept = resolveLinksToPage(db);

@@ -125,8 +125,8 @@ describe('refactor — slugify', () => {
 
 describe('refactor — childPageSlug', () => {
   test('split — childPageSlug produces {parent}-{section-slug}', () => {
-    const result = childPageSlug('people/dylan-sellberg', 'Work History');
-    assert.equal(result, 'people/dylan-sellberg-work-history');
+    const result = childPageSlug('people/jordan-lee', 'Work History');
+    assert.equal(result, 'people/jordan-lee-work-history');
   });
 
   test('split — childPageSlug preserves directory prefix', () => {
@@ -168,7 +168,7 @@ describe('refactor — countWords', () => {
 
 describe('refactor — countOutboundLinks', () => {
   test('split — countOutboundLinks detects [[wikilinks]]', () => {
-    const text = 'See [[Dylan Sellberg]] and [[Samsara]] for more.';
+    const text = 'See [[Jordan Lee]] and [[Samsara]] for more.';
     assert.equal(countOutboundLinks(text), 2);
   });
 

@@ -297,7 +297,7 @@ Rules:
 1. Identify the largest or most distinct H2 section — that becomes the child page
 2. The parent page replaces the extracted section with a brief (2-3 sentence) summary and a [[wikilink]] to the child
 3. The child page gets its own frontmatter (same type/created/source_refs; updated = today; tags/confidence copied from parent)
-4. The child page title = parent title + " — " + section name (e.g. "Dylan Sellberg — Background")
+4. The child page title = parent title + " — " + section name (e.g. "Jordan Lee — Background")
 5. Both pages stay under ~800 words
 
 Output exactly this format (no extra text):

@@ -43,7 +43,7 @@ Rules:
 - Return [] if no existing page is clearly relevant.
 - Output ONLY valid JSON — a bare array of strings, no markdown fences, no explanation.
 
-Example output: ["people/dylan-sellberg.md","companies/samsara.md"]`;
+Example output: ["people/jordan-lee.md","companies/samsara.md"]`;
 
 // ---------------------------------------------------------------------------
 // Haiku API call

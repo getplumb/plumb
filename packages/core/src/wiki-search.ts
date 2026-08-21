@@ -40,7 +40,7 @@ import type { WasmDb } from './wasm-db.js';
 // ---------------------------------------------------------------------------
 
 export interface WikiSearchResult {
-  /** Relative filesystem path, e.g. "people/dylan-sellberg.md" */
+  /** Relative filesystem path, e.g. "people/jordan-lee.md" */
   path: string;
   /** H1 title of the page */
   title: string;
@@ -447,7 +447,7 @@ async function preCheckAndReEmbed(wikiRoot: string, dbPath: string, db: WasmDb):
  *
  * Usage:
  *   const search = await WikiSearch.create({ dbPath: '~/.plumb/wiki.db' });
- *   const results = await search.search('Dylan Sellberg Samsara', 5);
+ *   const results = await search.search('Jordan Lee Samsara', 5);
  *   search.close();
  */
 export class WikiSearch {

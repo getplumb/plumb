@@ -305,7 +305,7 @@ export function chunkText(text: string, targetChars = TARGET_CHUNK_CHARS): strin
 
 /**
  * Derive the canonical page ID (slug) from a relative file path.
- * "people/dylan-sellberg.md" → "people/dylan-sellberg"
+ * "people/jordan-lee.md" → "people/jordan-lee"
  */
 function pageIdFromPath(relPath: string): string {
   return relPath.replace(/\.md$/, '');
@@ -313,7 +313,7 @@ function pageIdFromPath(relPath: string): string {
 
 /**
  * Convert a slug path to a display title (fallback when H1 is absent).
- * "people/dylan-sellberg" → "Dylan Sellberg"
+ * "people/jordan-lee" → "Jordan Lee"
  */
 function slugToTitle(pageId: string): string {
   const stem = pageId.replace(/^.*\//, '');

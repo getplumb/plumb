@@ -386,7 +386,7 @@ export const plugin: OpenClawPluginDefinition = {
               description:
                 'The fact or update to incorporate into the wiki, written in plain English. ' +
                 'Include enough context for the wiki writer to place it correctly ' +
-                '(e.g. "Dylan Sellberg left Samsara as of April 2026").',
+                '(e.g. "Jordan Lee left Samsara as of April 2026").',
             },
           },
           required: ['fact'],

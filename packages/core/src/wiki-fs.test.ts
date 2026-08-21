@@ -52,7 +52,7 @@ const SAMPLE_FRONTMATTER: WikiFrontmatter = {
   confidence: 'high',
 };
 
-const SAMPLE_BODY = `\n# Dylan Sellberg\n\nEngineering Manager at Samsara.\n`;
+const SAMPLE_BODY = `\n# Jordan Lee\n\nEngineering Manager at Samsara.\n`;
 
 // ---------------------------------------------------------------------------
 // parseSimpleYaml
@@ -113,7 +113,7 @@ tags:
 confidence: high
 ---
 
-# Dylan Sellberg
+# Jordan Lee
 
 Some content here.
 `;
@@ -124,7 +124,7 @@ Some content here.
     assert.deepEqual(frontmatter.source_refs, ['plumb:abc123', 'chat:2026-04-15']);
     assert.deepEqual(frontmatter.tags, ['interview', 'samsara']);
     assert.equal(frontmatter.confidence, 'high');
-    assert.ok(body.includes('# Dylan Sellberg'));
+    assert.ok(body.includes('# Jordan Lee'));
     assert.ok(body.includes('Some content here.'));
   });
 
@@ -229,7 +229,7 @@ describe('formatPage round-trip', () => {
     assert.deepEqual(frontmatter.source_refs, SAMPLE_FRONTMATTER.source_refs);
     assert.deepEqual(frontmatter.tags, SAMPLE_FRONTMATTER.tags);
     assert.equal(frontmatter.confidence, SAMPLE_FRONTMATTER.confidence);
-    assert.ok(body.includes('# Dylan Sellberg'));
+    assert.ok(body.includes('# Jordan Lee'));
   });
 
   test('formatted output starts with ---', () => {
@@ -244,7 +244,7 @@ describe('formatPage round-trip', () => {
 
 describe('extractTitle', () => {
   test('extracts H1 title from body', () => {
-    assert.equal(extractTitle('\n# Dylan Sellberg\n\nContent.'), 'Dylan Sellberg');
+    assert.equal(extractTitle('\n# Jordan Lee\n\nContent.'), 'Jordan Lee');
   });
 
   test('returns undefined when no H1 present', () => {
@@ -272,15 +272,15 @@ describe('readWikiPage / writeWikiPage', () => {
   });
 
   test('writes and reads back a page correctly', async () => {
-    await writeWikiPage(wikiRoot, 'people/dylan-sellberg.md', SAMPLE_FRONTMATTER, SAMPLE_BODY);
-    const page = await readWikiPage(wikiRoot, 'people/dylan-sellberg.md');
+    await writeWikiPage(wikiRoot, 'people/jordan-lee.md', SAMPLE_FRONTMATTER, SAMPLE_BODY);
+    const page = await readWikiPage(wikiRoot, 'people/jordan-lee.md');
 
-    assert.equal(page.path, 'people/dylan-sellberg.md');
+    assert.equal(page.path, 'people/jordan-lee.md');
     assert.equal(page.frontmatter.type, 'person');
     assert.equal(page.frontmatter.created, '2026-04-10');
     assert.deepEqual(page.frontmatter.tags, ['interview', 'samsara']);
-    assert.equal(page.title, 'Dylan Sellberg');
-    assert.ok(page.body.includes('Dylan Sellberg'));
+    assert.equal(page.title, 'Jordan Lee');
+    assert.ok(page.body.includes('Jordan Lee'));
   });
 
   test('creates parent directories automatically', async () => {
@@ -322,10 +322,10 @@ describe('listWikiPages', () => {
   }
 
   test('returns relative paths for .md pages', async () => {
-    touch('people/dylan-sellberg.md');
+    touch('people/jordan-lee.md');
     touch('companies/samsara.md');
     const pages = await listWikiPages(wikiRoot);
-    assert.ok(pages.includes('people/dylan-sellberg.md'));
+    assert.ok(pages.includes('people/jordan-lee.md'));
     assert.ok(pages.includes('companies/samsara.md'));
   });
 
@@ -335,14 +335,14 @@ describe('listWikiPages', () => {
     touch('log.md');
     touch('REVIEW.md');
     touch('people/_index.md');
-    touch('people/dylan-sellberg.md');
+    touch('people/jordan-lee.md');
     const pages = await listWikiPages(wikiRoot);
     assert.ok(!pages.includes('SCHEMA.md'));
     assert.ok(!pages.includes('index.md'));
     assert.ok(!pages.includes('log.md'));
     assert.ok(!pages.includes('REVIEW.md'));
     assert.ok(!pages.includes('people/_index.md'));
-    assert.ok(pages.includes('people/dylan-sellberg.md'));
+    assert.ok(pages.includes('people/jordan-lee.md'));
   });
 
   test('excludes archive/ by default', async () => {
@@ -476,7 +476,7 @@ describe('archivePage', () => {
     await writeWikiPage(wikiRoot, 'people/someone.md', SAMPLE_FRONTMATTER, SAMPLE_BODY);
     const archivePath = await archivePage(wikiRoot, 'people/someone.md');
     const archived = await readWikiPage(wikiRoot, archivePath);
-    assert.ok(archived.body.includes('Dylan Sellberg'));
+    assert.ok(archived.body.includes('Jordan Lee'));
   });
 
   test('original file no longer exists after archiving', async () => {

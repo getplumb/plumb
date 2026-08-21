@@ -24,7 +24,7 @@ import { getDefaultDbPath } from '../utils/db-path.js';
 export type EntityType = 'person' | 'company' | 'project' | 'concept';
 
 export interface ExtractedEntity {
-  /** Canonical name, e.g. "Dylan Sellberg" or "OpenAI" */
+  /** Canonical name, e.g. "Jordan Lee" or "OpenAI" */
   name: string;
   /** Entity category */
   type: EntityType;

@@ -49,7 +49,7 @@ import type { ValidationError } from './frontmatter-validator.js';
  * The frontmatter is validated before any file I/O is performed.
  */
 export interface WikiWritePatch {
-  /** Relative path from wikiRoot, e.g. "people/dylan-sellberg.md" */
+  /** Relative path from wikiRoot, e.g. "people/jordan-lee.md" */
   path: string;
   /** Validated frontmatter fields — type, created, updated, etc. */
   frontmatter: WikiFrontmatter;
@@ -205,7 +205,7 @@ export class WikiService {
    * stored hash in wiki_pages. If not, it triggers a re-embed pass before
    * returning the page content — ensuring callers always get a search-ready page.
    *
-   * @param relPath  Relative path from wikiRoot, e.g. "people/dylan-sellberg.md"
+   * @param relPath  Relative path from wikiRoot, e.g. "people/jordan-lee.md"
    */
   async read(relPath: string): Promise<WikiPage> {
     // Content-hash check: detect external edits (e.g. Obsidian) and re-embed.
@@ -377,7 +377,7 @@ export class WikiService {
    * Return outbound and inbound links for a page.
    * Requires DB to be configured; throws if called on a filesystem-only instance.
    *
-   * @param relPath  Relative path of the page (e.g. "people/dylan-sellberg.md")
+   * @param relPath  Relative path of the page (e.g. "people/jordan-lee.md")
    */
   links(relPath: string): WikiLinksResult {
     if (this.#store === null) {

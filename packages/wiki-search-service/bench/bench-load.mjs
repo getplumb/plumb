@@ -5,10 +5,14 @@
 // full BM25+vector scoring pass per request, which is the honest worst case.
 const BASE = process.env.TARGET || 'http://127.0.0.1:18795'
 
-const VOCAB = ('plumb benchmark retrieval contextual embedding coverage samsara interview loop feedback vertical jump '
-  + 'program deadlift inbody scan cadence wispr flow dictation openclaw teardown archive terra console navigation '
-  + 'linear cron migration job search outreach cascade twilio kelsey glean roles wiki queue worker dream lint '
-  + 'sharding data quality script relocation lafayette finances sandra school contractor gateway extension').split(' ')
+// Deliberately generic. This list only has to produce unique multi-word
+// queries, so the words themselves carry no meaning -- and the version that
+// did, harvested from a real personal wiki, put private life terms and named
+// third parties into a public repository.
+const VOCAB = ('plumb benchmark retrieval contextual embedding coverage catalog interview loop feedback vector index '
+  + 'program pipeline snapshot scan cadence stream ingest dictation gateway teardown archive console navigation '
+  + 'linear cron migration search outreach cascade adapter shard replica roles wiki queue worker dream lint '
+  + 'sharding data quality script relocation locale ledger tenant schema contractor gateway extension').split(' ')
 
 let queryCounter = 0
 function uniqueQuery(words = 4) {

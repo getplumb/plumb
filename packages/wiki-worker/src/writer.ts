@@ -22,7 +22,7 @@ import { isTombstoned } from './tombstone.js';
 // ---------------------------------------------------------------------------
 
 export interface WriterInput {
-  /** Relative path of the page being patched, e.g. "people/dylan-sellberg.md" */
+  /** Relative path of the page being patched, e.g. "people/jordan-lee.md" */
   path: string;
   /** Full raw content of the existing page (frontmatter + body) */
   existingContent: string;

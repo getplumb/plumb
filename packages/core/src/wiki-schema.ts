@@ -23,8 +23,8 @@ import { openDb, type WasmDb } from './wasm-db.js';
 /**
  * wiki_pages — one row per wiki markdown file.
  *
- * id:           Canonical slug, e.g. "people/dylan-sellberg"
- * path:         Relative filesystem path, e.g. "people/dylan-sellberg.md"
+ * id:           Canonical slug, e.g. "people/jordan-lee"
+ * path:         Relative filesystem path, e.g. "people/jordan-lee.md"
  * type:         Page type from §2 of SCHEMA.md
  * title:        H1 title of the page
  * created:      YYYY-MM-DD (from frontmatter; never changes)
@@ -180,7 +180,7 @@ export const CREATE_WIKI_FTS_TRIGGERS = [
  * wiki_links — wikilink graph between pages.
  *
  * source_page_id: FK → wiki_pages.id (the page containing the [[wikilink]])
- * target_title:   Display name inside brackets, e.g. "Dylan Sellberg"
+ * target_title:   Display name inside brackets, e.g. "Jordan Lee"
  * target_page_id: FK → wiki_pages.id if resolved; NULL if the target page does not yet exist
  * resolved:       1 if target_page_id is populated, 0 if still dangling
  */

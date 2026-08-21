@@ -61,8 +61,8 @@ The wiki is the **compiled knowledge layer**. Plumb V1 is the **raw memory layer
     ├── people/
     │   ├── _index.md      ← directory-level index
     │   ├── clay-waters.md
-    │   ├── sandra.md
-    │   ├── dylan-sellberg.md
+    │   ├── dana-rivera.md
+    │   ├── jordan-lee.md
     │   └── ...
     ├── companies/
     │   ├── _index.md
@@ -122,7 +122,7 @@ source_refs:
 tags: [samsara, interview, ai-platform]
 confidence: high                      # high | medium | low
 ---
-# Dylan Sellberg
+# Jordan Lee
 
 Head of AI Platform at [[Samsara]]. Joined from [[HubSpot]].
 
@@ -130,7 +130,7 @@ Head of AI Platform at [[Samsara]]. Joined from [[HubSpot]].
 Leads 30 engineers across two pillars...
 
 ## Interview Notes
-Clay interviewed with Dylan on 2026-03-23. See [[Samsara Loop Interview]].
+Clay interviewed with Jordan on 2026-03-23. See [[Samsara Loop Interview]].
 
 ## Key Quotes
 - "I think of myself like a PM agent, like a sports agent. How do I get my PMs paid."
@@ -170,7 +170,7 @@ Clay interviewed with Dylan on 2026-03-23. See [[Samsara Loop Interview]].
 ## 2026-04-15
 
 ### Dream Session (02:00 MT)
-- Created: people/dylan-sellberg.md (from Plumb facts + chat 2026-03-23)
+- Created: people/jordan-lee.md (from Plumb facts + chat 2026-03-23)
 - Updated: companies/samsara.md — added AI platform team structure
 - Updated: index.md — 3 new entries
 - Contradiction resolved: interviews/samsara-loop.md — updated panel debrief date from April 6 to April 7
@@ -245,12 +245,12 @@ When `wikiMode: "v2"`, the injection layer changes:
 ```
 [PLUMB WIKI]
 ## Relevant wiki pages
-[HIGH] people/dylan-sellberg.md — Head of AI Platform at Samsara, interviewed 2026-03-23
+[HIGH] people/jordan-lee.md — Head of AI Platform at Samsara, interviewed 2026-03-23
 [HIGH] interviews/samsara-loop.md — Loop interview intel, formats, focus areas by interviewer
 [MED] companies/samsara.md — AI platform team, 30 engineers, Agent Studio
 
 ## Key facts
-- Dylan looking for: adaptability, hardware curiosity, enterprise mindset
+- Jordan looking for: adaptability, hardware curiosity, enterprise mindset
 - Loop panel debriefs Monday April 7
 - → Read full pages with plumb_wiki_read
 
@@ -457,8 +457,8 @@ Separate SQLite database for wiki page embeddings and metadata:
 
 ```sql
 CREATE TABLE wiki_pages (
-  path TEXT PRIMARY KEY,              -- "people/dylan-sellberg.md"
-  title TEXT NOT NULL,                -- "Dylan Sellberg"
+  path TEXT PRIMARY KEY,              -- "people/jordan-lee.md"
+  title TEXT NOT NULL,                -- "Jordan Lee"
   type TEXT NOT NULL,                 -- "person", "company", etc.
   summary TEXT,                       -- one-line summary for injection
   tags TEXT,                          -- JSON array

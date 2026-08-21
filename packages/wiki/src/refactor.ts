@@ -115,8 +115,8 @@ export function slugify(title: string): string {
  * The parentSlug is the parent's path without the .md extension.
  *
  * Examples:
- *   parentSlug = "people/dylan-sellberg", sectionTitle = "Work History"
- *   → "people/dylan-sellberg-work-history"
+ *   parentSlug = "people/jordan-lee", sectionTitle = "Work History"
+ *   → "people/jordan-lee-work-history"
  */
 export function childPageSlug(parentSlug: string, sectionTitle: string): string {
   return `${parentSlug}-${slugify(sectionTitle)}`;
@@ -258,7 +258,7 @@ async function callModelPickSection(
  *
  * @param originalBody   Full markdown body of the parent page (after frontmatter)
  * @param section        The H2Section to externalize
- * @param childPageId    The new child page id (e.g. "people/dylan-sellberg-work-history")
+ * @param childPageId    The new child page id (e.g. "people/jordan-lee-work-history")
  * @returns              { parentBody, childBody }
  */
 export function splitPageContent(
@@ -506,7 +506,7 @@ export async function wikiRefactorPhase(
         : pickSectionDeterministically(sections);
 
       // 5. Build child page id and path
-      const parentSlug = page.id; // e.g. "people/dylan-sellberg"
+      const parentSlug = page.id; // e.g. "people/jordan-lee"
       const childSlug = childPageSlug(parentSlug, chosenSection.title);
       const childRelPath = `${childSlug}.md`;
       const childAbsPath = join(wikiRoot, childRelPath);

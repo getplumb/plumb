@@ -48,7 +48,7 @@ const VALID_FM: WikiFrontmatter = {
   confidence: 'high',
 };
 
-const VALID_BODY = '\n# Dylan Sellberg\n\nEngineering Manager at Samsara.\n';
+const VALID_BODY = '\n# Jordan Lee\n\nEngineering Manager at Samsara.\n';
 
 function makeRawPage(fm: Partial<WikiFrontmatter> = {}, body = VALID_BODY): string {
   const merged = { ...VALID_FM, ...fm };
@@ -203,7 +203,7 @@ confidence: high
 ---
 \`\`\`
 
-# Dylan Sellberg
+# Jordan Lee
 
 Engineering Manager at Samsara.
 `;
@@ -330,7 +330,7 @@ describe('WikiService (filesystem-only)', () => {
     assert.equal(page.frontmatter.type, 'person');
     assert.equal(page.frontmatter.created, '2026-04-16');
     assert.equal(page.frontmatter.confidence, 'high');
-    assert.equal(page.title, 'Dylan Sellberg');
+    assert.equal(page.title, 'Jordan Lee');
   });
 
   test('write() rejects page with missing type', async () => {

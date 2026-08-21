@@ -37,7 +37,7 @@ The bones are right. The meat is where the spec needs work.
 
 The spec says (paraphrased): "queue a fact → worker figures out affected pages → Sonnet writes prose → commit." That hides every hard problem:
 
-- **Which pages does a fact affect?** "Dylan mentioned his team has 30 engineers" touches `people/dylan-sellberg.md`, `companies/samsara.md`, and possibly `interviews/samsara-loop.md`. The spec says the worker "reads `index.md` + relevant frontmatter" but that's too vague to implement without thrashing.
+- **Which pages does a fact affect?** "Jordan mentioned his team has 30 engineers" touches `people/jordan-lee.md`, `companies/samsara.md`, and possibly `interviews/samsara-loop.md`. The spec says the worker "reads `index.md` + relevant frontmatter" but that's too vague to implement without thrashing.
 - **How do you prevent the worker from rewriting a 900-word page just to update one sentence?** Without a diff/patch discipline, Sonnet will happily rephrase the whole page every time and destroy stylistic continuity.
 - **How do you prevent the worker from re-introducing a fact Clay just manually deleted?** If Clay removes a paragraph via Obsidian and two hours later the queue re-adds a fact that implies that paragraph should exist, the worker will resurrect it. That's a *correctness regression loop*.
 - **What's the failure mode?** No dead-letter queue, no retry policy, no backpressure if Clay is in a very talky session.
@@ -88,7 +88,7 @@ Stop doing Sonnet-level content writes in the dream cron. If the queue missed a 
 
 §5.4 has auto-resolve and high-sensitivity-with-flag. Missing: **soft contradictions that should trigger a question, not a write.**
 
-Example: Plumb V1 fact says Dylan joined Samsara "~4 months before March 2026." A new chat says "Dylan told me today he joined in Q4 2025." These are consistent, but a bad worker will rephrase the existing text three times across three edits, producing drift.
+Example: Plumb V1 fact says Jordan joined Samsara "~4 months before March 2026." A new chat says "Jordan told me today he joined in Q4 2025." These are consistent, but a bad worker will rephrase the existing text three times across three edits, producing drift.
 
 Recommendation: add a **"no-op if consistent"** check. Before writing, the worker asks Haiku: `{existing_section, new_fact}` → "is the new fact already represented?" If yes, do nothing, log "noop: consistent." Costs $0.00003, saves churn and commits.
 
@@ -107,7 +107,7 @@ Solution is cheap:
 
 ### 3.1 The cheap stage is missing
 
-Vector + BM25 + RRF is great for open queries ("what do I know about Samsara's AI org?"). It's overkill for closed queries ("what's Dylan's title?"). And it misses the *best* retrieval signal you have: **the wikilink graph**.
+Vector + BM25 + RRF is great for open queries ("what do I know about Samsara's AI org?"). It's overkill for closed queries ("what's Jordan's title?"). And it misses the *best* retrieval signal you have: **the wikilink graph**.
 
 If an injection decides "this conversation is about the Samsara interview," the cheapest, highest-precision retrieval is:
 1. Find the anchor page (interviews/samsara-loop.md).
@@ -118,8 +118,8 @@ No embedding, no search, no LLM call. That's the graph-traversal case Karpathy d
 
 #### Recommendations
 
-1. **Entity-anchor detection as a cheap first pass.** A regex/string-match step tries to resolve "Dylan," "Samsara," "Plumb V2," etc. to wiki page paths using a pre-built alias map. If it hits, graph-walk from there.
-2. **Alias map.** Every page gets aliases in frontmatter (`aliases: [Dylan, Dylan S., Sellberg]`). The audit already showed you're using these. Persist them in `wiki.db` and match with a trie/FTS.
+1. **Entity-anchor detection as a cheap first pass.** A regex/string-match step tries to resolve "Jordan," "Samsara," "Plumb V2," etc. to wiki page paths using a pre-built alias map. If it hits, graph-walk from there.
+2. **Alias map.** Every page gets aliases in frontmatter (`aliases: [Jordan, Jordan S., Lee]`). The audit already showed you're using these. Persist them in `wiki.db` and match with a trie/FTS.
 3. **Fallback to vector+BM25 when anchors don't resolve.** Same as today.
 4. **Inject graph neighborhoods, not just top-K pages.** When a page hits, include (a) its summary, (b) its direct outbound links' summaries (not full content). This turns injection into a budget-aware subgraph traversal rather than a pile of unrelated chunks.
 
@@ -237,7 +237,7 @@ The spec says "BM25 keyword search across `wiki_chunks.chunk_text`." Don't build
 ### 6.6 Give Clay a `/wiki` command
 
 A first-class command surface for manual operations:
-- `/wiki open dylan` → opens the page in Obsidian.
+- `/wiki open jordan` → opens the page in Obsidian.
 - `/wiki search samsara interviews` → runs the hybrid search and shows results.
 - `/wiki diff` → shows today's uncommitted changes.
 - `/wiki review` → opens REVIEW.md.

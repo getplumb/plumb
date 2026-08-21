@@ -35,7 +35,7 @@ pages. `max(updated)` in `wiki_pages` was 2026-08-08.
 **Decisive test** (reuse this shape when you verify your own work): search for a string that
 appears verbatim on the target page and nowhere else in the corpus. If the page does not come
 back, it is an indexing problem, not a ranking problem. Here, the exact phrase
-`"Tony Stark is not texting Jarvis"` returned Zapier and Kei Turner and never the page.
+`"Tony Stark is not texting Jarvis"` returned Zapier and Sam Okafor and never the page.
 
 **Already remediated in that session** (you do not need to redo this):
 

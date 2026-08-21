@@ -79,7 +79,7 @@ async function getWikiSearch(wikiRoot: string, wikiDbPath: string): Promise<Wiki
 
 /**
  * Convert a wiki page path to its slug (remove .md extension).
- * e.g. "people/dylan-sellberg.md" → "people/dylan-sellberg"
+ * e.g. "people/jordan-lee.md" → "people/jordan-lee"
  */
 function pathToSlug(relPath: string): string {
   return relPath.endsWith('.md') ? relPath.slice(0, -3) : relPath;
@@ -102,7 +102,7 @@ function makeReadTool(wikiRoot: string): AnyAgentTool {
     name: 'plumb_wiki_read',
     description:
       'Read the full content of a Plumb wiki page. ' +
-      'Provide the relative path (e.g. "people/dylan-sellberg.md" or "people/dylan-sellberg"). ' +
+      'Provide the relative path (e.g. "people/jordan-lee.md" or "people/jordan-lee"). ' +
       'Returns the frontmatter and markdown body of the page.',
     parameters: {
       type: 'object',
@@ -110,7 +110,7 @@ function makeReadTool(wikiRoot: string): AnyAgentTool {
         path: {
           type: 'string',
           description:
-            'Relative path to the wiki page from the wiki root, e.g. "people/dylan-sellberg.md"',
+            'Relative path to the wiki page from the wiki root, e.g. "people/jordan-lee.md"',
         },
       },
       required: ['path'],
@@ -166,7 +166,7 @@ function makeSearchTool(wikiRoot: string, wikiDbPath: string): AnyAgentTool {
       properties: {
         query: {
           type: 'string',
-          description: 'Natural language search query, e.g. "Dylan Sellberg Samsara VP"',
+          description: 'Natural language search query, e.g. "Jordan Lee Samsara VP"',
         },
         topK: {
           type: 'number',
@@ -292,14 +292,14 @@ function makeLinksTool(wikiRoot: string, wikiDbPath: string): AnyAgentTool {
     description:
       'Return the inbound and outbound [[wikilinks]] for a given wiki page. ' +
       'Outbound links are pages this page links to; inbound links are pages that link to this page. ' +
-      'Provide the relative path (e.g. "people/dylan-sellberg.md").',
+      'Provide the relative path (e.g. "people/jordan-lee.md").',
     parameters: {
       type: 'object',
       properties: {
         path: {
           type: 'string',
           description:
-            'Relative path to the wiki page, e.g. "people/dylan-sellberg.md" or "people/dylan-sellberg"',
+            'Relative path to the wiki page, e.g. "people/jordan-lee.md" or "people/jordan-lee"',
         },
       },
       required: ['path'],

@@ -81,7 +81,7 @@ server.tool(
   'plumb_wiki_search',
   'Search the Plumb wiki for pages relevant to a query. Uses hybrid vector + BM25 ranking (RRF fusion). Returns up to 10 results with page title, path, type, and a matching snippet.',
   {
-    query: z.string().describe('Natural language search query, e.g. "Dylan Sellberg Samsara VP"'),
+    query: z.string().describe('Natural language search query, e.g. "Jordan Lee Samsara VP"'),
     topK: z.number().int().optional().describe('Maximum number of results to return (default: 5, max: 10)'),
   },
   async (args) => {
@@ -128,9 +128,9 @@ server.tool(
 
 server.tool(
   'plumb_wiki_read',
-  'Read the full content of a Plumb wiki page. Provide the relative path (e.g. "people/dylan-sellberg.md" or "people/dylan-sellberg"). Returns the frontmatter and markdown body of the page.',
+  'Read the full content of a Plumb wiki page. Provide the relative path (e.g. "people/jordan-lee.md" or "people/jordan-lee"). Returns the frontmatter and markdown body of the page.',
   {
-    path: z.string().describe('Relative path to the wiki page from the wiki root, e.g. "people/dylan-sellberg.md"'),
+    path: z.string().describe('Relative path to the wiki page from the wiki root, e.g. "people/jordan-lee.md"'),
   },
   async (args) => {
     try {
@@ -192,9 +192,9 @@ server.tool(
 
 server.tool(
   'plumb_wiki_links',
-  'Return the inbound and outbound [[wikilinks]] for a given wiki page. Outbound links are pages this page links to; inbound links are pages that link to this page. Provide the relative path (e.g. "people/dylan-sellberg.md").',
+  'Return the inbound and outbound [[wikilinks]] for a given wiki page. Outbound links are pages this page links to; inbound links are pages that link to this page. Provide the relative path (e.g. "people/jordan-lee.md").',
   {
-    path: z.string().describe('Relative path to the wiki page from the wiki root, e.g. "people/dylan-sellberg.md"'),
+    path: z.string().describe('Relative path to the wiki page from the wiki root, e.g. "people/jordan-lee.md"'),
   },
   async (args) => {
     try {
@@ -221,7 +221,7 @@ server.tool(
   'plumb_wiki_queue_edit',
   'Queue a wiki edit request for async processing. Immediately appends the fact to the wiki edit queue and returns — no latency added to your response. The background worker integrates the fact into the relevant wiki page(s) within 60 seconds.',
   {
-    fact: z.string().describe('The fact or update to incorporate into the wiki, written in plain English. Include enough context for the wiki writer to place it correctly (e.g. "Dylan Sellberg left Samsara as of April 2026"). Maximum 10,000 characters after trimming.'),
+    fact: z.string().describe('The fact or update to incorporate into the wiki, written in plain English. Include enough context for the wiki writer to place it correctly (e.g. "Jordan Lee left Samsara as of April 2026"). Maximum 10,000 characters after trimming.'),
   },
   async (args) => {
     try {

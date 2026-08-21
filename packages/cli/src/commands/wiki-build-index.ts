@@ -31,7 +31,7 @@ export interface WikiBuildIndexOptions {
 }
 
 interface PageEntry {
-  /** Relative path from wikiRoot, e.g. "people/dylan-sellberg.md" */
+  /** Relative path from wikiRoot, e.g. "people/jordan-lee.md" */
   relPath: string;
   /** Directory name, e.g. "people" */
   dir: string;
@@ -79,7 +79,7 @@ function extractSummary(body: string): string {
 
 /**
  * Derive a display title from a relative file path (slug → Title Case).
- * e.g. "people/dylan-sellberg.md" → "Dylan Sellberg"
+ * e.g. "people/jordan-lee.md" → "Jordan Lee"
  */
 function slugToTitle(relPath: string): string {
   const stem = relPath.replace(/\.md$/, '').replace(/^.*\//, '');

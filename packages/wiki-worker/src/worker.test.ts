@@ -6,7 +6,7 @@
  *   - tombstone: addTombstone, isTombstoned, hashSentence, pruneExpiredTombstones
  *   - applier: replaceParagraph, updateLine, appendSection body ops
  *   - dead-letter: appendDeadLetter, readDeadLetters
- *   - worker: end-to-end coalescing test (5 Dylan Sellberg facts → 1 write each page)
+ *   - worker: end-to-end coalescing test (5 Jordan Lee facts → 1 write each page)
  */
 
 import { describe, test, beforeEach, afterEach, vi } from 'vitest';
@@ -51,14 +51,14 @@ tags:
 confidence: medium
 ---`;
 
-const DYLAN_BODY = `
-# Dylan Sellberg
+const JORDAN_BODY = `
+# Jordan Lee
 
 Engineering Manager at Samsara. Based in San Francisco.
 
 ## Background
 
-Dylan joined Samsara in 2022.
+Jordan joined Samsara in 2022.
 `;
 
 const SAMSARA_FM_YAML = `---
@@ -79,7 +79,7 @@ Fleet management software company.
 
 ## Team
 
-Key engineering leaders include [[Dylan Sellberg]].
+Key engineering leaders include [[Jordan Lee]].
 `;
 
 // ---------------------------------------------------------------------------
@@ -105,7 +105,7 @@ describe('parsePatchOp', () => {
     const op = parsePatchOp({
       op: 'replace_paragraph',
       anchor: 'joined Samsara',
-      replacement: 'Dylan joined Samsara in 2021 as Senior EM.',
+      replacement: 'Jordan joined Samsara in 2021 as Senior EM.',
     });
     assert.equal(op.op, 'replace_paragraph');
   });
@@ -149,11 +149,11 @@ describe('parseWikiPatch', () => {
 
   test('parses valid patch', () => {
     const patch = parseWikiPatch({
-      path: 'people/dylan-sellberg.md',
+      path: 'people/jordan-lee.md',
       source_ref: 'abc123',
       ops: [{ op: 'set_frontmatter', key: 'updated', value: '2026-04-16' }],
     });
-    assert.equal(patch.path, 'people/dylan-sellberg.md');
+    assert.equal(patch.path, 'people/jordan-lee.md');
     assert.equal(patch.source_ref, 'abc123');
     assert.equal(patch.ops.length, 1);
   });
@@ -188,19 +188,19 @@ describe('tombstone', () => {
   });
 
   test('hashSentence is deterministic', () => {
-    const h1 = hashSentence('Dylan joined Samsara in 2022.');
-    const h2 = hashSentence('Dylan joined Samsara in 2022.');
+    const h1 = hashSentence('Jordan joined Samsara in 2022.');
+    const h2 = hashSentence('Jordan joined Samsara in 2022.');
     assert.equal(h1, h2);
   });
 
   test('normalizeSentence trims, collapses whitespace, and lowercases', () => {
-    const n = normalizeSentence('  Dylan joined  Samsara. ');
-    assert.equal(n, 'dylan joined samsara.');
+    const n = normalizeSentence('  Jordan joined  Samsara. ');
+    assert.equal(n, 'jordan joined samsara.');
   });
 
   test('addTombstone + isTombstoned: matches exact sentence', () => {
-    addTombstone(db, 'Dylan joined Samsara in 2022.');
-    const result = isTombstoned(db, 'Dylan joined Samsara in 2022.');
+    addTombstone(db, 'Jordan joined Samsara in 2022.');
+    const result = isTombstoned(db, 'Jordan joined Samsara in 2022.');
     assert.equal(result, true);
   });
 
@@ -252,8 +252,8 @@ describe('applier body ops', () => {
     mkdirSync(join(tempDir, 'companies'), { recursive: true });
     // Write test pages
     writeFileSync(
-      join(tempDir, 'people', 'dylan-sellberg.md'),
-      VALID_FM_YAML + DYLAN_BODY,
+      join(tempDir, 'people', 'jordan-lee.md'),
+      VALID_FM_YAML + JORDAN_BODY,
     );
     writeFileSync(
       join(tempDir, 'companies', 'samsara.md'),
@@ -270,13 +270,13 @@ describe('applier body ops', () => {
 
     const result = await applyPatch(
       {
-        path: 'people/dylan-sellberg.md',
+        path: 'people/jordan-lee.md',
         source_ref: 'test-001',
         ops: [
           {
             op: 'replace_paragraph',
             anchor: 'joined Samsara in 2022',
-            replacement: 'Dylan joined Samsara in 2021 as a Senior Engineering Manager.',
+            replacement: 'Jordan joined Samsara in 2021 as a Senior Engineering Manager.',
           },
           { op: 'set_frontmatter', key: 'updated', value: '2026-04-16' },
         ],
@@ -284,12 +284,12 @@ describe('applier body ops', () => {
       wiki,
     );
 
-    assert.equal(result.path, 'people/dylan-sellberg.md');
+    assert.equal(result.path, 'people/jordan-lee.md');
     assert.equal(result.appliedOps, 2);
     assert.equal(result.skippedOps, 0);
 
     // Verify the file was updated via wiki.write (not direct fs.writeFile)
-    const page = await wiki.read('people/dylan-sellberg.md');
+    const page = await wiki.read('people/jordan-lee.md');
     assert.ok(page.body.includes('2021 as a Senior Engineering Manager'));
     assert.ok(!page.body.includes('joined Samsara in 2022'));
 
@@ -301,7 +301,7 @@ describe('applier body ops', () => {
 
     const result = await applyPatch(
       {
-        path: 'people/dylan-sellberg.md',
+        path: 'people/jordan-lee.md',
         source_ref: 'test-002',
         ops: [
           {
@@ -316,7 +316,7 @@ describe('applier body ops', () => {
     );
 
     assert.equal(result.appliedOps, 2);
-    const page = await wiki.read('people/dylan-sellberg.md');
+    const page = await wiki.read('people/jordan-lee.md');
     assert.ok(page.body.includes('Promoted to Director in 2025'));
 
     wiki.close();
@@ -327,7 +327,7 @@ describe('applier body ops', () => {
 
     await applyPatch(
       {
-        path: 'people/dylan-sellberg.md',
+        path: 'people/jordan-lee.md',
         source_ref: 'test-003',
         ops: [
           {
@@ -341,7 +341,7 @@ describe('applier body ops', () => {
       wiki,
     );
 
-    const page = await wiki.read('people/dylan-sellberg.md');
+    const page = await wiki.read('people/jordan-lee.md');
     assert.ok(page.body.includes('## Education'));
     assert.ok(page.body.includes('UC Berkeley'));
 
@@ -354,7 +354,7 @@ describe('applier body ops', () => {
 
     const result = await applyPatch(
       {
-        path: 'people/dylan-sellberg.md',
+        path: 'people/jordan-lee.md',
         source_ref: 'test-004',
         ops: [
           {
@@ -402,7 +402,7 @@ describe('dead-letter queue', () => {
   test('appendDeadLetter + readDeadLetters round-trip', async () => {
     const item = {
       id: 'abc-123',
-      fact: 'Dylan is now VP of Engineering.',
+      fact: 'Jordan is now VP of Engineering.',
       queued_at: '2026-04-16T00:00:00Z',
       status: 'pending' as const,
     };
@@ -423,7 +423,7 @@ describe('dead-letter queue', () => {
 // End-to-end coalescing test (mocked API)
 // ---------------------------------------------------------------------------
 
-describe('worker — end-to-end coalescing (Dylan Sellberg)', () => {
+describe('worker — end-to-end coalescing (Jordan Lee)', () => {
 
   let tempDir: string;
   let wikiRoot: string;
@@ -440,8 +440,8 @@ describe('worker — end-to-end coalescing (Dylan Sellberg)', () => {
 
     // Write initial wiki pages
     writeFileSync(
-      join(wikiRoot, 'people', 'dylan-sellberg.md'),
-      VALID_FM_YAML + DYLAN_BODY,
+      join(wikiRoot, 'people', 'jordan-lee.md'),
+      VALID_FM_YAML + JORDAN_BODY,
     );
     writeFileSync(
       join(wikiRoot, 'companies', 'samsara.md'),
@@ -453,14 +453,14 @@ describe('worker — end-to-end coalescing (Dylan Sellberg)', () => {
     rmSync(tempDir, { recursive: true, force: true });
   });
 
-  test('5 Dylan Sellberg facts coalesce to exactly 1 write per page', async () => {
-    // Queue 5 facts about Dylan Sellberg
+  test('5 Jordan Lee facts coalesce to exactly 1 write per page', async () => {
+    // Queue 5 facts about Jordan Lee
     const facts = [
-      'Dylan Sellberg was promoted to Director of Engineering at Samsara in March 2025.',
-      'Dylan Sellberg leads the platform team at Samsara with 12 engineers.',
-      'Dylan Sellberg is based in San Francisco, CA.',
-      'Dylan Sellberg graduated from UC Berkeley in 2015 with a BS in CS.',
-      'Dylan Sellberg joined Samsara from Lyft where he was a Staff Engineer.',
+      'Jordan Lee was promoted to Director of Engineering at Samsara in March 2025.',
+      'Jordan Lee leads the platform team at Samsara with 12 engineers.',
+      'Jordan Lee is based in San Francisco, CA.',
+      'Jordan Lee graduated from UC Berkeley in 2015 with a BS in CS.',
+      'Jordan Lee joined Samsara from Lyft where he was a Staff Engineer.',
     ];
 
     for (const fact of facts) {
@@ -487,7 +487,7 @@ describe('worker — end-to-end coalescing (Dylan Sellberg)', () => {
       _fact: string,
       _pages: readonly import('./resolver.js').PageIndexEntry[],
     ): Promise<string[]> => {
-      return ['people/dylan-sellberg.md', 'companies/samsara.md'];
+      return ['people/jordan-lee.md', 'companies/samsara.md'];
     };
 
     // Mock writer: emit a simple append_section patch
@@ -534,7 +534,7 @@ describe('worker — end-to-end coalescing (Dylan Sellberg)', () => {
     // (filesystem-only mode) and mocked resolver + writer.
 
     // Use a separate class to count actual file writes
-    const dylanPath = join(wikiRoot, 'people', 'dylan-sellberg.md');
+    const jordanPath = join(wikiRoot, 'people', 'jordan-lee.md');
     const samsaraPath = join(wikiRoot, 'companies', 'samsara.md');
 
     // Run the worker tick (no real DB available — tombstones skipped)
@@ -575,12 +575,12 @@ describe('worker — end-to-end coalescing (Dylan Sellberg)', () => {
     // This is guaranteed by writerCallCount === 2 with 5 items → 1 call per page
 
     // Verify the pages were actually modified on disk
-    const dylanContent = await readFile(dylanPath, 'utf8');
+    const jordanContent = await readFile(jordanPath, 'utf8');
     const samsaraContent = await readFile(samsaraPath, 'utf8');
 
     assert.ok(
-      dylanContent.includes('Recent Updates'),
-      'dylan-sellberg.md should have been updated',
+      jordanContent.includes('Recent Updates'),
+      'jordan-lee.md should have been updated',
     );
     assert.ok(
       samsaraContent.includes('Recent Updates'),
@@ -598,7 +598,7 @@ describe('worker — end-to-end coalescing (Dylan Sellberg)', () => {
   });
 
   test('items that fail 3x are moved to dead-letter queue', async () => {
-    await appendToQueue('Dylan is a VP now.', queuePath);
+    await appendToQueue('Jordan is a VP now.', queuePath);
 
     const failingWriter = async (): Promise<never> => {
       throw new Error('Simulated writer failure');
@@ -622,7 +622,7 @@ describe('worker — end-to-end coalescing (Dylan Sellberg)', () => {
           deadLetterPath,
           maxRetries: 3,
           maxEditsPerHour: 100,
-          resolver: async () => ['people/dylan-sellberg.md'],
+          resolver: async () => ['people/jordan-lee.md'],
           writer: failingWriter as unknown as import('./writer.js').WriterFn,
           logger,
         },
@@ -638,8 +638,8 @@ describe('worker — end-to-end coalescing (Dylan Sellberg)', () => {
   });
 
   test('rate limiter blocks excess edits', async () => {
-    await appendToQueue('Fact A about Dylan.', queuePath);
-    await appendToQueue('Fact B about Dylan.', queuePath);
+    await appendToQueue('Fact A about Jordan.', queuePath);
+    await appendToQueue('Fact B about Jordan.', queuePath);
 
     let writeCount = 0;
     const countingWriter = async (
@@ -669,7 +669,7 @@ describe('worker — end-to-end coalescing (Dylan Sellberg)', () => {
         queuePath,
         deadLetterPath,
         maxEditsPerHour: 0,
-        resolver: async () => ['people/dylan-sellberg.md'],
+        resolver: async () => ['people/jordan-lee.md'],
         writer: countingWriter,
         logger: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
       },

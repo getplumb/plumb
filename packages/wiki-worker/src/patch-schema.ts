@@ -81,7 +81,7 @@ export type PatchOp =
  * The applier applies ops in order and then calls wiki.write once.
  */
 export interface WikiPatch {
-  /** Relative path from wikiRoot, e.g. "people/dylan-sellberg.md" */
+  /** Relative path from wikiRoot, e.g. "people/jordan-lee.md" */
   path: string;
   /** Queue item id that triggered this patch, for the changelog sourceRef */
   source_ref: string;
