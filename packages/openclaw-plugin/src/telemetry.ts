@@ -44,6 +44,11 @@ async function getMachineId(): Promise<string> {
 }
 
 async function capture(event: string, distinctId: string, properties: Record<string, unknown>): Promise<void> {
+  // No key configured — send nothing. Without this, a build made without
+  // POSTHOG_KEY (or one carrying a revoked token, as happened on 2026-08-21)
+  // fires a request per activation that can only ever fail.
+  if (!POSTHOG_KEY) return;
+
   await fetch(`${POSTHOG_HOST}/capture/`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

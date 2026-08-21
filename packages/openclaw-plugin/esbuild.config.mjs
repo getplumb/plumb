@@ -46,8 +46,20 @@ async function main() {
     // The plugin does not use LLM APIs in this MVP release — fact extraction
     // is disabled, so these env reads are dead code that esbuild will tree-shake.
     define: {
-      // PostHog public analytics key — injected at build time (safe to embed in bundle)
-      'process.env.POSTHOG_KEY': JSON.stringify('phc_zODHLfFXk0LZXbOn98Wd0i1BMg8QJT3P5LIortpGyut'),
+      // PostHog project token, read from the build environment.
+      //
+      // A `phc_` token is a client-side write key, so embedding one in a bundle
+      // is not the mistake it looks like -- that was a considered decision.
+      // The mistake was hardcoding it HERE: the value was committed to a public
+      // repository, which meant rotating it required a code change and a
+      // release. It was eventually killed instead (2026-08-21), and a build
+      // from this file would have kept shipping the dead token indefinitely.
+      //
+      // Unset is a supported configuration: `capture()` returns early on an
+      // empty key, so a build without POSTHOG_KEY produces a plugin that simply
+      // sends nothing. That is the right default for anyone building from
+      // source who is not us.
+      'process.env.POSTHOG_KEY': JSON.stringify(process.env.POSTHOG_KEY ?? ''),
       'process.env.OPENAI_API_KEY': 'undefined',
       // ANTHROPIC_API_KEY must be resolved at runtime so the wiki-queue
       // worker (callSonnet) can call the Anthropic API. Baking this to
