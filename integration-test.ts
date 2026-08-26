@@ -100,7 +100,7 @@ async function test2_ingestAndRawLogRetrieval(): Promise<void> {
 
     await store.ingest({
       userMessage: 'Tell me about your product',
-      agentResponse: 'Clay is building a product called Plumb, an AI memory system that helps agents remember context across conversations.',
+      agentResponse: 'the user is building a product called Plumb, an AI memory system that helps agents remember context across conversations.',
       timestamp: new Date(),
       source: 'openclaw',
       sessionId: 'test-session-1',
@@ -167,7 +167,7 @@ async function test4_contextBuilder(): Promise<void> {
   try {
     store = new LocalStore({ dbPath: TEST_DB_PATH });
 
-    const memoryContext = await buildMemoryContext('what is Clay building', store);
+    const memoryContext = await buildMemoryContext('what is the user building', store);
 
     const formattedBlock = formatContextBlock(memoryContext);
 

@@ -9,6 +9,7 @@
 
 import { createServer, type IncomingMessage, type ServerResponse, type Server } from 'node:http';
 import type { LocalStore } from '@getplumb/core';
+import type { LifecycleIdentity } from './lifecycle-lease.js';
 
 interface QueryRequest {
   query: string;
@@ -27,12 +28,37 @@ interface QueryResponse {
   latencyMs: number;
 }
 
+export type QueryServerIdentity = {
+  identityHash: string;
+  ownerId: string;
+  startedAt: string;
+  identity: LifecycleIdentity;
+};
+
 /**
  * Start the query server on loopback (127.0.0.1).
  * Returns the server instance for later shutdown.
  */
-export function startQueryServer(store: LocalStore, port: number, logger?: { info: (msg: string) => void }): Server {
+export function startQueryServer(
+  store: LocalStore,
+  port: number,
+  logger?: { info: (msg: string) => void },
+  serverIdentity?: QueryServerIdentity,
+): Server {
   const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
+    if (req.method === 'GET' && req.url === '/health') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        service: 'plumb-query',
+        identityHash: serverIdentity?.identityHash ?? null,
+        pid: process.pid,
+        ownerId: serverIdentity?.ownerId ?? null,
+        startedAt: serverIdentity?.startedAt ?? null,
+        identity: serverIdentity?.identity ?? null,
+      }));
+      return;
+    }
+
     // Only accept POST /query
     if (req.method !== 'POST' || req.url !== '/query') {
       res.writeHead(404, { 'Content-Type': 'application/json' });
@@ -112,8 +138,12 @@ export function startQueryServer(store: LocalStore, port: number, logger?: { inf
  */
 export function stopQueryServer(server: Server): Promise<void> {
   return new Promise((resolve, reject) => {
-    server.close((err) => {
+    server.close((err: NodeJS.ErrnoException | undefined) => {
       if (err) {
+        if (err.code === 'ERR_SERVER_NOT_RUNNING') {
+          resolve();
+          return;
+        }
         reject(err);
       } else {
         resolve();

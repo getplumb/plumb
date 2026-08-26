@@ -67,8 +67,8 @@ Output format:
 [PLUMB MEMORY]
 
 ## Remembered facts
-[HIGH] Never restart prod gateway without Clay's approval
-[HIGH] Clay uses a Tailscale URL for terra-chat links
+[HIGH] Never restart prod gateway without the user's approval
+[HIGH] the user uses a Tailscale URL for terra-chat links
 [MED]  Plumb dev DB is at ~/.plumb-dev/memory.db
 
 ## Related conversations
@@ -128,7 +128,7 @@ This is a documentation/config change, not code:
 
 1. Update `AGENTS.md` — remove the instruction to read daily memory files. Replace with:
    "Plumb injects relevant memories automatically. Use `plumb_remember` to store new facts.
-   Write to `memory/YYYY-MM-DD.md` only as a human-readable log if you want Clay to be able
+   Write to `memory/YYYY-MM-DD.md` only as a human-readable log if you want the user to be able
    to review what happened — don't rely on it for your own memory."
 
 2. Trim `MEMORY.md` to hard invariants only — things that must be known every session
@@ -136,7 +136,7 @@ This is a documentation/config change, not code:
    tables", "primary channel is Slack"). Target: 10–15 lines. Everything else gets migrated
    into Plumb via `plumb_remember` calls.
 
-3. The daily files stop being injected. They become a logbook for Clay. Plumb is the
+3. The daily files stop being injected. They become a logbook for the user. Plumb is the
    knowledge base.
 
 **Files to change:**

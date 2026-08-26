@@ -1,0 +1,34 @@
+{
+  "name": "@getplumb/wiki-search-service",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Local HTTP retrieval service for a Plumb wiki: hybrid vector + BM25 search over a wiki.db index, plus the MCP server that exposes it to agents.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/getplumb/plumb.git",
+    "directory": "packages/wiki-search-service"
+  },
+  "homepage": "https://plumb.run",
+  "bin": {
+    "plumb-wiki-search": "./src/server.js",
+    "plumb-wiki-mcp": "./src/mcp-server.mjs",
+    "plumb-wiki-hook": "./src/claude-code-hook.mjs"
+  },
+  "files": [
+    "src",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test 'test/*.test.mjs'"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@xenova/transformers": "2.17.2",
+    "zod": "^4.4.3"
+  },
+  "license": "Elastic-2.0"
+}

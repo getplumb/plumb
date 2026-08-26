@@ -1,0 +1,47 @@
+{
+  "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
+  "name": "plumb",
+  "displayName": "Plumb",
+  "version": "1.0.0",
+  "description": "A durable memory wiki for Claude Code. Plumb stores what you decide and why in a local markdown wiki, indexes it with hybrid vector + keyword retrieval, injects the relevant pages into every prompt automatically, and gives Claude tools to read, search, and update it. Runs entirely on your machine: no cloud, no account, no data leaving the host.",
+  "author": {
+    "name": "Clay Waters",
+    "email": "hello@plumb.run"
+  },
+  "homepage": "https://plumb.run",
+  "repository": "https://github.com/getplumb/plumb",
+  "license": "Elastic-2.0",
+  "keywords": [
+    "memory",
+    "wiki",
+    "knowledge-base",
+    "retrieval",
+    "rag",
+    "local-first"
+  ],
+  "hooks": "./hooks/hooks.json",
+  "mcpServers": "./.mcp.json",
+  "commands": ["./commands/"],
+  "skills": "./skills/",
+  "userConfig": {
+    "wiki_root": {
+      "type": "directory",
+      "title": "Wiki location",
+      "description": "Where your markdown wiki lives. Leave blank for ~/.plumb/wiki."
+    },
+    "service_url": {
+      "type": "string",
+      "title": "Search service URL",
+      "description": "Where the local retrieval service listens. Leave blank for http://127.0.0.1:18795. Point this at an existing service if you already run one.",
+      "default": "http://127.0.0.1:18795"
+    },
+    "idle_timeout_minutes": {
+      "type": "number",
+      "title": "Idle shutdown (minutes)",
+      "description": "The search service starts on demand and stops itself after this long with no queries, handing back about 300 MB. Set 0 to keep it resident.",
+      "default": 15,
+      "min": 0,
+      "max": 1440
+    }
+  }
+}

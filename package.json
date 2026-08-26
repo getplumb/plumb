@@ -2,7 +2,7 @@
   "name": "plumb",
   "private": true,
   "version": "0.0.0",
-  "description": "Cross-session AI memory — OSS core + hosted cloud layer",
+  "description": "Cross-session AI memory \u2014 OSS core",
   "scripts": {
     "build": "turbo run build",
     "test": "turbo run test",
@@ -16,7 +16,7 @@
   },
   "packageManager": "pnpm@10.30.3",
   "engines": {
-    "node": ">=18.0.0",
+    "node": ">=22.5.0",
     "pnpm": ">=9.0.0"
   },
   "pnpm": {

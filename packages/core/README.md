@@ -46,4 +46,4 @@ const results = await store.searchRawLog('TypeScript preferences', 5);
 
 ## License
 
-MIT
+Elastic License 2.0 — see [LICENSE](./LICENSE).

@@ -6,10 +6,16 @@ import { resolveConfig } from './config.js';
 
 async function main(): Promise<void> {
   const config = resolveConfig();
-  console.error(`[plumb] Starting with userId=${config.userId}, dbPath=${config.dbPath}`);
+  console.error(
+    `[plumb] Starting MCP server with userId=${config.userId}, memoryDbPath=${config.dbPath}, wikiRoot=${config.wikiRoot}, wikiDbPath=${config.wikiDbPath}, wikiQueuePath=${config.wikiQueuePath}`,
+  );
 
   const store = await LocalStore.create({ dbPath: config.dbPath, userId: config.userId });
-  const server = createPlumbServer(store);
+  const server = createPlumbServer(store, {
+    wikiRoot: config.wikiRoot,
+    wikiDbPath: config.wikiDbPath,
+    wikiQueuePath: config.wikiQueuePath,
+  });
   const transport = new StdioServerTransport();
 
   await server.connect(transport);

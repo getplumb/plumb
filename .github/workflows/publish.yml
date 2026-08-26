@@ -16,6 +16,12 @@ concurrency:
   group: publish
   cancel-in-progress: false
 
+permissions:
+  contents: write
+  # Required for npm provenance: the OIDC token is what lets npm attest that
+  # this tarball was built by this workflow from this commit.
+  id-token: write
+
 jobs:
   publish:
     name: Build, Test & Publish
@@ -28,6 +34,8 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
+          # Must stay at or above the engines floor (>=22.5): the wiki index is
+          # read through node:sqlite, which does not exist below it.
           node-version: '22'
           cache: 'pnpm'
           registry-url: 'https://registry.npmjs.org'
@@ -43,9 +51,57 @@ jobs:
         env:
           CI: true
 
+      # Two tools, because neither can do the whole job:
+      #
+      #   pnpm pack rewrites `workspace:*` ranges into real versions. npm cannot
+      #   do this, and publishing with npm directly would ship the literal
+      #   string `workspace:*` as a dependency range, breaking every install.
+      #
+      #   npm publish supports --provenance. pnpm (10.30.3) has no such flag, so
+      #   publishing with pnpm would silently produce unattested packages.
+      #
+      # Packing with one and publishing the tarball with the other gets both.
+      - name: Pack publishable packages
+        id: pack
+        run: |
+          set -euo pipefail
+          mkdir -p dist-tarballs
+          # Order matters only for readability -- npm does not validate
+          # dependency existence at publish time -- but publishing a dependency
+          # before its dependents keeps the registry consistent at every moment.
+          for pkg in core wiki wiki-search-service wiki-worker plumb; do
+            dir="packages/$pkg"
+            if [ "$(node -p "require('./$dir/package.json').private === true")" = "true" ]; then
+              echo "skip $pkg (private)"
+              continue
+            fi
+            echo "::group::pack $pkg"
+            (cd "$dir" && pnpm pack --pack-destination "$GITHUB_WORKSPACE/dist-tarballs")
+            echo "::endgroup::"
+          done
+          ls -la dist-tarballs
+
+      # Catches the failure mode this repo has actually hit: a workspace range
+      # escaping into a published artifact, where it is unfixable for 72 hours.
+      - name: Verify no workspace ranges escaped into the tarballs
+        run: |
+          set -euo pipefail
+          fail=0
+          for tgz in dist-tarballs/*.tgz; do
+            if tar -xzOf "$tgz" package/package.json | grep -q '"workspace:'; then
+              echo "::error::$tgz still contains a workspace: dependency range"
+              fail=1
+            fi
+          done
+          exit $fail
+
       - name: Publish (dry run)
         if: github.event_name == 'workflow_dispatch' && inputs.dry_run
-        run: pnpm publish -r --no-git-checks --dry-run
+        run: |
+          set -euo pipefail
+          for tgz in dist-tarballs/*.tgz; do
+            npm publish "$tgz" --access public --provenance --dry-run
+          done
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
@@ -53,7 +109,11 @@ jobs:
         if: >-
           (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
           (github.event_name == 'workflow_dispatch' && !inputs.dry_run)
-        run: pnpm publish -r --no-git-checks
+        run: |
+          set -euo pipefail
+          for tgz in dist-tarballs/*.tgz; do
+            npm publish "$tgz" --access public --provenance
+          done
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
@@ -62,3 +122,4 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
+          files: dist-tarballs/*.tgz

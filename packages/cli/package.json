@@ -1,8 +1,8 @@
 {
   "name": "plumb-memory",
   "version": "0.4.8",
-  "description": "Plumb CLI — memory management and AI context tools",
-  "license": "MIT",
+  "description": "Plumb CLI \u2014 memory management and AI context tools",
+  "license": "Elastic-2.0",
   "author": "Clay Waters <hello@plumb.run>",
   "homepage": "https://plumb.run",
   "repository": {
@@ -41,16 +41,17 @@
     "lint": "echo \"No lint yet\" && exit 0",
     "clean": "rm -rf dist *.tsbuildinfo",
     "prepublishOnly": "pnpm build",
-    "postinstall": "node -e \"console.log('\\n  🪣  Plumb installed!\\n  Run: plumb setup\\n')\""
+    "postinstall": "node -e \"console.log('\\n  \ud83e\udea3  Plumb installed!\\n  Run: plumb setup\\n')\""
   },
   "publishConfig": {
     "access": "public"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=22.5.0"
   },
   "dependencies": {
     "@getplumb/core": "workspace:*",
+    "@getplumb/wiki": "workspace:*",
     "@inquirer/prompts": "^8.3.0",
     "commander": "^12.1.0",
     "openai": "^4.104.0",
@@ -64,5 +65,6 @@
   },
   "optionalDependencies": {
     "@anthropic-ai/sdk": "^0.78.0"
-  }
+  },
+  "private": true
 }

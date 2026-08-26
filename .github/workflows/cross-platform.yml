@@ -2,9 +2,9 @@ name: Cross-Platform Tests
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'release/**']
   pull_request:
-    branches: [main]
+    branches: [main, 'release/**']
   # Run before publishing to catch issues early
   workflow_dispatch:
     inputs:
@@ -42,7 +42,10 @@ jobs:
       fail-fast: false   # see all failures, not just the first
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-        node: ['18', '20', '22']
+        # 22.5.0 is the exact floor (node:sqlite DatabaseSync); 22 and 24 are the
+        # live LTS lines. Testing the floor itself catches an accidental
+        # dependency on a later API.
+        node: ['22.5.0', '22', '24']
 
     steps:
       - uses: actions/checkout@v4
@@ -83,14 +86,14 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-        node: ['18', '20', '22']
-        # Reduce matrix size slightly — spot-check node 20 on all OS,
-        # full matrix on ubuntu only
+        node: ['22.5.0', '22', '24']
+        # Full OS coverage on the floor and on current; trim the middle line to
+        # ubuntu to keep the matrix at 7 jobs rather than 9.
         exclude:
           - os: windows-latest
-            node: '18'
+            node: '22'
           - os: macos-latest
-            node: '18'
+            node: '22'
 
     steps:
       - uses: actions/checkout@v4

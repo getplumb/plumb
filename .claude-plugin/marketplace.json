@@ -1,0 +1,19 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "plumb",
+  "description": "Marketplace for Plumb, a local-first durable memory wiki for Claude Code. Plumb stores decisions and context as markdown, indexes it with hybrid vector + keyword retrieval, and injects the relevant pages into every prompt. Everything runs on your machine.",
+  "owner": {
+    "name": "Clay Waters",
+    "email": "hello@plumb.run"
+  },
+  "plugins": [
+    {
+      "name": "plumb",
+      "source": "./plugins/plumb",
+      "version": "1.0.0",
+      "description": "Durable memory for Claude Code: a local markdown wiki with hybrid retrieval, automatic prompt injection, and tools to read and update it. Includes setup, diagnosis, seeding from memory you already have, and a real uninstall.",
+      "category": "productivity",
+      "homepage": "https://plumb.run"
+    }
+  ]
+}

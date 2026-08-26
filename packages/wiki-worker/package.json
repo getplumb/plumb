@@ -1,0 +1,49 @@
+{
+  "name": "@getplumb/wiki-worker",
+  "version": "1.0.0",
+  "description": "Plumb wiki queue worker \u2014 resolver\u2192patch\u2192applier pipeline replacing full-page prose rewrites",
+  "license": "Elastic-2.0",
+  "author": "Clay Waters <hello@plumb.run>",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "LICENSE"
+  ],
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "lint": "echo \"No lint yet\" && exit 0",
+    "clean": "rm -rf dist *.tsbuildinfo",
+    "prepublishOnly": "pnpm build"
+  },
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "dependencies": {
+    "@getplumb/core": "workspace:*",
+    "@getplumb/wiki": "workspace:*"
+  },
+  "devDependencies": {
+    "@anthropic-ai/sdk": "^0.78.0",
+    "@types/node": "^25.3.3",
+    "typescript": "^5.4.0",
+    "vitest": "^4.0.18"
+  },
+  "optionalDependencies": {
+    "@anthropic-ai/sdk": "^0.78.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/getplumb/plumb.git",
+    "directory": "packages/wiki-worker"
+  },
+  "homepage": "https://plumb.run"
+}

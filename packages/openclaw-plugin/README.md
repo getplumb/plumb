@@ -119,4 +119,4 @@ openclaw gateway restart
 
 ## License
 
-MIT
+Elastic License 2.0 — see [LICENSE](./LICENSE).

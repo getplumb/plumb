@@ -44,4 +44,4 @@ Full docs at [plumb.run](https://plumb.run)
 
 ## License
 
-MIT
+Elastic License 2.0 — see [LICENSE](./LICENSE).

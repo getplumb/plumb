@@ -1,11 +1,22 @@
 /**
- * SQLite database wrapper using better-sqlite3.
+ * SQLite database wrapper built on Node's built-in `node:sqlite`.
  *
- * Replaces the previous @sqlite.org/sqlite-wasm implementation which cannot
- * open real filesystem paths (paths outside /tmp) in a Node.js/Emscripten environment.
+ * History: this was @sqlite.org/sqlite-wasm (could not open real filesystem
+ * paths), then better-sqlite3 (native, needed a compiler or a matching
+ * prebuild), and is now the runtime's own SQLite.
  *
- * Exposes a WasmDb-compatible interface so local-store.ts and schema.ts
- * require no changes:
+ * The reason for the last move is distribution, not performance. Plumb ships as
+ * a Claude Code plugin that installs itself on whatever machine the user has,
+ * and a native module turns "install the plugin" into "have a working C++
+ * toolchain". Measured on a clean install, better-sqlite3 compiled from source
+ * — 26 MB and a node-gyp build — because the pinned ^9.4.3 has no prebuild for
+ * Node 22. `node:sqlite` needs neither, and the retrieval service has been
+ * reading this same database through it in production for weeks.
+ *
+ * Requires Node >=22.5, which is already the floor for every package here.
+ *
+ * Exposes the same WasmDb-compatible interface as before, so local-store.ts and
+ * schema.ts require no changes:
  *   - db.exec(sql: string)
  *   - db.exec({ sql, rowMode: 'object', returnValue: 'resultRows' }) → rows[]
  *   - db.prepare(sql) → stmt with .bind([...]), .step(), .get(colOrObj), .finalize()
@@ -13,7 +24,7 @@
  *   - db.close()
  */
 
-import Database from 'better-sqlite3';
+import { DatabaseSync, type StatementSync } from 'node:sqlite';
 
 type ExecOptions = {
   sql: string;
@@ -22,23 +33,29 @@ type ExecOptions = {
 };
 
 /**
- * Thin statement wrapper that adapts better-sqlite3's synchronous API
- * to match the wasm oo1 Statement interface expected by local-store.ts and schema.ts.
+ * node:sqlite returns rows as null-prototype objects. Callers written against
+ * better-sqlite3 may reasonably expect ordinary objects — `hasOwnProperty`,
+ * instanceof, spread into a class — so normalise once at the boundary rather
+ * than leaving a subtle difference for someone to trip over later.
+ */
+const plain = (row: Record<string, unknown>): Record<string, unknown> => ({ ...row });
+
+/**
+ * Thin statement wrapper adapting the all-at-once API to the cursor-based wasm
+ * oo1 Statement interface expected by local-store.ts and schema.ts:
+ * bind() → step() → get() → finalize().
  *
- * The wasm oo1 API is cursor-based: bind() → step() → get() → finalize().
- * better-sqlite3 is all-at-once: prepare() → .all() or .run().
- *
- * We lazily detect on first step() whether this is a SELECT (has columns) or
- * DML (INSERT/UPDATE/DELETE, no result set) and route accordingly.
+ * Unlike the better-sqlite3 version this needs no SELECT-versus-DML detection.
+ * `StatementSync.all()` executes the statement either way, returning rows for a
+ * query and an empty array for a write, so one path covers both.
  */
 class CompatStatement {
-  readonly #stmt: Database.Statement;
+  readonly #stmt: StatementSync;
   #params: unknown[] = [];
   #rows: Record<string, unknown>[] | null = null;
   #rowIndex = 0;
-  #isDml = false;
 
-  constructor(stmt: Database.Statement) {
+  constructor(stmt: StatementSync) {
     this.#stmt = stmt;
   }
 
@@ -47,20 +64,11 @@ class CompatStatement {
   }
 
   step(): boolean {
-    if (this.#rows === null && !this.#isDml) {
-      // First call — determine if this is DML or SELECT
-      if (this.#stmt.reader) {
-        // SELECT — get all rows up front
-        this.#rows = this.#stmt.all(...this.#params) as Record<string, unknown>[];
-        this.#rowIndex = 0;
-      } else {
-        // DML (INSERT/UPDATE/DELETE) — run it once
-        this.#stmt.run(...this.#params);
-        this.#isDml = true;
-        return false; // No rows to iterate
-      }
+    if (this.#rows === null) {
+      this.#rows = (this.#stmt.all(...(this.#params as never[])) as Record<string, unknown>[]).map(plain);
+      this.#rowIndex = 0;
     }
-    if (this.#rows !== null && this.#rowIndex < this.#rows.length) {
+    if (this.#rowIndex < this.#rows.length) {
       this.#rowIndex++;
       return true;
     }
@@ -81,18 +89,17 @@ class CompatStatement {
   }
 
   finalize(): void {
-    // better-sqlite3 statements don't need explicit finalization
+    // node:sqlite statements are finalized when they go out of scope.
   }
 }
 
 /**
- * Thin database wrapper for better-sqlite3.
- * Provides a WasmDb-compatible interface for local-store.ts and schema.ts.
+ * Thin database wrapper providing a WasmDb-compatible interface.
  */
 class WasmDbImpl {
-  readonly #db: Database.Database;
+  readonly #db: DatabaseSync;
 
-  constructor(db: Database.Database) {
+  constructor(db: DatabaseSync) {
     this.#db = db;
   }
 
@@ -107,21 +114,19 @@ class WasmDbImpl {
       return;
     }
     // Object form — run as query and return row objects
-    const stmt = this.#db.prepare(sqlOrOpts.sql);
-    return stmt.all() as unknown[];
+    const rows = this.#db.prepare(sqlOrOpts.sql).all() as Record<string, unknown>[];
+    return rows.map(plain);
   }
 
   prepare(sql: string): CompatStatement {
-    const stmt = this.#db.prepare(sql);
-    return new CompatStatement(stmt);
+    return new CompatStatement(this.#db.prepare(sql));
   }
 
   /**
    * Execute a single-value query and return the first column of the first row.
    */
   selectValue(sql: string): unknown {
-    const stmt = this.#db.prepare(sql);
-    const row = stmt.get() as Record<string, unknown> | undefined;
+    const row = this.#db.prepare(sql).get() as Record<string, unknown> | undefined;
     if (row === undefined || row === null) return undefined;
     return Object.values(row)[0];
   }
@@ -134,17 +139,15 @@ class WasmDbImpl {
 export type WasmDb = WasmDbImpl;
 
 /**
- * Open a SQLite database file using better-sqlite3.
- * Creates the file if it doesn't exist.
- * Uses native SQLite bindings (better-sqlite3) for real filesystem access.
+ * Open a SQLite database file, creating it if it does not exist.
  */
 export async function openDb(path: string): Promise<WasmDb> {
-  const db = new Database(path);
-  db.pragma('journal_mode = WAL');
+  const db = new DatabaseSync(path);
+  db.exec('PRAGMA journal_mode = WAL');
   // Retry for up to 5s on SQLITE_BUSY instead of throwing immediately.
   // WAL mode allows concurrent readers but only one writer at a time — without
   // a busy timeout, two writers colliding (e.g. embed drain + ingest hook)
   // immediately throw "database is locked". 5s covers any realistic write burst.
-  db.pragma('busy_timeout = 5000');
+  db.exec('PRAGMA busy_timeout = 5000');
   return new WasmDbImpl(db);
 }

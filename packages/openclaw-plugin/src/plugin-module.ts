@@ -1,4 +1,4 @@
-import { LocalStore, embedQuery } from '@getplumb/core';
+import { LocalStore, embedQuery, normalizeContextualConfig, defaultQueuePath } from '@getplumb/core';
 export { LocalStore } from '@getplumb/core';
 import { homedir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -9,6 +9,12 @@ import { execSync } from 'node:child_process';
 import { createPreResponseHook } from './hooks/pre-response.js';
 import { startQueryServer, stopQueryServer } from './query-server.js';
 import { fireTelemetry } from './telemetry.js';
+import { createWikiTools } from './wiki-tools.js';
+import { createWikiInjectionHook } from './wiki-injection.js';
+import { appendToQueue, startWikiQueueWorker, stopWikiQueueWorker } from './wiki-queue-worker.js';
+import { registerActivationCleanup, registerProcessCleanup } from './lifecycle.js';
+import { acquireLifecycleOwnership } from './lifecycle-lease.js';
+import { sanitizeWikiTelemetryEvent } from './wiki-telemetry.js';
 
 /**
  * Ensure better-sqlite3 native binary is available.
@@ -271,12 +277,51 @@ export const plugin: OpenClawPluginDefinition = {
   kind: 'memory',
 
   activate(api: OpenClawPluginApi) {
-    // FIX 1: Shared cleanup state - accessible before async setup completes
+    // Activation-local cleanup state; process-global resources are acquired via lifecycle tokens.
     let store: LocalStore;
-    let queryServer: any;
+    const cleanupReleases: Array<() => Promise<void>> = [];
     const dbPath = (api.pluginConfig?.dbPath as string | undefined) ?? DEFAULT_DB_PATH;
     const userId = (api.pluginConfig?.userId as string | undefined) ?? 'default';
     const shadowMode = (api.pluginConfig?.shadowMode as boolean | undefined) ?? false;
+    const wikiMode = ((api.pluginConfig?.wikiMode as string | undefined) ?? 'v1') as 'v1' | 'v2' | 'v2-shadow';
+    const wikiRoot = (api.pluginConfig?.wikiRoot as string | undefined);
+    const wikiDbPath = (api.pluginConfig?.wikiDbPath as string | undefined);
+    const wikiInjectionTelemetry = (api.pluginConfig?.wikiInjectionTelemetry as boolean | undefined) ?? false;
+    const contextualRetrieval = normalizeContextualConfig(api.pluginConfig?.contextualRetrieval);
+    const effectiveWikiRoot = wikiRoot ?? join(homedir(), '.plumb', 'wiki');
+    const effectiveWikiDbPath = wikiDbPath ?? join(homedir(), '.plumb', 'wiki.db');
+    const effectiveQueuePath = (api.pluginConfig?.wikiQueuePath as string | undefined) ?? defaultQueuePath();
+
+    // Hard version gate: api.registerTool is required for all Plumb agent tools.
+    // Fail before any async initialization so synchronously-registered wiki tools
+    // are either present immediately or activation fails clearly.
+    if (typeof api.registerTool !== 'function') {
+      throw new Error(
+        'Plumb requires OpenClaw 2026.3.7 or later (api.registerTool is not available). ' +
+        'Upgrade with: npm install -g openclaw@latest'
+      );
+    }
+
+    // Build wiki options (omit undefined values to satisfy exactOptionalPropertyTypes).
+    // These are intentionally constructed before async setup: E017 production
+    // integration requires wiki tools and the wiki before_prompt_build hook to be
+    // available synchronously during activate, even while LocalStore/query server
+    // setup continues in the background.
+    const wikiToolsOptions = {
+      ...(wikiRoot !== undefined && { wikiRoot }),
+      ...(wikiDbPath !== undefined && { wikiDbPath }),
+    };
+    const wikiInjectionOptions = {
+      ...wikiToolsOptions,
+      contextualRetrieval,
+      ...(wikiInjectionTelemetry && {
+        onTelemetry: (event: unknown) => {
+          const sanitized = sanitizeWikiTelemetryEvent(event);
+          api.logger.info(`[plumb:wiki:telemetry] ${JSON.stringify(sanitized)}`);
+        },
+      }),
+    };
+    const wikiFeaturesEnabled = wikiMode === 'v2' || wikiMode === 'v2-shadow';
 
     // Shared map: pre-response hook stores the user's query here so the post-exchange
     // hook can associate it with the LLM response during ingestion (Tier 2 / T-pendingPrompts)
@@ -296,9 +341,8 @@ export const plugin: OpenClawPluginDefinition = {
       }
       cleanupCalled = true;
       try {
-        if (queryServer) {
-          await stopQueryServer(queryServer);
-          api.logger.debug?.('[plumb] Query server stopped');
+        for (const release of cleanupReleases.splice(0).reverse()) {
+          await release();
         }
         await store.close();
         api.logger.debug?.('[plumb] Store closed');
@@ -311,22 +355,76 @@ export const plugin: OpenClawPluginDefinition = {
     // plugin-level teardown. session_end fires per-session (every time a chat session closes),
     // which is NOT the right place to close the DB — doing so caused "database connection is
     // not open" errors on plumb_remember after the first session ends. (Bug fixed 2026-03-10)
-    api.on('gateway_stop', cleanup);
+    const activationCleanupToken = registerActivationCleanup(cleanup);
+    api.on('gateway_stop', () => activationCleanupToken.release());
+    api.on('deactivate', () => activationCleanupToken.release());
 
-    // Process-level signal handlers (critical for SIGTERM/SIGINT when systemd stops service)
-    const signalHandler = () => {
-      api.logger.info('[plumb] Received shutdown signal, cleaning up...');
-      void cleanup();
-    };
-    process.on('SIGTERM', signalHandler);
-    process.on('SIGINT', signalHandler);
-    process.on('beforeExit', () => void cleanup());
+    // Register wiki tools and the wiki prompt hook synchronously, before any
+    // awaited sidecar/store setup. This matches the known-good terra.1 injector
+    // behavior and prevents OpenClaw from snapshotting the plugin before E017
+    // wiki capabilities are present.
+    if (wikiFeaturesEnabled) {
+      const wikiTools = createWikiTools(wikiToolsOptions);
+      for (const tool of wikiTools) {
+        api.registerTool(() => tool, { name: tool.name });
+      }
+      api.logger.info(`[plumb] Wiki tools registered (wikiMode=${wikiMode})`);
+
+      // Register the plumb_wiki_queue_edit tool — zero-latency wiki edit enqueuing.
+      api.registerTool(() => ({
+        name: 'plumb_wiki_queue_edit',
+        description:
+          'Queue a wiki edit request for async processing. ' +
+          'Immediately appends the fact to the wiki edit queue and returns — ' +
+          'no latency added to your response. The background worker integrates ' +
+          'the fact into the relevant wiki page(s) within 60 seconds.',
+        parameters: {
+          type: 'object',
+          properties: {
+            fact: {
+              type: 'string',
+              description:
+                'The fact or update to incorporate into the wiki, written in plain English. ' +
+                'Include enough context for the wiki writer to place it correctly ' +
+                '(e.g. "Jordan Lee left Northwind as of April 2026").',
+            },
+          },
+          required: ['fact'],
+        },
+        execute: async (_toolCallId: string, params: { fact: string }) => {
+          try {
+            await appendToQueue(params.fact, effectiveQueuePath);
+            return 'Edit queued';
+          } catch (err) {
+            return `Error queuing edit: ${err instanceof Error ? err.message : String(err)}`;
+          }
+        },
+      }), { name: 'plumb_wiki_queue_edit' });
+      api.logger.info('[plumb] plumb_wiki_queue_edit tool registered');
+
+      if (wikiMode === 'v2') {
+        // v2: wiki injection replaces V1 memory injection.
+        api.on(
+          'before_prompt_build',
+          createWikiInjectionHook({ ...wikiInjectionOptions, wikiMode: 'v2' }),
+        );
+        api.logger.info('[plumb] Wiki injection hook registered (v2 — replaces V1 memory injection)');
+      } else {
+        // v2-shadow: wiki injection runs in shadow (logs only); V1 memory
+        // injection is registered later once LocalStore is initialized.
+        api.on(
+          'before_prompt_build',
+          createWikiInjectionHook({ ...wikiInjectionOptions, wikiMode: 'v2-shadow' }),
+        );
+        api.logger.info('[plumb] Wiki shadow hook registered synchronously (v2-shadow)');
+      }
+    }
 
     // Now start async setup
     void (async () => {
     try {
     api.logger.info(
-      `[plumb] Activating with dbPath=${dbPath}, userId=${userId}, shadowMode=${shadowMode}`
+      `[plumb] Activating with dbPath=${dbPath}, userId=${userId}, shadowMode=${shadowMode}, wikiMode=${wikiMode}, contextualRetrieval=${contextualRetrieval.mode}`
     );
 
     // Ensure native SQLite binary is present (OpenClaw installs with --ignore-scripts,
@@ -340,37 +438,59 @@ export const plugin: OpenClawPluginDefinition = {
     store = await LocalStore.create(storeOptions);
     storeInitialized = true;
 
-    // Auto-seed from existing memory files on first activation (Gap 3)
-    void seedFromMemoryFiles(store, userId, api).catch((err) => {
-      api.logger.warn?.(`[plumb] Memory file seeding failed: ${err}`);
-    });
-
-    // Start the backlog processor (T-087: embed drain loop only)
-    store.startBacklogProcessor();
-    api.logger.debug?.('[plumb] Backlog processor started');
-
-    // Pre-warm the embedding pipeline in the background so the first
-    // before_prompt_build hook doesn't time out waiting for model load.
-    embedQuery('warm').catch(() => {
-      api.logger.debug?.('[plumb] Embedding pipeline warm-up skipped (model unavailable)');
-    });
-
-    // Start the query server (T-110)
     const queryPort = (api.pluginConfig?.queryPort as number | undefined) ??
                       Number(process.env.PLUMB_QUERY_PORT || '18791');
-    queryServer = startQueryServer(store, queryPort, api.logger);
+    const lifecycle = await acquireLifecycleOwnership({
+      queryHost: '127.0.0.1',
+      queryPort,
+      dbPath,
+      wikiDbPath: effectiveWikiDbPath,
+      wikiRoot: effectiveWikiRoot,
+      queuePath: effectiveQueuePath,
+      userId,
+      wikiMode,
+      contextualRetrieval,
+    }, api.logger);
+    cleanupReleases.push(() => lifecycle.release());
 
-    // Register the plumb_remember tool for agent-driven memory writes.
-    // Hard version gate: api.registerTool is required for plumb_remember / plumb_search.
-    // Without it, memories can never be written — the plugin is useless.
-    // Fail fast with a clear upgrade message rather than silently doing nothing.
-    if (typeof api.registerTool !== 'function') {
-      throw new Error(
-        'Plumb requires OpenClaw 2026.3.7 or later (api.registerTool is not available). ' +
-        'Upgrade with: npm install -g openclaw@latest'
-      );
+    const isLifecycleOwner = lifecycle.role === 'owner';
+    if (lifecycle.role === 'conflict' || lifecycle.role === 'degraded') {
+      api.logger.error(`[plumb] ${lifecycle.error ?? 'Lifecycle ownership unavailable'} Query tools remain registered but sidecar ownership is not duplicated.`);
     }
 
+    if (isLifecycleOwner) {
+      // Owner-only side effects. Follower activations keep local stores/tools/hooks,
+      // but never bind sockets or start background loops.
+      registerProcessCleanup(api.logger);
+
+      // Auto-seed from existing memory files on first activation (Gap 3)
+      void seedFromMemoryFiles(store, userId, api).catch((err) => {
+        api.logger.warn?.(`[plumb] Memory file seeding failed: ${err}`);
+      });
+
+      // Start the backlog processor (T-087: embed drain loop only)
+      store.startBacklogProcessor();
+      api.logger.debug?.('[plumb] Backlog processor started');
+
+      // Pre-warm the embedding pipeline in the background so the first
+      // before_prompt_build hook doesn't time out waiting for model load.
+      embedQuery('warm').catch(() => {
+        api.logger.debug?.('[plumb] Embedding pipeline warm-up skipped (model unavailable)');
+      });
+
+      const queryServer = startQueryServer(store, queryPort, api.logger, {
+        identityHash: lifecycle.identityHash,
+        ownerId: lifecycle.ownerId ?? 'unknown',
+        startedAt: new Date().toISOString(),
+        identity: lifecycle.identity,
+      });
+      cleanupReleases.push(() => stopQueryServer(queryServer));
+      api.logger.debug?.('[plumb] Query server acquired as lifecycle owner');
+    } else if (lifecycle.role === 'follower') {
+      api.logger.debug?.('[plumb] Query server owned by lifecycle owner; activation is follower');
+    }
+
+    // Register the plumb_remember tool for agent-driven memory writes.
     api.registerTool((toolCtx) => ({
       name: 'plumb_remember',
       description: 'Store a discrete fact or piece of information in Plumb memory. Use this whenever you learn something worth remembering across sessions — user preferences, decisions, important context. Write facts in plain English, one idea per call.',
@@ -379,7 +499,7 @@ export const plugin: OpenClawPluginDefinition = {
         properties: {
           fact: {
             type: 'string',
-            description: 'The fact or memory to store, written in plain English (e.g. "Clay prefers dark mode in all editors")'
+            description: 'The fact or memory to store, written in plain English (e.g. "the user prefers dark mode in all editors")'
           },
           confidence: {
             type: 'string',
@@ -422,7 +542,7 @@ export const plugin: OpenClawPluginDefinition = {
           return `Error storing memory: ${err instanceof Error ? err.message : String(err)}`;
         }
       }
-    }));
+    }), { name: 'plumb_remember' });
 
     // Register the plumb_search tool for mid-reasoning RAG lookups (T-116)
     api.registerTool(() => ({
@@ -487,11 +607,31 @@ export const plugin: OpenClawPluginDefinition = {
           return `Error querying Plumb memory: ${err instanceof Error ? err.message : String(err)}`;
         }
       }
-    }));
+    }), { name: 'plumb_search' });
 
-    // Register the before_prompt_build hook for memory injection
-    // Parameter order: (store, dbPath, shadowMode, pendingPrompts)
-    api.on('before_prompt_build', createPreResponseHook(store, dbPath, shadowMode, pendingPrompts));
+    if (wikiFeaturesEnabled && isLifecycleOwner) {
+      const wikiQueueWorker = startWikiQueueWorker({
+        wikiRoot: effectiveWikiRoot,
+        wikiDbPath: effectiveWikiDbPath,
+        queuePath: effectiveQueuePath,
+        logger: api.logger,
+      });
+      cleanupReleases.push(async () => { stopWikiQueueWorker(wikiQueueWorker); });
+      api.logger.info('[plumb] Wiki queue worker started by lifecycle owner');
+    } else if (wikiFeaturesEnabled) {
+      api.logger.info('[plumb] Wiki queue worker owned by lifecycle owner; activation is follower');
+    }
+
+    // Register the V1 memory before_prompt_build hook only after LocalStore is ready.
+    if (wikiMode === 'v2-shadow') {
+      // v2-shadow: V1 memory injection runs normally; wiki shadow injection was
+      // already registered synchronously above.
+      api.on('before_prompt_build', createPreResponseHook(store, dbPath, shadowMode, pendingPrompts));
+      api.logger.info('[plumb] V1 hook registered (v2-shadow)');
+    } else if (wikiMode !== 'v2') {
+      // v1 (default/fallback): memory injection only, no wiki
+      api.on('before_prompt_build', createPreResponseHook(store, dbPath, shadowMode, pendingPrompts));
+    }
 
     api.logger.info('[plumb] Plugin activated');
 

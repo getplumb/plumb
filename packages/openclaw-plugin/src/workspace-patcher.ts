@@ -17,7 +17,7 @@ export const AGENTS_MD_SECTION = `
 - \`[PLUMB MEMORY]\` block is injected automatically before each response — no manual file reads needed
 - Use \`plumb_remember("fact")\` to store new facts for future sessions (stored in ~/.plumb/memory.db)
 - Use \`plumb_search("query")\` for targeted mid-reasoning lookups
-- Write dated backup logs to memory/YYYY-MM-DD.md (human-readable logbook for Clay — NOT a retrieval source)
+- Write dated backup logs to memory/YYYY-MM-DD.md (human-readable logbook for the user — NOT a retrieval source)
 - Do NOT rewrite MEMORY.md as primary memory — Plumb owns retrieval; MEMORY.md is for hard invariants only
 `;
 

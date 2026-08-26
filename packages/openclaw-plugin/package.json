@@ -1,8 +1,8 @@
 {
-  "name": "@getplumb/plumb",
-  "version": "0.4.23",
-  "description": "Plumb OpenClaw plugin — auto-ingest and memory injection for OpenClaw",
-  "license": "MIT",
+  "name": "@getplumb/openclaw-plugin",
+  "version": "0.4.24-terra.1-e039",
+  "description": "Plumb OpenClaw plugin \u2014 auto-ingest and memory injection for OpenClaw",
+  "license": "Elastic-2.0",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -36,6 +36,7 @@
     "clean": "rm -rf dist *.tsbuildinfo"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.91.0",
     "better-sqlite3": "^12.6.2"
   },
   "devDependencies": {
@@ -46,5 +47,9 @@
     "openclaw": "^2026.3.2",
     "typescript": "^5.4.0",
     "vitest": "^4.0.18"
-  }
+  },
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "private": true
 }

@@ -1,13 +1,13 @@
 {
   "name": "@getplumb/core",
-  "version": "0.4.14",
-  "description": "Plumb memory engine — storage abstraction, types, and local SQLite driver",
-  "license": "MIT",
+  "version": "1.0.0",
+  "description": "Plumb memory engine \u2014 storage abstraction, types, and local SQLite driver",
+  "license": "Elastic-2.0",
   "author": "Clay Waters <hello@plumb.run>",
   "homepage": "https://plumb.run",
   "repository": {
     "type": "git",
-    "url": "https://github.com/getplumb/plumb",
+    "url": "git+https://github.com/getplumb/plumb.git",
     "directory": "packages/core"
   },
   "type": "module",
@@ -22,7 +22,7 @@
     "access": "public"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=22.5.0"
   },
   "exports": {
     ".": {
@@ -38,14 +38,10 @@
     "prepublishOnly": "pnpm build"
   },
   "devDependencies": {
+    "@types/node": "^25.3.3",
     "tsx": "^4.0.0",
     "typescript": "^5.4.0",
-    "@types/better-sqlite3": "^7.6.13",
     "vitest": "^4.0.18"
-  },
-  "dependencies": {
-    "openai": "^4.80.0",
-    "better-sqlite3": "^9.4.3"
   },
   "optionalDependencies": {
     "@anthropic-ai/sdk": "^0.78.0",

@@ -1,5 +1,4 @@
 packages:
   - "packages/*"
-  - "hosted/*"
   - "website"
   - "../plumb-benchmark"

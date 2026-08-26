@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "plumb": {
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/plumb-mcp.mjs"],
+      "env": {
+        "PLUMB_RUNTIME_DIR": "${CLAUDE_PLUGIN_DATA}",
+        "PLUMB_WIKI_SERVICE_URL": "${user_config.service_url}",
+        "WIKI_ROOT": "${user_config.wiki_root}",
+        "PLUMB_WIKI_IDLE_MINUTES": "${user_config.idle_timeout_minutes}"
+      }
+    }
+  }
+}

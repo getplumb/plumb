@@ -1,0 +1,21 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/scripts/plumb-hook.mjs",
+              "--runtime",
+              "${CLAUDE_PLUGIN_DATA}"
+            ],
+            "timeout": 10000,
+            "statusMessage": "Recalling from Plumb"
+          }
+        ]
+      }
+    ]
+  }
+}

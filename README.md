@@ -87,28 +87,36 @@ Restart your tool. Plumb will start ingesting conversations and providing memory
 
 ## Packages
 
-This is a monorepo. All packages under `packages/` are MIT licensed. Hosted infrastructure under `hosted/` is BSL 1.1.
+This is a monorepo. Every package under `packages/` is licensed under the
+[Elastic License 2.0](./LICENSE) — source-available, not OSI open source.
+
+The hosted infrastructure (`cloud-store`, `api-server`) is no longer in this
+repository — it moved to a private repo in August 2026. The OSS core never
+depended on it, so nothing here changed as a result.
 
 | Package | Description | License |
 |---|---|---|
-| [`@getplumb/core`](./packages/core) | MemoryStore interface, types, LocalStore, fact extraction, search | MIT |
-| [`@getplumb/mcp-server`](./packages/mcp-server) | Self-hostable MCP server (stdio) | MIT |
-| [`@getplumb/plumb`](./packages/openclaw-plugin) | OpenClaw agent plugin — auto-ingest + memory injection | MIT |
-| [`plumb-memory`](./packages/cli) | CLI tool — init, status, export, reprocess | MIT |
-| `@getplumb/cloud-store` (hosted) | Postgres/pgvector CloudStore driver | BSL 1.1 |
-| `@getplumb/api-server` (hosted) | Hosted MCP endpoint | BSL 1.1 |
+| [`@getplumb/core`](./packages/core) | MemoryStore interface, types, LocalStore, fact extraction, search | Elastic-2.0 |
+| [`@getplumb/mcp-server`](./packages/mcp-server) | Self-hostable MCP server (stdio) | Elastic-2.0 |
+| [`@getplumb/plumb`](./packages/openclaw-plugin) | OpenClaw agent plugin — auto-ingest + memory injection | Elastic-2.0 |
+| [`plumb-memory`](./packages/cli) | CLI tool — init, status, export, reprocess | Elastic-2.0 |
+
+Versions published before 1.0 were released under the MIT license and remain
+available under those terms. The relicense applies to 1.0 and later.
 
 ---
 
 ## Self-hosting
 
-All packages under `packages/` are MIT licensed — use them however you want. The default LocalStore uses SQLite and lives in `~/.plumb/` on your machine. No network calls, no telemetry.
+All packages under `packages/` are licensed under the Elastic License 2.0: you
+may use, copy, modify, and redistribute them freely, including commercially and
+internally. The one thing you may not do is offer them to third parties as a
+hosted or managed service. The default LocalStore uses SQLite and lives in
+`~/.plumb/` on your machine. No network calls, no telemetry.
 
-To run the hosted MCP endpoint yourself:
-1. Clone this repo
-2. Deploy `hosted/api-server` to Fly.io or any Node.js host
-3. Set up Postgres with pgvector (Supabase works well)
-4. Point your MCP config to your deployed endpoint
+To run an MCP server yourself, use [`@getplumb/mcp-server`](./packages/mcp-server),
+which speaks stdio. The managed hosted endpoint is a separate, closed-source
+product and is not buildable from this repository.
 
 ---
 
@@ -124,14 +132,22 @@ The Plumb OpenClaw plugin sends anonymous usage events to help us understand how
 
 ## License
 
-**packages/\*** is MIT — use it however you want.
+**Everything in this repository is licensed under the
+[Elastic License 2.0](./LICENSE)** (SPDX: `Elastic-2.0`), copyright Plumb LLC.
 
-**hosted/\*** (the cloud driver and API server) is BSL 1.1 — free for non-production use, commercial use requires a license. The OSS core never depends on the BSL code.
+ELv2 is *source-available*, not OSI open source. In practice: use it, run it,
+fork it, modify it, ship it inside your own products — commercially or not. You
+may not provide the software to third parties as a managed service, strip the
+license keys, or remove licensing notices.
 
-BSL 1.1 converts to MIT after 4 years.
+Releases before 1.0 were MIT and stay MIT; the relicense is not retroactive.
 
-- [`packages/core/LICENSE`](./packages/core/LICENSE) — MIT
-- [`hosted/LICENSE`](./hosted/LICENSE) — BSL 1.1
+The hosted cloud driver and API server were previously in `hosted/` under BSL
+1.1. They moved to a private repository in August 2026 and are no longer
+distributed here. Their prior contents remain in this repository's git history
+under the BSL terms that applied at the time.
+
+- [`LICENSE`](./LICENSE) — Elastic License 2.0, applied to every package
 
 ---
 

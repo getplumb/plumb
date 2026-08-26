@@ -58,9 +58,9 @@ Facts are written in two ways:
 The agent (or you) explicitly stores a fact. This is the primary write path.
 
 ```
-plumb_remember("Clay prefers pnpm over npm")
+plumb_remember("the user prefers pnpm over npm")
 plumb_remember("The deploy target is production-us-east-1")
-plumb_remember("Clay's timezone is America/Denver")
+plumb_remember("the user's timezone is America/Denver")
 ```
 
 **2. Session seeding at startup**
@@ -122,9 +122,9 @@ In OpenClaw, Plumb runs as a plugin and injects memory automatically before ever
 [PLUMB MEMORY]
 
 ## Remembered facts
-Clay prefers pnpm over npm (3 days ago)
+the user prefers pnpm over npm (3 days ago)
 Deploy target is production-us-east-1 (1 week ago)
-Clay's timezone is America/Denver (2 weeks ago)
+the user's timezone is America/Denver (2 weeks ago)
 
 [/PLUMB MEMORY]
 ```
@@ -138,7 +138,7 @@ The injection runs within an 800ms budget. If retrieval takes longer, the prompt
 The agent can also run retrieval on demand using `plumb_search`. This uses the same pipeline as auto-injection but lets the agent ask for specific context before acting on something:
 
 ```
-plumb_search("what package manager does Clay prefer?")
+plumb_search("what package manager does the user prefer?")
 plumb_search("deploy configuration for the API service")
 ```
 

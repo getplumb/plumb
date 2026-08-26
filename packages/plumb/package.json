@@ -1,0 +1,34 @@
+{
+  "name": "@getplumb/plumb",
+  "version": "1.0.0",
+  "description": "Plumb — durable memory for coding agents. A local markdown wiki with hybrid vector + keyword retrieval. This meta-package installs the retrieval engine and the indexer together.",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/getplumb/plumb.git",
+    "directory": "packages/plumb"
+  },
+  "homepage": "https://plumb.run",
+  "keywords": [
+    "memory",
+    "wiki",
+    "knowledge-base",
+    "retrieval",
+    "rag",
+    "local-first",
+    "claude-code",
+    "mcp"
+  ],
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "files": [
+    "README.md",
+    "LICENSE"
+  ],
+  "dependencies": {
+    "@getplumb/wiki-search-service": "workspace:*",
+    "@getplumb/wiki": "workspace:*"
+  },
+  "license": "Elastic-2.0"
+}

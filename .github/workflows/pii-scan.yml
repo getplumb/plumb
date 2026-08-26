@@ -37,32 +37,48 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Scan for known PII patterns
+        env:
+          # The pattern list lives in a repository secret, not in this file.
+          # Storing "block my home address" patterns in a public repo publishes
+          # the address in trivially readable form -- the scanner became the
+          # worst leak it was guarding against. Secret format: one regex per
+          # line. Never echoed; matches report a pattern INDEX, never its text.
+          PII_PATTERNS: ${{ secrets.PII_PATTERNS }}
         run: |
+          set -uo pipefail
+
+          if [ -z "${PII_PATTERNS:-}" ]; then
+            echo "::error::PII_PATTERNS secret is not set. Refusing to pass a scan that checked nothing."
+            echo "Add a repository secret named PII_PATTERNS: one regex per line."
+            exit 1
+          fi
+
+          printf '%s\n' "$PII_PATTERNS" > /tmp/pii-patterns.txt
+          COUNT=$(grep -cve '^[[:space:]]*$' /tmp/pii-patterns.txt || true)
+          echo "Loaded $COUNT pattern(s) from the secret."
+
           FAILED=0
-
-          # Patterns to block (add new ones here as needed)
-          PATTERNS=(
-            "claywaters391@gmail\.com"
-            "100\.117\.241\.51"
-            "/home/openclaw-host/"
-            "332.*[Cc]asper"
-            "[Cc]asper.*[Dd]rive.*[Ll]afayette"
-            "Lafayette.*CO.*80026"
-          )
-
-          for pattern in "${PATTERNS[@]}"; do
-            MATCHES=$(grep -rInP "$pattern" --include='*.ts' --include='*.tsx' --include='*.js' --include='*.json' --include='*.md' --include='*.mdx' --include='*.toml' --include='*.yaml' --include='*.yml' --include='*.txt' --include='*.html' . 2>/dev/null | grep -v 'node_modules/' | grep -v '.git/' | grep -v 'pii-scan.yml' || true)
+          INDEX=0
+          while IFS= read -r pattern; do
+            [ -z "$pattern" ] && continue
+            INDEX=$((INDEX + 1))
+            MATCHES=$(grep -rInP "$pattern" \
+              --include='*.ts' --include='*.tsx' --include='*.js' --include='*.mjs' --include='*.cjs' \
+              --include='*.json' --include='*.md' --include='*.mdx' --include='*.toml' \
+              --include='*.yaml' --include='*.yml' --include='*.txt' --include='*.html' \
+              --include='*.sh' --include='*.py' --include='*.service' \
+              . 2>/dev/null | grep -v 'node_modules/' | grep -v '\.git/' || true)
             if [ -n "$MATCHES" ]; then
-              echo "❌ Found PII pattern: $pattern"
-              echo "$MATCHES"
+              # File and line only. Printing the match would re-leak the value.
+              echo "::error::PII pattern #$INDEX matched:"
+              echo "$MATCHES" | cut -d: -f1,2 | sort -u
               FAILED=1
             fi
-          done
+          done < /tmp/pii-patterns.txt
+          rm -f /tmp/pii-patterns.txt
 
           if [ "$FAILED" -eq 1 ]; then
-            echo ""
-            echo "🚫 PII detected in tracked files. Remove before pushing."
+            echo "PII detected in tracked files. Remove before pushing."
             exit 1
-          else
-            echo "✅ No PII patterns found."
           fi
+          echo "No PII patterns found."

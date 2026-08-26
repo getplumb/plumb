@@ -19,3 +19,16 @@ c5c242283eeac975d7893746a3b308c36b74dc09:hosted/api-server/src/routes/auth.test.
 # Personal email used as example data in website component — removed in f84a5b1, historical only
 67893c626a1c5137e974a6979fa08d38f56c3548:website/src/components/Problem.tsx:personal-email:14
 67893c626a1c5137e974a6979fa08d38f56c3548:website/src/components/Problem.tsx:personal-email:33
+
+# fts5-query.test.ts feeds `user@example.com` to the FTS5 query parser as a
+# test fixture. It is the canonical example address, not anyone's mailbox.
+5cbf0fc2c443f43a371983c9ad59b468b601a733:packages/core/src/fts5-query.test.ts:personal-email:6
+5cbf0fc2c443f43a371983c9ad59b468b601a733:packages/core/src/fts5-query.test.ts:personal-email:25
+
+# Plugin manifests briefly carried the maintainer's personal address in commit
+# ac28f086; both now use hello@plumb.run, matching every package's author field.
+# The historical commit is whitelisted rather than rewritten because the same
+# address is already the git author of all 158 commits on the public main --
+# scrubbing two JSON files would hide nothing.
+ac28f08692f6a8e424cf8900939cc15fecf50b59:.claude-plugin/marketplace.json:personal-email:7
+ac28f08692f6a8e424cf8900939cc15fecf50b59:plugins/plumb/.claude-plugin/plugin.json:personal-email:9
