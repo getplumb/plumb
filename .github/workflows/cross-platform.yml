@@ -94,6 +94,12 @@ jobs:
       - name: Install deps
         run: pnpm install --frozen-lockfile
 
+      # Asserts the gate still covers exactly the publishable set. Narrowing a
+      # gate is how one quietly stops meaning anything, so the scope is checked
+      # rather than trusted.
+      - name: Check gate scope
+        run: node .github/scripts/check-gate-scope.mjs
+
       - name: Build all packages
         run: pnpm build:ci
 

@@ -5,9 +5,9 @@
   "description": "Cross-session AI memory \u2014 OSS core",
   "scripts": {
     "build": "turbo run build",
-    "build:ci": "turbo run build --filter='./packages/*'",
+    "build:ci": "turbo run build --filter=@getplumb/core --filter=@getplumb/wiki --filter=@getplumb/wiki-search-service --filter=@getplumb/wiki-worker --filter=@getplumb/plumb",
     "test": "turbo run test",
-    "test:ci": "turbo run test --filter='./packages/*' --concurrency=1",
+    "test:ci": "turbo run test --filter=@getplumb/core --filter=@getplumb/wiki --filter=@getplumb/wiki-search-service --filter=@getplumb/wiki-worker --filter=@getplumb/plumb --concurrency=1",
     "lint": "turbo run lint",
     "clean": "turbo run clean"
   },

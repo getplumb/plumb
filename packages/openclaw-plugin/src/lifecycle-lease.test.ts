@@ -176,6 +176,25 @@ describe('filesystem lifecycle lease', () => {
     expect([owner.role, follower.role]).toEqual(['owner', 'follower']);
   });
 
+  // KNOWN FAILURE, and left failing on purpose. This package is the retired
+  // OpenClaw runtime: private, never published, decommissioned 2026-08-13, and
+  // no longer in the CI gate. The test is correct and the code is wrong.
+  //
+  // acquireLifecycleOwnership() excludes with `mkdir(leasePath)`, which is
+  // atomic, but then writes lease.json as a SECOND step. A competitor arriving
+  // in that window gets EEXIST, reads a lease.json that does not exist yet, and
+  // freshUpdatedAt(null) returns false -- so it judges the lease stale, renames
+  // the winner's directory away, and becomes a second owner. Hence
+  // ['owner','owner'] instead of ['follower','owner'].
+  //
+  // The 100ms stagger below hides it on Linux, where the window is sub-
+  // millisecond. It reproduces on macOS CI runners, where tsx startup jitter
+  // widens the window past the stagger.
+  //
+  // The fix, if this code is ever revived: treat a lease directory with no
+  // lease.json as YOUNG rather than stale -- fall back to the directory's own
+  // mtime -- so a half-initialised lease cannot be reclaimed out from under its
+  // owner.
   it('two child processes competing for the same identity produce one owner and one follower with no EADDRINUSE', async () => {
     const { config, dir } = await baseConfig();
     const script = join(dir, 'lease-child.mjs');
