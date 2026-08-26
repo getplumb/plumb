@@ -207,7 +207,7 @@ Back up `~/.plumb/wiki.db` before any write. Follow the existing convention:
 - **The search service needs a rolling restart, never a hard stop.** Two SO_REUSEPORT
   instances share client port 18795, with admin/health ports 18801 and 18802. Verify over the
   tailnet URL rather than a localhost prefix.
-- **Do not touch `~/.plumb-holdout`** or any benchmark holdout/test split.
+- **Do not touch `the holdout corpus (path intentionally omitted)`** or any benchmark holdout/test split.
 - **Do not import the AIEWF corpus** into the wiki (§3).
 - Wiki writes normally go through the WaaS API (`packages/wiki/src/waas.ts`) rather than
   direct file writes. Respect that for any page content you create.
