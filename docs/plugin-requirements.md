@@ -1,6 +1,13 @@
 # Plumb Claude Code Plugin — Requirements
 
-**Status:** living document. Last updated 2026-08-25.
+**Status:** living document. Last updated 2026-08-26.
+
+**Where this stands right now:** branch `release/1.0.0-public`, 3 commits ahead
+of the public `main`, nothing pushed. Phases 0 and 2–6 are done; Phase 1 is
+prepared and awaiting a review. The `PII_PATTERNS` repository secret is set
+(2026-08-26), so the PII gate can run. Two known-untested things: no CI run has
+happened on any platform yet, and the Claude Code plugin has never been loaded
+in a live session.
 **Owner:** Clay Waters
 **Scope:** the Claude Code plugin that installs, configures, seeds, and removes
 Plumb. Not the retrieval engine itself, which is `packages/wiki-search-service`.
@@ -371,8 +378,15 @@ degraded to BM25, twice, during Phase 3.
 Branch `release/1.0.0`, local only, nothing pushed.
 
 - **Phase 0 — relicense.** MIT → Elastic License 2.0 across all packages. Done.
-- **Phase 1 — merge to `main`.** Not started. Also removes `hosted/` from the
-  public repo, a fix that has sat on a branch since 2026-08-21.
+- **Phase 1 — merge to `main`.** Prepared, not pushed. `release/1.0.0-public`
+  branches from `getplumb/main` and carries the whole release as **one squashed
+  commit** plus two follow-ups. Squashed rather than fast-forwarded because the
+  60-commit development history contains real people's names and host paths that
+  later commits removed — a fast-forward publishes every one of those states.
+  Verified: the squashed tree is byte-identical to the detailed branch, the
+  pushed commits contain zero gitleaks findings, and the commit removes
+  `hosted/` (16 files, 1,328 deletions) from the public repo. Full history is
+  preserved locally as `release/1.0.0-detailed`, which is never pushed.
 - **Phase 2 — reconcile the service** with what actually runs in production.
   Done. Verified by byte-parity against the live service: 40/40 search bodies and
   12/12 endpoint and error paths identical. The benchmark was deliberately *not*
