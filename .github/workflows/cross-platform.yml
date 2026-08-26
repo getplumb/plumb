@@ -76,10 +76,10 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build all packages
-        run: pnpm build
+        run: pnpm build:ci
 
       - name: Run unit tests
-        run: pnpm test
+        run: pnpm test:ci
         env:
           # Vitest needs this on Windows to avoid interactive TTY issues
           CI: true
@@ -149,19 +149,66 @@ jobs:
           npm init -y > /dev/null
           npm install --no-audit --no-fund "$RUNNER_TEMP"/tarballs/*.tgz
 
-      - name: Fail if a native module crept back in
+      # What "no build toolchain required" actually means here, and how it is
+      # tested, because two earlier versions of this step got it wrong.
+      #
+      # v1 failed if any .node file existed in the tree. That failed all seven
+      # jobs on onnxruntime-node and sharp, which ship PREBUILT N-API binaries
+      # precisely so nothing compiles -- and because it failed first, the
+      # retrieval smoke test below never ran once.
+      #
+      # v2 failed on any install/postinstall script. That would also have
+      # failed, on sharp's `node install/check.js || npm run build`: a fallback
+      # that compiles only when no prebuilt binary matches the platform. On
+      # every platform this matrix covers it never fires, so failing on it
+      # blocks the release for a condition that does not occur.
+      #
+      # So: hard-fail only on binding.gyp, which is unambiguous -- it is what
+      # better-sqlite3 had, and removing that dependency is the property worth
+      # defending. Install hooks are reported, not fatal. The real proof that
+      # no toolchain was needed is the next step: if the ONNX runtime had not
+      # loaded from a prebuilt binary, retrieval would fall back to BM25 and
+      # the smoke test asserts that it does not.
+      - name: Fail if anything in the install tree builds from source
         shell: bash
         run: |
           set -euo pipefail
-          # The engine is meant to need no compiler. A native dependency turns
-          # "install the plugin" into "have a working C++ toolchain", which is
-          # exactly what removing better-sqlite3 was for.
-          if find "$RUNNER_TEMP/plumb-smoke/node_modules" -name '*.node' -print -quit | grep -q .; then
-            echo "::error::A compiled native addon (.node) is present in the install tree."
-            find "$RUNNER_TEMP/plumb-smoke/node_modules" -name '*.node' | head -20
+          tree="$RUNNER_TEMP/plumb-smoke/node_modules"
+
+          gyps=$(find "$tree" -name 'binding.gyp' | head -20 || true)
+          if [ -n "$gyps" ]; then
+            echo "::error::binding.gyp found — this dependency compiles from source:"
+            echo "$gyps"
             exit 1
           fi
-          echo "No native addons — install needs no build toolchain."
+          echo "No binding.gyp anywhere in the install tree."
+
+          echo "Install hooks present (informational; fallbacks, not failures):"
+          node -e '
+            const {readdirSync, readFileSync, existsSync} = require("fs");
+            const {join} = require("path");
+            const out = [];
+            const visit = (dir, depth) => {
+              if (depth > 2 || !existsSync(dir)) return;
+              for (const e of readdirSync(dir, {withFileTypes: true})) {
+                if (!e.isDirectory()) continue;
+                const p = join(dir, e.name);
+                if (e.name.startsWith("@")) { visit(p, depth); continue; }
+                try {
+                  const pkg = JSON.parse(readFileSync(join(p, "package.json"), "utf8"));
+                  for (const h of ["preinstall", "install", "postinstall"]) {
+                    if (pkg.scripts?.[h]) out.push(`  ${pkg.name}: ${h} = ${pkg.scripts[h]}`);
+                  }
+                } catch {}
+                visit(join(p, "node_modules"), depth + 1);
+              }
+            };
+            visit(process.argv[1], 0);
+            console.log(out.length ? out.join("\n") : "  (none)");
+          ' "$tree"
+
+          echo "Prebuilt binaries present (expected — no compiler required):"
+          find "$tree" -name '*.node' | sed "s|$tree/||" | head -10
 
       - name: Index, serve, and search
         shell: bash
