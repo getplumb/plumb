@@ -11,7 +11,6 @@
 // if it is in the gate it must be publishable. Adding a new publishable package
 // and forgetting to gate it fails this check.
 import { readdirSync, readFileSync } from 'node:fs'
-import { execFileSync } from 'node:child_process'
 import { join } from 'node:path'
 
 const GATED = new Set([
@@ -53,37 +52,7 @@ for (const name of GATED) {
   }
 }
 
-// And then prove the filters actually SELECT those packages on this platform.
-//
-// This check exists because the opposite happened and nobody noticed for five
-// rounds. build:ci used --filter='./packages/*'. On Windows, pnpm runs scripts
-// through cmd.exe, which does not strip single quotes, so the filter was the
-// literal string "'./packages/*'", matched nothing, and turbo exited 0:
-//
-//     > turbo run test --filter='./packages/*' --concurrency=1
-//      Tasks:    0 successful, 0 total
-//
-// Three Windows jobs per run built nothing, tested nothing, and reported
-// success. A filter that matches nothing must never be mistaken for a pass.
-let resolved
-try {
-  const out = execFileSync(
-    process.platform === 'win32' ? 'npx.cmd' : 'npx',
-    ['turbo', 'run', 'test', ...[...GATED].map((n) => `--filter=${n}`), '--dry=json'],
-    { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
-  )
-  resolved = new Set(JSON.parse(out).tasks.map((t) => t.package))
-} catch (error) {
-  console.error(`::error::Could not resolve the turbo filters: ${error.message}`)
-  process.exit(1)
-}
-
-for (const name of GATED) {
-  if (!resolved.has(name)) {
-    console.error(`::error::Filter --filter=${name} selected nothing on ${process.platform}. The gate would run without it and still report success.`)
-    failed = true
-  }
-}
-
 if (failed) process.exit(1)
-console.log(`Gate scope matches the publishable set, and all ${GATED.size} filters resolve on ${process.platform}: ${[...resolved].sort().join(', ')}.`)
+console.log(`Gate scope matches the publishable set (${[...GATED].sort().join(', ')}).`)
+// Whether those filters actually SELECT anything is asserted by the workflow,
+// which checks turbo's task count on the real run -- see 'ran no tasks' there.

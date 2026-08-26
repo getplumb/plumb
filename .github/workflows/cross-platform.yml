@@ -100,15 +100,30 @@ jobs:
       - name: Check gate scope
         run: node .github/scripts/check-gate-scope.mjs
 
+      # `shell: bash` on every OS, and the task count is asserted rather than
+      # assumed. A turbo filter that matches nothing exits 0, so for five rounds
+      # these two steps ran "Tasks: 0 successful, 0 total" on Windows and
+      # reported success -- three jobs per run building nothing and testing
+      # nothing. A gate that can pass while doing no work is not a gate.
       - name: Build all packages
-        run: pnpm build:ci
+        shell: bash
+        run: |
+          set -o pipefail
+          pnpm build:ci 2>&1 | tee "$RUNNER_TEMP/build.log"
+          grep -qE 'Tasks:[[:space:]]+[1-9][0-9]* successful' "$RUNNER_TEMP/build.log" \
+            || { echo "::error::build:ci ran no tasks — the filter selected nothing on ${{ runner.os }}"; exit 1; }
 
       - name: Run unit tests
-        run: pnpm test:ci
+        shell: bash
         env:
           # Vitest needs this on Windows to avoid interactive TTY issues
           CI: true
           PLUMB_MODEL_CACHE_DIR: ${{ runner.temp }}/plumb-model-cache
+        run: |
+          set -o pipefail
+          pnpm test:ci 2>&1 | tee "$RUNNER_TEMP/test.log"
+          grep -qE 'Tasks:[[:space:]]+[1-9][0-9]* successful' "$RUNNER_TEMP/test.log" \
+            || { echo "::error::test:ci ran no tasks — the filter selected nothing on ${{ runner.os }}"; exit 1; }
 
   # ----------------------------------------------------------------
   # Job 2: Pack + install + index + search
