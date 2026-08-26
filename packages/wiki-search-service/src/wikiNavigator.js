@@ -70,6 +70,12 @@ const SEARCH_MODES = new Set(['standard', 'fast', 'fast-hybrid'])
 //      simply is not there after `npm i -g`.
 //   2. URL.pathname on Windows yields '/C:/Users/...', which is not a path any
 //      Windows API accepts, so the embedder child could never spawn.
+//
+// Note 2 was written here and then not applied to the three other places that
+// did the same thing -- the embedder child script path (twice) and SERVER_DIR.
+// So on Windows the child spawn failed, every query fell back to BM25, and the
+// only symptom was one warn line. All four now go through fileURLToPath. If you
+// are converting a file: URL to a path, there is no correct use of .pathname.
 // Both failures land in the same catch and demote every query to keyword-only
 // BM25 with one warn line -- the silent-degradation mode this file exists to
 // keep out of production.
@@ -641,7 +647,7 @@ function embedQueryInChildProcess(query) {
   // disabled vector search under the old per-query-worker design. A child process
   // loads it reliably and still returns all model memory to the OS on exit.
   const transformerEntry = TRANSFORMER_ENTRY
-  const script = new URL('./wikiEmbeddingChildProcess.js', import.meta.url).pathname
+  const script = fileURLToPath(new URL('./wikiEmbeddingChildProcess.js', import.meta.url))
   return new Promise((resolvePromise, rejectPromise) => {
     const child = spawn(process.execPath, [script, transformerEntry, DEFAULT_MODEL], {
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -771,7 +777,7 @@ function touchResidentEmbedderIdleTimer() {
 
 function startResidentEmbedder() {
   const transformerEntry = TRANSFORMER_ENTRY
-  const script = new URL('./wikiEmbeddingChildProcess.js', import.meta.url).pathname
+  const script = fileURLToPath(new URL('./wikiEmbeddingChildProcess.js', import.meta.url))
   const child = spawn(process.execPath, [script, transformerEntry, DEFAULT_MODEL], {
     stdio: ['pipe', 'pipe', 'pipe'],
   })
@@ -870,7 +876,7 @@ async function residentEmbedQuery(query) {
 //      while prod stays standard even though all environments share this source)
 //   3. server/wiki-search-mode.json (shared)
 // Missing or invalid config means 'standard'.
-const SERVER_DIR = dirname(new URL(import.meta.url).pathname)
+const SERVER_DIR = dirname(fileURLToPath(new URL(import.meta.url)))
 const CURRENT_ENV = process.env.TERRA_ENV
   || (process.env.PORT === '3002' ? 'dev' : process.env.PORT === '3001' ? 'beta' : 'prod')
 const SEARCH_MODE_FILES = [

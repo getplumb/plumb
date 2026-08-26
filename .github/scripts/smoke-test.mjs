@@ -136,25 +136,44 @@ async function main() {
     stdio: ['ignore', 'pipe', 'pipe'],
   })
   let serviceLog = ''
+  let spawnError = null
+  service.on('error', (e) => { spawnError = e })
   service.stdout.on('data', (d) => { serviceLog += d.toString() })
   service.stderr.on('data', (d) => { serviceLog += d.toString() })
 
   const base = `http://127.0.0.1:${port}`
   let health = null
+  let lastStatus = null
+  let lastBody = null
   for (let i = 0; i < 600 && !health; i += 1) {
     await sleep(250)
     if (service.exitCode !== null) break
     try {
       const r = await fetch(`${base}/health`)
+      lastStatus = r.status
       if (r.ok) {
         const body = await r.json()
+        lastBody = body
         if (body.ok && body.stats?.embedder?.resident) health = body
       }
-    } catch { /* not up yet */ }
+    } catch (e) { lastStatus = `no response (${e.cause?.code ?? e.code ?? e.message})` }
   }
 
   if (!health) {
-    fail(`service never became ready on ${base}\n${serviceLog.split('\n').slice(-12).join('\n')}`)
+    // Report enough to diagnose from a CI log alone. An earlier version printed
+    // the last 12 lines of the service log, which on a healthy-but-degraded
+    // service is 12 identical /health request lines and on a service that never
+    // started is nothing at all -- twice this hid the actual cause.
+    const events = serviceLog.split('\n').filter((l) => l && !l.includes('"route"'))
+    fail([
+      `service never became ready on ${base}`,
+      `  spawn error:    ${spawnError ? `${spawnError.code} ${spawnError.message}` : 'none'}`,
+      `  process:        exitCode=${service.exitCode} signal=${service.signalCode} pid=${service.pid}`,
+      `  last /health:   ${lastStatus}`,
+      `  last body:      ${lastBody ? JSON.stringify(lastBody) : '(never parsed a body)'}`,
+      `  service stderr/stdout (${events.length} non-request lines):`,
+      ...(events.length ? events.map((l) => `    ${l}`) : ['    (the service wrote nothing at all)']),
+    ].join('\n'))
     service.kill(); cleanup(work); process.exit(1)
   }
   pass(`service ready (mode ${health.stats.searchMode}, ${health.stats.chunkCount} chunks)`)
