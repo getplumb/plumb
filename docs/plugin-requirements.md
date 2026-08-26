@@ -2,12 +2,36 @@
 
 **Status:** living document. Last updated 2026-08-26.
 
-**Where this stands right now:** branch `release/1.0.0-public`, 3 commits ahead
-of the public `main`, nothing pushed. Phases 0 and 2–6 are done; Phase 1 is
-prepared and awaiting a review. The `PII_PATTERNS` repository secret is set
-(2026-08-26), so the PII gate can run. Two known-untested things: no CI run has
-happened on any platform yet, and the Claude Code plugin has never been loaded
-in a live session.
+**Where this stands right now:** branch `release/1.0.0-public` is **pushed** to
+`getplumb/plumb`. Nothing is published to npm. Phases 0–6 are done.
+
+CI is green for the first time — run 33010227837, **17/17** cross-platform jobs
+with no retries consumed, plus the PII & Secrets Scan. The matrix covers
+ubuntu/macOS/Windows across Node 22.16.0 (the floor), 22 and 24, and the
+install-smoke layer proves a packed-and-installed copy indexes, serves, and
+returns semantic hits in `hybrid-contextual-fast` mode rather than silently
+falling back to keyword-only.
+
+Reaching green took seven rounds and found four product bugs, each of which
+reduced retrieval to keyword-only while reporting success:
+
+| Bug | Who it affected |
+|---|---|
+| `engines.node >=22.5.0`, unusable below 22.16 | anyone on Node 22.5–22.15 |
+| cgroup guard compared usage against a fixed ceiling | every host without a memory-capped cgroup |
+| `URL.pathname` broke the embedder child spawn | every Windows user |
+| page ids carried OS path separators | every Windows user |
+
+Still unproven, listed rather than glossed:
+
+- Nothing in CI touches `plugins/`, and the plugin has never been loaded in a
+  live Claude Code session.
+- `plumb` and `wiki-worker` are never install-tested.
+- "Installs with no build toolchain" cannot be demonstrated on runners that all
+  have compilers.
+- Registry resolution across the five packages, and npm provenance, only exist
+  once something is published — which is what the `next` dist-tag release
+  candidate is for. See `docs/releasing.md`.
 **Owner:** Clay Waters
 **Scope:** the Claude Code plugin that installs, configures, seeds, and removes
 Plumb. Not the retrieval engine itself, which is `packages/wiki-search-service`.
