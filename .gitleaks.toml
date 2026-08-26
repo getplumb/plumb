@@ -1,0 +1,53 @@
+# gitleaks configuration.
+#
+# Extends the default ruleset with project-specific checks. Deliberately
+# committed, because an untracked config meant CI ran gitleaks with default
+# rules only while local runs were stricter -- so "gitleaks is clean" meant two
+# different things depending on where it was run.
+#
+# Note what is NOT here: patterns matching the maintainer's home address and
+# personal identifiers. Those would publish the very data they exist to block,
+# which is exactly the mistake pii-scan.yml used to make. They live in the
+# PII_PATTERNS repository secret and are enforced by the PII & Secrets Scan
+# workflow instead.
+# Every group in every rule below is non-capturing, and that is deliberate.
+# gitleaks treats the first capture group as "the secret", which is both what
+# --redact hides and what allowlists are tested against. With capturing groups,
+# `personal-email` redacted the DOMAIN and printed the local part into public CI
+# logs, `home-username-path` redacted the literal "home" and printed the real
+# username, and this file's placeholder allowlist never matched anything. Use
+# (?:...) unless you have set secretGroup and checked the output.
+title = "gitleaks config"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "personal-email"
+description = "A personal email address in tracked content"
+# Free-mail domains only. Project addresses (hello@plumb.run) are expected in
+# author fields and are not flagged.
+regex = '''[a-zA-Z0-9._%+-]+@(?:gmail|googlemail|yahoo|hotmail|outlook|icloud|proton(?:mail)?)\.[a-z.]{2,}'''
+tags = ["pii", "email"]
+
+# There is deliberately NO home-directory-path rule here. One existed and it
+# never worked: gitleaks' default global allowlist (inherited via useDefault)
+# discards any secret matching
+#
+#     ^/(?:bin|etc|home|opt|tmp|usr|var)/[\w ./-]+$
+#
+# which is exactly the shape such a rule matches. It appeared to fire only
+# because of a capture-group bug -- gitleaks treats the first capture group as
+# "the secret", so the secret was the literal string "home" rather than the
+# path, which dodged the allowlist and also made --redact hide "home" while
+# printing the real username into public CI logs. A local [allowlist] cannot
+# remove the default one; it only adds to it.
+#
+# The check now lives in pii-scan.yml as a plain grep, where nothing can
+# silently allowlist it away. Do not re-add it here.
+
+[[rules]]
+id = "private-network-address"
+description = "A hardcoded address on a private or tailnet range"
+regex = '''\b(?:100\.(?:6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.[0-9]{1,3}\.[0-9]{1,3}|192\.168\.[0-9]{1,3}\.[0-9]{1,3}|10\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})\b'''
+tags = ["pii", "network"]

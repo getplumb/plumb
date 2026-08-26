@@ -85,3 +85,35 @@ jobs:
             exit 1
           fi
           echo "No PII patterns found."
+
+      # This check lives here rather than in .gitleaks.toml because gitleaks
+      # cannot run it. Its default global allowlist discards any secret shaped
+      # like an absolute /home/... path, and a local allowlist can only add to
+      # that list, never remove from it. grep has no such machinery.
+      #
+      # The pattern names no machine and no person, so unlike PII_PATTERNS it is
+      # safe to keep in a public file. Matches still report file:line only --
+      # the matching text contains the username, which is the thing being
+      # protected.
+      - name: Scan for developer home-directory paths
+        run: |
+          set -uo pipefail
+
+          # GNU grep -P is PCRE, so a negative lookahead works here. Go's RE2,
+          # which gitleaks uses, has none -- another reason this check is grep's.
+          PATTERN='/(?:home|Users)/(?!user/|username/|youruser/|me/|example/|USERNAME/)[a-z][a-z0-9_-]{2,}/(?:\.plumb|\.openclaw|\.claude|plumb-services)\b'
+
+          MATCHES=$(grep -rInP "$PATTERN" \
+            --include='*.ts' --include='*.tsx' --include='*.js' --include='*.mjs' --include='*.cjs' \
+            --include='*.json' --include='*.md' --include='*.mdx' --include='*.toml' \
+            --include='*.yaml' --include='*.yml' --include='*.txt' --include='*.html' \
+            --include='*.sh' --include='*.py' --include='*.service' \
+            . | grep -v 'node_modules/' | grep -v '\.git/' || true)
+
+          if [ -n "$MATCHES" ]; then
+            echo "::error::Absolute paths under a developer home directory:"
+            echo "$MATCHES" | cut -d: -f1,2 | sort -u
+            echo "Use a placeholder such as /home/user/ or ~/ instead."
+            exit 1
+          fi
+          echo "No developer home-directory paths found."

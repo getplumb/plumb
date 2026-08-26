@@ -19,8 +19,11 @@ seed-extra-files.ts
 seed-dev.mjs
 seed-dev-full.mjs
 
-# Gitleaks config — contains PII patterns, never commit
-.gitleaks.toml
+# .gitleaks.toml IS committed, deliberately. It was ignored here back when it
+# held the maintainer's address patterns; those now live in the PII_PATTERNS
+# repository secret and the config carries no PII. Leaving it ignored meant CI
+# ran gitleaks with default rules only while local runs used the project rules,
+# so "gitleaks is clean" quietly meant two different things. Do not re-add it.
 
 # Internal planning docs — not for public repo
 docs/ideas/
