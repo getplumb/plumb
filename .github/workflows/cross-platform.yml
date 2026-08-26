@@ -56,10 +56,15 @@ jobs:
       fail-fast: false   # see all failures, not just the first
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-        # 22.5.0 is the exact floor (node:sqlite DatabaseSync); 22 and 24 are the
-        # live LTS lines. Testing the floor itself catches an accidental
-        # dependency on a later API.
-        node: ['22.5.0', '22', '24']
+        # 22.13.0 is the exact floor; 22 and 24 are the live LTS lines. Testing
+        # the floor itself catches an accidental dependency on a later API.
+        #
+        # It was 22.5.0 until CI actually ran it. node:sqlite's DatabaseSync
+        # landed in 22.5 but stayed behind --experimental-sqlite until 22.13, so
+        # on 22.5-22.12 `require("node:sqlite")` throws ERR_UNKNOWN_BUILTIN_MODULE
+        # and the search service cannot start at all. Every package declared
+        # >=22.5.0 and none of them worked there.
+        node: ['22.13.0', '22', '24']
 
     steps:
       - uses: actions/checkout@v4
@@ -102,7 +107,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-        node: ['22.5.0', '22', '24']
+        node: ['22.13.0', '22', '24']
         # Full OS coverage on the floor and on current; trim the middle line to
         # ubuntu to keep the matrix at 7 jobs rather than 9.
         exclude:
@@ -149,41 +154,40 @@ jobs:
           npm init -y > /dev/null
           npm install --no-audit --no-fund "$RUNNER_TEMP"/tarballs/*.tgz
 
-      # What "no build toolchain required" actually means here, and how it is
-      # tested, because two earlier versions of this step got it wrong.
+      # Three versions of this step failed before this one, each on a proxy
+      # that does not mean what it looked like it meant:
       #
-      # v1 failed if any .node file existed in the tree. That failed all seven
-      # jobs on onnxruntime-node and sharp, which ship PREBUILT N-API binaries
-      # precisely so nothing compiles -- and because it failed first, the
-      # retrieval smoke test below never ran once.
+      #   v1  no .node file anywhere      -> failed on onnxruntime-node and
+      #                                      sharp, which ship PREBUILT binaries
+      #                                      precisely so nothing compiles
+      #   v2  no install/postinstall      -> would fail on sharp's
+      #                                      `install/check.js || npm run build`,
+      #                                      a fallback that fires only when no
+      #                                      prebuilt binary matches
+      #   v3  no binding.gyp              -> failed: sharp ships binding.gyp too,
+      #                                      for that same fallback
       #
-      # v2 failed on any install/postinstall script. That would also have
-      # failed, on sharp's `node install/check.js || npm run build`: a fallback
-      # that compiles only when no prebuilt binary matches the platform. On
-      # every platform this matrix covers it never fires, so failing on it
-      # blocks the release for a condition that does not occur.
+      # There is no file whose presence proves a compiler ran. And these runners
+      # all HAVE compilers, so a green install here could never have proven the
+      # opposite either. Claiming it did was the actual bug.
       #
-      # So: hard-fail only on binding.gyp, which is unambiguous -- it is what
-      # better-sqlite3 had, and removing that dependency is the property worth
-      # defending. Install hooks are reported, not fatal. The real proof that
-      # no toolchain was needed is the next step: if the ONNX runtime had not
-      # loaded from a prebuilt binary, retrieval would fall back to BM25 and
-      # the smoke test asserts that it does not.
-      - name: Fail if anything in the install tree builds from source
+      # So this step reports and does not gate. The real evidence lives in the
+      # next step: the smoke test asserts retrieval is not BM25, which is only
+      # true if the ONNX runtime loaded a working native binary. If a compile
+      # had been required and failed, the install above would already have
+      # failed. What is left -- "would this install on a machine with no
+      # toolchain" -- needs a runner without one, which is a separate job worth
+      # adding rather than a claim worth faking.
+      - name: Report what the install tree would need to build
         shell: bash
         run: |
-          set -euo pipefail
+          set -uo pipefail
           tree="$RUNNER_TEMP/plumb-smoke/node_modules"
 
-          gyps=$(find "$tree" -name 'binding.gyp' | head -20 || true)
-          if [ -n "$gyps" ]; then
-            echo "::error::binding.gyp found — this dependency compiles from source:"
-            echo "$gyps"
-            exit 1
-          fi
-          echo "No binding.gyp anywhere in the install tree."
+          echo "binding.gyp (source-build capable):"
+          find "$tree" -name 'binding.gyp' | sed "s|$tree/||" | head -10 || true
 
-          echo "Install hooks present (informational; fallbacks, not failures):"
+          echo "Install hooks:"
           node -e '
             const {readdirSync, readFileSync, existsSync} = require("fs");
             const {join} = require("path");
@@ -207,8 +211,8 @@ jobs:
             console.log(out.length ? out.join("\n") : "  (none)");
           ' "$tree"
 
-          echo "Prebuilt binaries present (expected — no compiler required):"
-          find "$tree" -name '*.node' | sed "s|$tree/||" | head -10
+          echo "Prebuilt binaries shipped:"
+          find "$tree" -name '*.node' | sed "s|$tree/||" | head -10 || true
 
       - name: Index, serve, and search
         shell: bash

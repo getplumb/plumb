@@ -171,7 +171,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          # Must stay at or above the engines floor (>=22.5): the wiki index is
+          # Must stay at or above the engines floor (>=22.13): the wiki index is
           # read through node:sqlite, which does not exist below it.
           node-version: '22'
           cache: 'pnpm'

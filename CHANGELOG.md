@@ -48,8 +48,10 @@ keyword-only says so instead of quietly returning worse results.
 ### Changed
 
 - **Licence: MIT → Elastic License 2.0.** Source-available, not OSI open source.
-- **Node floor raised to 22.5.** The index is read through the built-in
-  `node:sqlite` module, which does not exist below it.
+- **Node floor raised to 22.13.** The index is read through the built-in
+  `node:sqlite` module. `DatabaseSync` landed in 22.5, but stayed behind
+  `--experimental-sqlite` until 22.13 — on 22.5–22.12 `require("node:sqlite")`
+  throws `ERR_UNKNOWN_BUILTIN_MODULE` and the search service cannot start.
 - Removed an unused `openai` dependency from `@getplumb/core`.
 - **`@getplumb/core` no longer uses `better-sqlite3`.** Its SQLite wrapper now
   uses the runtime's built-in `node:sqlite`, so `@getplumb/core` has no runtime

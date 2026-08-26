@@ -13,7 +13,8 @@
  * Node 22. `node:sqlite` needs neither, and the retrieval service has been
  * reading this same database through it in production for weeks.
  *
- * Requires Node >=22.5, which is already the floor for every package here.
+ * Requires Node >=22.13, which is already the floor for every package here.
+ * (node:sqlite exists from 22.5 but is flag-gated until 22.13.)
  *
  * Exposes the same WasmDb-compatible interface as before, so local-store.ts and
  * schema.ts require no changes:

@@ -42,7 +42,7 @@ Set **Idle shutdown** to `0` in the plugin settings to keep it resident.
 
 ## Requirements
 
-- Node 22.5 or newer (`node:sqlite` is what reads the index)
+- Node 22.13 or newer (`node:sqlite` is what reads the index; it is flag-gated before 22.13)
 - About 300 MB of disk, most of it the ONNX runtime that runs the embedding
   model locally
 - No compiler and no build tools: there are no native dependencies
