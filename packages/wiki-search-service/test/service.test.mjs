@@ -7,9 +7,10 @@
 // memory guard, so every spawned service gets an explicit high guard override;
 // without it the guard silently degrades searches to BM25-only and the hybrid
 // parity assertions would be testing the wrong path.
-import { test, before, after } from 'node:test'
+import { test as nodeTest, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import { get as httpGet } from 'node:http'
 import { fileURLToPath } from 'node:url'
 
@@ -17,6 +18,19 @@ const SNAPSHOT = process.env.WIKI_TEST_SNAPSHOT
   || fileURLToPath(new URL('../../../../plumb-benchmark/real-wiki/artifacts/v7-snapshot-20260807', import.meta.url))
 const TEST_DB = process.env.WIKI_TEST_DB || `${SNAPSHOT}/wiki.db`
 const TEST_ROOT = process.env.WIKI_TEST_ROOT || `${SNAPSHOT}/wiki`
+
+// The default fixture is a snapshot of a real wiki that lives in a separate
+// private repository, so a public CI runner will never have it. Skipping is the
+// honest outcome there -- better than inventing assertions that pass without
+// testing retrieval. The cross-platform workflow covers CI with a synthetic
+// corpus instead (see .github/scripts/smoke-test.mjs).
+const FIXTURE_PRESENT = existsSync(TEST_DB) && existsSync(TEST_ROOT)
+const SKIP = FIXTURE_PRESENT
+  ? false
+  : `benchmark fixture not present (set WIKI_TEST_DB / WIKI_TEST_ROOT, or WIKI_TEST_SNAPSHOT)`
+if (SKIP) console.error(`# SKIP ${SKIP}`)
+const test = (name, fn) => nodeTest(name, { skip: SKIP }, fn)
+
 const SERVER = new URL('../src/server.js', import.meta.url).pathname
 const HIGH_GUARD = String(64 * 1024 * 1024 * 1024)
 

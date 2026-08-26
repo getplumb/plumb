@@ -427,9 +427,39 @@ Branch `release/1.0.0`, local only, nothing pushed.
   the 0.4.x line. Both need npm auth, which returns 401 on this host; CI holds
   the token. Exact commands are in `docs/releasing.md`.
 
-- **Phase 5 — retarget `cross-platform.yml`** at the wiki stack so the manual
-  acceptance test becomes the CI gate. Node floor already raised to 22.5;
-  Windows/macOS/Linux all retained.
+- **Phase 5 — retarget `cross-platform.yml`.** Done. The workflow tested the
+  retired product: it packed `packages/openclaw-plugin` and smoke-tested
+  `memory.db`/LocalStore, so the new stack had never run on Windows or macOS at
+  all. Three jobs now:
+
+  1. **build-and-unit** — OS x Node matrix, unchanged in shape.
+  2. **install-smoke** — packs the published packages, installs them into a
+     clean directory the way a user would, then builds an index, starts the
+     service and runs real queries. Verified locally end to end: 4-page
+     synthetic corpus, gap 0, all three semantic queries returning the right
+     page at rank 1 in `hybrid-contextual-fast`. It also fails the build if any
+     `.node` addon appears in the install tree, which is the standing guarantee
+     that removing `better-sqlite3` bought.
+  3. **multi-instance** (Linux) — two instances behind one `SO_REUSEPORT`
+     socket, asserting that `/reindex` is *refused* on the shared port and
+     accepted on each admin port. Verified locally, including balancing across
+     both instances.
+
+  **The private-fixture problem is now explicit rather than hidden.** 21 of the
+  36 wiki-search-service tests need a snapshot of a real wiki that lives in a
+  separate private repo, which public CI will never have. They now skip with a
+  stated reason instead of failing: 36/36 pass where the fixture exists, 36
+  skipped and 0 failed where it does not. Retrieval coverage in CI comes from
+  the synthetic corpus in job 2 instead — inventing assertions that pass without
+  exercising retrieval would have been worse than skipping.
+
+  Two bugs found by running the new tests rather than reading them: the smoke
+  test's third query was ambiguous on a four-page corpus (sharpened, and the
+  rank assertion loosened to match what the test is actually for — install and
+  platform correctness, not retrieval quality), and the multi-instance test used
+  `fetch`, whose keep-alive pooling pinned every request to one instance, so it
+  reported success having exercised half the topology. It now forces a fresh
+  connection per request, as the existing service suite already did.
 - **Phase 6 — the plugin.** Built and verified end to end against packed
   tarballs. `plugins/plumb/` ships the manifest, `.mcp.json`, `hooks/hooks.json`,
   two entry-point shims, three tier-2 scripts, the `plumb-memory` skill, and the

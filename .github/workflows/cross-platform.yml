@@ -16,19 +16,24 @@ on:
 # -------------------------------------------------------------------
 # STRATEGY
 #
-# Three layers of testing, cheapest-to-run first:
+# Two layers, cheapest first.
 #
-# 1. build-and-unit  — build the monorepo + run vitest on every
-#    OS × Node combo. Catches: native addon (better-sqlite3) compile
-#    failures, path separator bugs, ESM/CJS issues.
+# 1. build-and-unit — build the monorepo and run the unit suites on every
+#    OS x Node combination. Catches path-separator bugs, ESM/CJS problems, and
+#    anything that fails to compile on a platform.
 #
-# 2. install-smoke   — `npm pack` the plugin, install it into a
-#    fresh temp dir, exercise plumb_remember + plumb_search directly
-#    (no openclaw process needed). Catches: postinstall failures,
-#    bundled dep issues, runtime import errors.
+#    Note what this layer CANNOT catch: the wiki-search-service suite skips
+#    itself here, because its fixture is a snapshot of a real wiki kept in a
+#    separate private repository. Skipping is the honest outcome -- inventing
+#    assertions that pass without exercising retrieval would be worse. Layer 2
+#    covers retrieval with a synthetic corpus instead.
 #
-# 3. (future) openclaw-e2e — full openclaw + plumb install flow.
-#    Needs a --headless/--ci openclaw flag. Marked TODO below.
+# 2. install-smoke — pack the published packages, install them into a clean
+#    directory the way a user would, then build an index, start the service and
+#    run real queries against it. This is the layer that matters for a release:
+#    it is the only place that proves an install works on a machine that is not
+#    the maintainer's, and the only place a silent degradation to keyword-only
+#    retrieval would be caught.
 # -------------------------------------------------------------------
 
 jobs:
@@ -51,7 +56,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - uses: pnpm/action-setup@v4
-        # version read from packageManager field in package.json (pnpm@10.30.3)
+        # version read from packageManager field in package.json
 
       - uses: actions/setup-node@v4
         with:
@@ -71,13 +76,12 @@ jobs:
           CI: true
 
   # ----------------------------------------------------------------
-  # Job 2: Pack + install smoke test
-  # Simulates what a real user does: npm install @getplumb/plumb
+  # Job 2: Pack + install + index + search
+  # Simulates what a real user does, end to end.
   # ----------------------------------------------------------------
   install-smoke:
     name: Install Smoke (${{ matrix.os }} / Node ${{ matrix.node }})
     runs-on: ${{ matrix.os }}
-    # Run on push to main, PRs, or manual trigger with flag set
     if: |
       github.event_name == 'push' ||
       github.event_name == 'pull_request' ||
@@ -99,51 +103,86 @@ jobs:
       - uses: actions/checkout@v4
 
       - uses: pnpm/action-setup@v4
-        # version read from packageManager field in package.json (pnpm@10.30.3)
 
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
           cache: 'pnpm'
 
-      - name: Install deps + build plugin
+      - name: Install deps + build
         run: |
           pnpm install --frozen-lockfile
           pnpm --filter @getplumb/core build
-          pnpm --filter @getplumb/plumb build
+          pnpm --filter @getplumb/wiki build
 
-      - name: Pack plugin tarball
-        shell: bash
-        working-directory: packages/openclaw-plugin
-        run: |
-          # pnpm pack (not npm pack) — rewrites workspace:* deps to real versions
-          pnpm pack
-          # Move tarball to a known location with a fixed name
-          mv getplumb-plumb-*.tgz $GITHUB_WORKSPACE/plumb-plugin.tgz
-
-      - name: Install into fresh directory (simulate real user install)
+      - name: Pack the published packages
         shell: bash
         run: |
-          mkdir -p /tmp/plumb-smoke-test
-          cd /tmp/plumb-smoke-test
-          npm init -y
-          # Install from the local pack (swap for @getplumb/plumb on real publish)
-          npm install $GITHUB_WORKSPACE/plumb-plugin.tgz
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/tarballs"
+          # pnpm pack, not npm pack: it rewrites workspace:* into real versions.
+          # npm would ship the literal range and every install would fail.
+          for pkg in core wiki wiki-search-service; do
+            (cd "packages/$pkg" && pnpm pack --pack-destination "$RUNNER_TEMP/tarballs")
+          done
+          ls -la "$RUNNER_TEMP/tarballs"
 
-      - name: Run smoke test
+      - name: Install into a clean directory, as a user would
         shell: bash
-        run: node $GITHUB_WORKSPACE/.github/scripts/smoke-test.mjs
+        run: |
+          set -euo pipefail
+          # RUNNER_TEMP rather than /tmp: /tmp is not a real path on Windows.
+          mkdir -p "$RUNNER_TEMP/plumb-smoke"
+          cd "$RUNNER_TEMP/plumb-smoke"
+          npm init -y > /dev/null
+          npm install --no-audit --no-fund "$RUNNER_TEMP"/tarballs/*.tgz
+
+      - name: Fail if a native module crept back in
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The engine is meant to need no compiler. A native dependency turns
+          # "install the plugin" into "have a working C++ toolchain", which is
+          # exactly what removing better-sqlite3 was for.
+          if find "$RUNNER_TEMP/plumb-smoke/node_modules" -name '*.node' -print -quit | grep -q .; then
+            echo "::error::A compiled native addon (.node) is present in the install tree."
+            find "$RUNNER_TEMP/plumb-smoke/node_modules" -name '*.node' | head -20
+            exit 1
+          fi
+          echo "No native addons — install needs no build toolchain."
+
+      - name: Index, serve, and search
+        shell: bash
         env:
-          PLUMB_SMOKE_DIR: /tmp/plumb-smoke-test
-          PLUMB_DB_PATH: /tmp/plumb-smoke-test/.plumb-test/memory.db
+          PLUMB_SMOKE_DIR: ${{ runner.temp }}/plumb-smoke
+        run: node "$GITHUB_WORKSPACE/.github/scripts/smoke-test.mjs"
 
   # ----------------------------------------------------------------
-  # Job 3: Full openclaw E2E (TODO)
-  # Needs validation that openclaw gateway run starts cleanly from
-  # a minimal seeded config and that `openclaw plugins install` works
-  # without a running gateway. Skipped for now — Jobs 1 & 2 cover
-  # build correctness and real-user install. Job 3 would catch plugin
-  # init crashes inside the gateway (e.g. Cannot read properties of
-  # undefined). Re-enable once the setup is locally verified.
+  # Job 3: Multi-instance topology (Linux only)
+  #
+  # SO_REUSEPORT load balancing is a Linux behaviour, and no default install
+  # exercises it -- which is how this code drifted untested before. It is opt-in
+  # via REUSE_PORT, so without a job here it would rot again.
   # ----------------------------------------------------------------
-  # openclaw-e2e: (disabled)
+  multi-instance:
+    name: Multi-instance (SO_REUSEPORT, Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install deps + build
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm --filter @getplumb/core build
+          pnpm --filter @getplumb/wiki build
+
+      - name: Two instances behind one port
+        shell: bash
+        env:
+          PLUMB_SMOKE_DIR: ${{ github.workspace }}
+        run: node "$GITHUB_WORKSPACE/.github/scripts/multi-instance-test.mjs"
