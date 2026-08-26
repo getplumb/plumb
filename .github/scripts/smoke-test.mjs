@@ -174,7 +174,7 @@ async function main() {
       `  service stderr/stdout (${events.length} non-request lines):`,
       ...(events.length ? events.map((l) => `    ${l}`) : ['    (the service wrote nothing at all)']),
     ].join('\n'))
-    service.kill(); cleanup(work); process.exit(1)
+    await stopService(service); cleanup(work); process.exit(1)
   }
   pass(`service ready (mode ${health.stats.searchMode}, ${health.stats.chunkCount} chunks)`)
 
@@ -207,11 +207,32 @@ async function main() {
     }
   }
 
-  service.kill('SIGTERM')
+  await stopService(service)
   cleanup(work)
 
   console.log(failures === 0 ? '\nSmoke test passed.' : `\nSmoke test failed: ${failures} problem(s).`)
   process.exit(failures === 0 ? 0 : 1)
+}
+
+// Shut the service down without tripping libuv on Windows.
+//
+// `service.kill()` immediately followed by process.exit() aborted the runner
+// with: Assertion failed: !(handle->flags & UV_HANDLE_CLOSING), src\win\async.c
+// -- the parent exiting while the killed child's stdio pipes were still closing.
+// That surfaced as exit code 127, which would have turned a PASSING run into a
+// failure. Detach the pipes first, then wait for the child to actually go.
+function stopService(child) {
+  return new Promise((resolve) => {
+    if (child.exitCode !== null || child.signalCode !== null) return resolve()
+    child.stdout?.removeAllListeners('data')
+    child.stderr?.removeAllListeners('data')
+    child.stdout?.destroy()
+    child.stderr?.destroy()
+    const done = () => { clearTimeout(timer); resolve() }
+    const timer = setTimeout(() => { try { child.kill('SIGKILL') } catch { /* gone */ } done() }, 5000)
+    child.once('exit', done)
+    try { child.kill('SIGTERM') } catch { done() }
+  })
 }
 
 function run(cmd, args, env) {

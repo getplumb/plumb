@@ -15,7 +15,7 @@
 import { createHash } from 'node:crypto';
 import { readFile, writeFile, readdir, unlink, stat } from 'node:fs/promises';
 import { mkdirSync } from 'node:fs';
-import { join, dirname, relative, extname } from 'node:path';
+import { join, dirname, relative, extname, sep } from 'node:path';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -474,7 +474,17 @@ async function walk(
 
   for (const entry of entries) {
     const absEntry = join(dir, entry);
-    const relEntry = relative(wikiRoot, absEntry);
+    // Wiki page ids are LOGICAL paths, not filesystem paths: they are what
+    // wikilinks reference, what the index stores, and what search returns. So
+    // they are POSIX-shaped on every platform. Only absEntry, used for the
+    // actual filesystem calls below, stays native.
+    //
+    // Without this, Windows produced 'concepts\page.md' and three things broke
+    // quietly: search returned ids no wikilink could match, and .plumbignore
+    // rules -- which are written with '/' -- matched nothing at all, so ignored
+    // folders were indexed anyway. wikiNavigator.js already normalised this way;
+    // this walk did not.
+    const relEntry = relative(wikiRoot, absEntry).split(sep).join('/');
 
     // Skip archive/ unless explicitly requested
     if (!includeArchive && relEntry === 'archive') continue;

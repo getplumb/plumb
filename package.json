@@ -7,7 +7,7 @@
     "build": "turbo run build",
     "build:ci": "turbo run build --filter='./packages/*'",
     "test": "turbo run test",
-    "test:ci": "turbo run test --filter='./packages/*'",
+    "test:ci": "turbo run test --filter='./packages/*' --concurrency=1",
     "lint": "turbo run lint",
     "clean": "turbo run clean"
   },

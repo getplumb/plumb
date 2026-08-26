@@ -217,11 +217,23 @@ jobs:
           echo "Prebuilt binaries shipped:"
           find "$tree" -name '*.node' | sed "s|$tree/||" | head -10 || true
 
+      # Indexing downloads the embedding model from HuggingFace at test time, so
+      # a transient network failure fails the whole gate: one run here died with
+      # "4 page(s) failed to embed" two seconds in, on a job that had passed
+      # minutes earlier. A gate that goes red at random gets ignored, which is
+      # worse than not having it. One retry: a real break still fails twice, and
+      # the retry is logged rather than silent.
       - name: Index, serve, and search
         shell: bash
         env:
           PLUMB_SMOKE_DIR: ${{ runner.temp }}/plumb-smoke
-        run: node "$GITHUB_WORKSPACE/.github/scripts/smoke-test.mjs"
+        run: |
+          set -uo pipefail
+          if node "$GITHUB_WORKSPACE/.github/scripts/smoke-test.mjs"; then
+            exit 0
+          fi
+          echo "::warning::Smoke test failed on the first attempt; retrying once in case the model download flaked."
+          node "$GITHUB_WORKSPACE/.github/scripts/smoke-test.mjs"
 
   # ----------------------------------------------------------------
   # Job 3: Multi-instance topology (Linux only)
