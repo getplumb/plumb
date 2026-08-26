@@ -4,6 +4,9 @@ on:
   push:
   pull_request:
     branches: [main, production]
+  # Callable so the publish workflow can require this scan as a gate
+  # rather than hoping it happened to be green on some earlier commit.
+  workflow_call:
 
 jobs:
   gitleaks:

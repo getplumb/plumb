@@ -10,6 +10,10 @@ on:
         description: 'Dry run (no actual publish)'
         type: boolean
         default: true
+      dist_tag:
+        description: 'Override the npm dist-tag (blank = derive from the version)'
+        type: string
+        default: ''
 
 # Only one publish at a time
 concurrency:
@@ -22,9 +26,142 @@ permissions:
   # this tarball was built by this workflow from this commit.
   id-token: write
 
+# -------------------------------------------------------------------
+# STRUCTURE
+#
+# Four jobs, and the ordering is the point.
+#
+#   plan      resolve WHAT is being published and WHERE it lands
+#   verify    the full cross-platform suite, as a hard gate
+#   security  gitleaks + the PII pattern scan, as a hard gate
+#   publish   only runs if all three succeeded
+#
+# Before this, a tag published regardless of whether the other workflows were
+# red -- they ran in parallel and nothing consumed their result. A publish is
+# irreversible after 72 hours, so the gate has to be a dependency, not a habit.
+# -------------------------------------------------------------------
+
 jobs:
+  # ----------------------------------------------------------------
+  # Job 1: Decide the version and the dist-tag, and refuse if they disagree
+  # ----------------------------------------------------------------
+  plan:
+    name: Resolve version and dist-tag
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      dist_tag: ${{ steps.resolve.outputs.dist_tag }}
+      prerelease: ${{ steps.resolve.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve
+        id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # The publishable set. Keep in step with the pack loop below.
+          PKGS="core wiki wiki-search-service wiki-worker plumb"
+
+          # Every publishable package ships in lockstep, so disagreement is a
+          # mistake rather than a choice. Catch it here: a split-version publish
+          # cannot be undone, and `plumb` depending on a `wiki` version that was
+          # never published is an install failure for everyone.
+          version=""
+          for pkg in $PKGS; do
+            v="$(node -p "require('./packages/$pkg/package.json').version")"
+            if [ -z "$version" ]; then version="$v"; fi
+            if [ "$v" != "$version" ]; then
+              echo "::error::Version mismatch: packages/$pkg is $v, expected $version"
+              exit 1
+            fi
+          done
+          echo "All publishable packages agree on $version"
+
+          # On a tag push the git tag is the declaration of intent. If it does
+          # not match package.json, one of the two is wrong and we do not get to
+          # guess which -- publishing 0.9.0 from a tag reading v1.0.0 produces a
+          # release nobody can find and a tag that points at nothing.
+          if [ "${GITHUB_REF_TYPE:-}" = "tag" ]; then
+            tag_version="${GITHUB_REF_NAME#v}"
+            if [ "$tag_version" != "$version" ]; then
+              echo "::error::Tag $GITHUB_REF_NAME implies $tag_version but the packages are at $version"
+              exit 1
+            fi
+          fi
+
+          # Dist-tag derivation.
+          #
+          # npm publish defaults to --tag latest for EVERY version, including
+          # semver prereleases. Publishing 1.0.0-rc.1 with no --tag therefore
+          # makes the release candidate the default install for every user --
+          # the precise opposite of what a release candidate is for. So the tag
+          # is derived, never defaulted:
+          #
+          #   1.0.0        -> latest   (the default install)
+          #   1.0.0-rc.1   -> next     (opt-in: npm install @getplumb/wiki@next)
+          #   1.0.0-beta.3 -> next
+          #
+          # Any hyphen means a prerelease under semver, so one rule covers rc,
+          # beta, alpha and anything else without a lookup table to forget.
+          override="${{ inputs.dist_tag }}"
+          case "$version" in
+            *-*) derived="next";  prerelease="true"  ;;
+            *)   derived="latest"; prerelease="false" ;;
+          esac
+          dist_tag="${override:-$derived}"
+
+          if [ -n "$override" ] && [ "$override" != "$derived" ]; then
+            echo "::warning::dist-tag overridden: $derived -> $override"
+          fi
+
+          echo "version=$version"       >> "$GITHUB_OUTPUT"
+          echo "dist_tag=$dist_tag"     >> "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### Publish plan"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Version | \`$version\` |"
+            echo "| npm dist-tag | \`$dist_tag\` |"
+            echo "| Prerelease | $prerelease |"
+            echo ""
+            if [ "$dist_tag" = "latest" ]; then
+              echo "This becomes the default install for everyone."
+            else
+              echo "Opt-in only: \`npm install @getplumb/wiki@$dist_tag\`. \`latest\` is untouched."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ----------------------------------------------------------------
+  # Job 2: The cross-platform suite, as a gate rather than a parallel hope
+  # ----------------------------------------------------------------
+  verify:
+    name: Verify
+    needs: plan
+    uses: ./.github/workflows/cross-platform.yml
+    with:
+      run_install_smoke: true
+    secrets: inherit
+
+  # ----------------------------------------------------------------
+  # Job 3: Secrets and PII, same deal. Needs `secrets: inherit` for PII_PATTERNS.
+  # ----------------------------------------------------------------
+  security:
+    name: Security
+    needs: plan
+    uses: ./.github/workflows/pii-scan.yml
+    secrets: inherit
+
+  # ----------------------------------------------------------------
+  # Job 4: Publish
+  # ----------------------------------------------------------------
   publish:
-    name: Build, Test & Publish
+    name: Build & Publish
+    needs: [plan, verify, security]
     runs-on: ubuntu-latest
 
     steps:
@@ -45,11 +182,6 @@ jobs:
 
       - name: Build all packages
         run: pnpm build
-
-      - name: Run tests
-        run: pnpm test
-        env:
-          CI: true
 
       # Two tools, because neither can do the whole job:
       #
@@ -100,7 +232,8 @@ jobs:
         run: |
           set -euo pipefail
           for tgz in dist-tarballs/*.tgz; do
-            npm publish "$tgz" --access public --provenance --dry-run
+            npm publish "$tgz" --access public --provenance \
+              --tag "${{ needs.plan.outputs.dist_tag }}" --dry-run
           done
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -112,14 +245,34 @@ jobs:
         run: |
           set -euo pipefail
           for tgz in dist-tarballs/*.tgz; do
-            npm publish "$tgz" --access public --provenance
+            npm publish "$tgz" --access public --provenance \
+              --tag "${{ needs.plan.outputs.dist_tag }}"
           done
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Summarise what landed
+        if: success()
+        run: |
+          {
+            echo "### Published \`${{ needs.plan.outputs.version }}\` to dist-tag \`${{ needs.plan.outputs.dist_tag }}\`"
+            echo ""
+            if [ "${{ needs.plan.outputs.dist_tag }}" != "latest" ]; then
+              echo "\`latest\` is unchanged. Promote with:"
+              echo ""
+              echo '```'
+              for pkg in @getplumb/core @getplumb/wiki @getplumb/wiki-search-service @getplumb/wiki-worker @getplumb/plumb; do
+                echo "npm dist-tag add \$pkg@${{ needs.plan.outputs.version }} latest"
+              done
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Create GitHub Release
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
+          # A prerelease tag must not show as the repository's current release.
+          prerelease: ${{ needs.plan.outputs.prerelease == 'true' }}
           files: dist-tarballs/*.tgz

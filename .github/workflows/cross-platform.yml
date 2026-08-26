@@ -12,6 +12,15 @@ on:
         description: 'Run full pack+install smoke test'
         type: boolean
         default: false
+  # Callable so publish.yml can require this suite as a hard gate. The default
+  # is true here, unlike workflow_dispatch: a release must never skip the only
+  # layer that proves an install works on a machine that is not the maintainer's.
+  workflow_call:
+    inputs:
+      run_install_smoke:
+        description: 'Run full pack+install smoke test'
+        type: boolean
+        default: true
 
 # -------------------------------------------------------------------
 # STRATEGY
@@ -82,10 +91,13 @@ jobs:
   install-smoke:
     name: Install Smoke (${{ matrix.os }} / Node ${{ matrix.node }})
     runs-on: ${{ matrix.os }}
+    # `inputs` resolves to the workflow_dispatch inputs on a manual run and to
+    # the workflow_call inputs when publish.yml invokes this suite; on a plain
+    # push or PR it is empty, which is why the event check comes first.
     if: |
       github.event_name == 'push' ||
       github.event_name == 'pull_request' ||
-      (github.event_name == 'workflow_dispatch' && inputs.run_install_smoke)
+      inputs.run_install_smoke
     strategy:
       fail-fast: false
       matrix:
