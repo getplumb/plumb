@@ -1,6 +1,6 @@
 {
   "name": "@getplumb/plumb",
-  "version": "1.0.0",
+  "version": "1.0.0-rc.1",
   "description": "Plumb \u2014 durable memory for coding agents. A local markdown wiki with hybrid vector + keyword retrieval. This meta-package installs the retrieval engine and the indexer together.",
   "type": "module",
   "repository": {

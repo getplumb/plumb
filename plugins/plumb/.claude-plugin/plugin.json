@@ -2,7 +2,7 @@
   "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
   "name": "plumb",
   "displayName": "Plumb",
-  "version": "1.0.0",
+  "version": "1.0.0-rc.1",
   "description": "A durable memory wiki for Claude Code. Plumb stores what you decide and why in a local markdown wiki, indexes it with hybrid vector + keyword retrieval, injects the relevant pages into every prompt automatically, and gives Claude tools to read, search, and update it. Runs entirely on your machine: no cloud, no account, no data leaving the host.",
   "author": {
     "name": "Clay Waters",
@@ -21,7 +21,9 @@
   ],
   "hooks": "./hooks/hooks.json",
   "mcpServers": "./.mcp.json",
-  "commands": ["./commands/"],
+  "commands": [
+    "./commands/"
+  ],
   "skills": "./skills/",
   "userConfig": {
     "wiki_root": {

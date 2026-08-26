@@ -10,7 +10,7 @@
     {
       "name": "plumb",
       "source": "./plugins/plumb",
-      "version": "1.0.0",
+      "version": "1.0.0-rc.1",
       "description": "Durable memory for Claude Code: a local markdown wiki with hybrid retrieval, automatic prompt injection, and tools to read and update it. Includes setup, diagnosis, seeding from memory you already have, and a real uninstall.",
       "category": "productivity",
       "homepage": "https://plumb.run"

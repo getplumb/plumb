@@ -1,6 +1,6 @@
 {
   "name": "@getplumb/wiki-search-service",
-  "version": "1.0.0",
+  "version": "1.0.0-rc.1",
   "type": "module",
   "description": "Local HTTP retrieval service for a Plumb wiki: hybrid vector + BM25 search over a wiki.db index, plus the MCP server that exposes it to agents.",
   "repository": {

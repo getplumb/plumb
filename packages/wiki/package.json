@@ -1,6 +1,6 @@
 {
   "name": "@getplumb/wiki",
-  "version": "1.0.0",
+  "version": "1.0.0-rc.1",
   "description": "Plumb wiki WaaS API \u2014 narrow read/write/query/links interface with frontmatter validation",
   "license": "Elastic-2.0",
   "author": "Clay Waters <hello@plumb.run>",

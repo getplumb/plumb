@@ -1,6 +1,6 @@
 {
   "name": "@getplumb/wiki-worker",
-  "version": "1.0.0",
+  "version": "1.0.0-rc.1",
   "description": "Plumb wiki queue worker \u2014 resolver\u2192patch\u2192applier pipeline replacing full-page prose rewrites",
   "license": "Elastic-2.0",
   "author": "Clay Waters <hello@plumb.run>",
