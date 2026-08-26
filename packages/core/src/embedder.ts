@@ -32,6 +32,14 @@ async function getEmbedPipeline(): Promise<Pipeline | null> {
       // @ts-ignore — @xenova/transformers has incomplete typings
       const { pipeline, env } = await import('@xenova/transformers');
       (env as { allowLocalModels: boolean }).allowLocalModels = true;
+      // Model cache location. Default (inside node_modules) is fine for users but
+      // useless in CI, where node_modules is rebuilt every job -- so every job
+      // re-downloaded the model and a HuggingFace hiccup failed the build. One
+      // run lost 20 tests to "embedding should complete within 30 seconds", and
+      // two jobs went green on a rerun with identical code.
+      if (process.env.PLUMB_MODEL_CACHE_DIR) {
+        (env as { cacheDir: string }).cacheDir = process.env.PLUMB_MODEL_CACHE_DIR;
+      }
       // Limit ONNX WASM to 1 thread so embedding doesn't peg all CPU cores.
       // Without this, Xenova spawns up to N worker threads (one per core),
       // making OpenClaw unusable during seeding or heavy ingest.

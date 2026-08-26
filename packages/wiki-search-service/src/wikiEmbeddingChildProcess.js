@@ -13,6 +13,9 @@ import { pathToFileURL } from 'node:url'
 const [transformerEntry, model] = process.argv.slice(2)
 const { pipeline, env } = await import(pathToFileURL(transformerEntry).href)
 env.allowLocalModels = true
+// See packages/core/src/embedder.ts: CI points this at a cached directory so
+// the model is not re-downloaded by every job.
+if (process.env.PLUMB_MODEL_CACHE_DIR) env.cacheDir = process.env.PLUMB_MODEL_CACHE_DIR
 env.backends.onnx.wasm.numThreads = 1
 const embeddingPipeline = await pipeline('feature-extraction', model)
 process.stdout.write(`${JSON.stringify({ ready: true })}\n`)

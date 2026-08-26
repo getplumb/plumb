@@ -2,14 +2,29 @@
   "$schema": "https://turbo.build/schema.json",
   "tasks": {
     "build": {
-      "dependsOn": ["^build"],
-      "outputs": ["dist/**"]
+      "dependsOn": [
+        "^build"
+      ],
+      "outputs": [
+        "dist/**"
+      ]
     },
     "test": {
-      "dependsOn": ["build"]
+      "dependsOn": [
+        "build"
+      ],
+      "passThroughEnv": [
+        "CI",
+        "PLUMB_MODEL_CACHE_DIR",
+        "WIKI_TEST_DB",
+        "WIKI_TEST_ROOT",
+        "WIKI_TEST_SNAPSHOT"
+      ]
     },
     "lint": {
-      "dependsOn": ["^lint"]
+      "dependsOn": [
+        "^lint"
+      ]
     },
     "clean": {
       "cache": false

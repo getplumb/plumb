@@ -17,7 +17,7 @@
 // The corpus is synthetic and lives here, so this runs anywhere.
 import { spawn } from 'node:child_process'
 import { createServer } from 'node:net'
-import { mkdirSync, mkdtempSync, writeFileSync, rmSync, existsSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, writeFileSync, rmSync, existsSync, openSync, closeSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -131,15 +131,24 @@ async function main() {
 
   // --- serve -----------------------------------------------------------------
   const port = await freePort()
+  // The service's output goes to a FILE, not a pipe, and that is load-bearing
+  // on Windows. With piped stdio, exiting while the killed child's pipes were
+  // still tearing down aborted the process:
+  //   Assertion failed: !(handle->flags & UV_HANDLE_CLOSING), src\win\async.c
+  // exit code 127 -- AFTER printing "Smoke test passed.". Windows passed every
+  // assertion and the gate reported failure. Detaching the pipe listeners first
+  // was not enough; the only reliable fix is to never create the pipes.
+  const logPath = join(work, 'service.log')
+  const logFd = openSync(logPath, 'a')
   const service = spawn(process.execPath, [SERVER], {
     env: { ...process.env, PORT: String(port), WIKI_DB_PATH: dbPath, WIKI_ROOT: wikiRoot },
-    stdio: ['ignore', 'pipe', 'pipe'],
+    stdio: ['ignore', logFd, logFd],
   })
-  let serviceLog = ''
   let spawnError = null
   service.on('error', (e) => { spawnError = e })
-  service.stdout.on('data', (d) => { serviceLog += d.toString() })
-  service.stderr.on('data', (d) => { serviceLog += d.toString() })
+  const readServiceLog = () => {
+    try { return readFileSync(logPath, 'utf8') } catch { return '' }
+  }
 
   const base = `http://127.0.0.1:${port}`
   let health = null
@@ -164,7 +173,7 @@ async function main() {
     // the last 12 lines of the service log, which on a healthy-but-degraded
     // service is 12 identical /health request lines and on a service that never
     // started is nothing at all -- twice this hid the actual cause.
-    const events = serviceLog.split('\n').filter((l) => l && !l.includes('"route"'))
+    const events = readServiceLog().split('\n').filter((l) => l && !l.includes('"route"'))
     fail([
       `service never became ready on ${base}`,
       `  spawn error:    ${spawnError ? `${spawnError.code} ${spawnError.message}` : 'none'}`,
@@ -174,7 +183,7 @@ async function main() {
       `  service stderr/stdout (${events.length} non-request lines):`,
       ...(events.length ? events.map((l) => `    ${l}`) : ['    (the service wrote nothing at all)']),
     ].join('\n'))
-    await stopService(service); cleanup(work); process.exit(1)
+    await stopService(service, logFd); cleanup(work); process.exitCode = 1; return
   }
   pass(`service ready (mode ${health.stats.searchMode}, ${health.stats.chunkCount} chunks)`)
 
@@ -207,11 +216,13 @@ async function main() {
     }
   }
 
-  await stopService(service)
+  await stopService(service, logFd)
   cleanup(work)
 
   console.log(failures === 0 ? '\nSmoke test passed.' : `\nSmoke test failed: ${failures} problem(s).`)
-  process.exit(failures === 0 ? 0 : 1)
+  // process.exitCode rather than process.exit(): see the stdio comment above.
+  // Forcing an immediate exit is what tripped the libuv assertion on Windows.
+  process.exitCode = failures === 0 ? 0 : 1
 }
 
 // Shut the service down without tripping libuv on Windows.
@@ -221,14 +232,15 @@ async function main() {
 // -- the parent exiting while the killed child's stdio pipes were still closing.
 // That surfaced as exit code 127, which would have turned a PASSING run into a
 // failure. Detach the pipes first, then wait for the child to actually go.
-function stopService(child) {
+function stopService(child, fd) {
   return new Promise((resolve) => {
-    if (child.exitCode !== null || child.signalCode !== null) return resolve()
+    const shut = () => { if (fd !== undefined) { try { closeSync(fd) } catch { /* already closed */ } } }
+    if (child.exitCode !== null || child.signalCode !== null) { shut(); return resolve() }
     child.stdout?.removeAllListeners('data')
     child.stderr?.removeAllListeners('data')
     child.stdout?.destroy()
     child.stderr?.destroy()
-    const done = () => { clearTimeout(timer); resolve() }
+    const done = () => { clearTimeout(timer); shut(); resolve() }
     const timer = setTimeout(() => { try { child.kill('SIGKILL') } catch { /* gone */ } done() }, 5000)
     child.once('exit', done)
     try { child.kill('SIGTERM') } catch { done() }
@@ -248,5 +260,15 @@ function run(cmd, args, env) {
 function cleanup(dir) {
   try { rmSync(dir, { recursive: true, force: true }) } catch { /* best effort */ }
 }
+
+// Safety net for dropping process.exit(). An unref'd timer cannot keep the
+// process alive, so this never delays a clean exit -- it only fires if some
+// stray handle would otherwise hang the job forever, which is worse than a
+// wrong answer because it burns the runner's whole timeout.
+const watchdog = setTimeout(() => {
+  console.error('FAIL  smoke test did not exit on its own within 60s of finishing')
+  process.exit(process.exitCode ?? 1)
+}, 60_000)
+watchdog.unref()
 
 await main()

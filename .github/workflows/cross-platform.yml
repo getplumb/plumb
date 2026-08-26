@@ -80,6 +80,17 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: 'pnpm'
 
+      # Every job used to re-download the embedding model from HuggingFace, so
+      # the gate's reliability depended on a third-party CDN being reachable 17
+      # times per run. It was not: one run lost 20 tests to "embedding should
+      # complete within 30 seconds", and two jobs went green on a rerun with no
+      # code change. Cached, the model is fetched once and reused.
+      - name: Cache the embedding model
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/plumb-model-cache
+          key: plumb-model-Xenova-bge-small-en-v1.5-${{ runner.os }}-v1
+
       - name: Install deps
         run: pnpm install --frozen-lockfile
 
@@ -91,6 +102,7 @@ jobs:
         env:
           # Vitest needs this on Windows to avoid interactive TTY issues
           CI: true
+          PLUMB_MODEL_CACHE_DIR: ${{ runner.temp }}/plumb-model-cache
 
   # ----------------------------------------------------------------
   # Job 2: Pack + install + index + search
@@ -128,6 +140,17 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
           cache: 'pnpm'
+
+      # Every job used to re-download the embedding model from HuggingFace, so
+      # the gate's reliability depended on a third-party CDN being reachable 17
+      # times per run. It was not: one run lost 20 tests to "embedding should
+      # complete within 30 seconds", and two jobs went green on a rerun with no
+      # code change. Cached, the model is fetched once and reused.
+      - name: Cache the embedding model
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/plumb-model-cache
+          key: plumb-model-Xenova-bge-small-en-v1.5-${{ runner.os }}-v1
 
       - name: Install deps + build
         run: |
@@ -227,6 +250,7 @@ jobs:
         shell: bash
         env:
           PLUMB_SMOKE_DIR: ${{ runner.temp }}/plumb-smoke
+          PLUMB_MODEL_CACHE_DIR: ${{ runner.temp }}/plumb-model-cache
         run: |
           set -uo pipefail
           if node "$GITHUB_WORKSPACE/.github/scripts/smoke-test.mjs"; then
@@ -253,6 +277,17 @@ jobs:
           node-version: '22'
           cache: 'pnpm'
 
+      # Every job used to re-download the embedding model from HuggingFace, so
+      # the gate's reliability depended on a third-party CDN being reachable 17
+      # times per run. It was not: one run lost 20 tests to "embedding should
+      # complete within 30 seconds", and two jobs went green on a rerun with no
+      # code change. Cached, the model is fetched once and reused.
+      - name: Cache the embedding model
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/plumb-model-cache
+          key: plumb-model-Xenova-bge-small-en-v1.5-${{ runner.os }}-v1
+
       - name: Install deps + build
         run: |
           pnpm install --frozen-lockfile
@@ -263,4 +298,5 @@ jobs:
         shell: bash
         env:
           PLUMB_SMOKE_DIR: ${{ github.workspace }}
+          PLUMB_MODEL_CACHE_DIR: ${{ runner.temp }}/plumb-model-cache
         run: node "$GITHUB_WORKSPACE/.github/scripts/multi-instance-test.mjs"
