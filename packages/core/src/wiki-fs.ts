@@ -579,8 +579,14 @@ export async function archivePage(wikiRoot: string, relPath: string): Promise<st
   // Set status to archived in frontmatter
   const archivedFm: WikiFrontmatter = { ...frontmatter, status: 'archived' };
 
-  // Destination: archive/<original-relative-path>
-  const archiveRelPath = join('archive', relPath);
+  // Destination: archive/<original-relative-path>.
+  //
+  // This is a LOGICAL wiki path -- it is returned to the caller, stored, and
+  // compared against wikilink targets -- so it is POSIX-shaped on every
+  // platform, same rule as listWikiPages(). join() would return
+  // 'archive\people\x.md' on Windows. archiveAbsPath below is a real
+  // filesystem path, so it correctly keeps using join().
+  const archiveRelPath = ['archive', ...relPath.split(/[\\/]/)].filter(Boolean).join('/');
   const archiveAbsPath = join(wikiRoot, archiveRelPath);
   mkdirSync(dirname(archiveAbsPath), { recursive: true });
 
