@@ -59,12 +59,15 @@ jobs:
         # 22.13.0 is the exact floor; 22 and 24 are the live LTS lines. Testing
         # the floor itself catches an accidental dependency on a later API.
         #
-        # It was 22.5.0 until CI actually ran it. node:sqlite's DatabaseSync
-        # landed in 22.5 but stayed behind --experimental-sqlite until 22.13, so
-        # on 22.5-22.12 `require("node:sqlite")` throws ERR_UNKNOWN_BUILTIN_MODULE
-        # and the search service cannot start at all. Every package declared
-        # >=22.5.0 and none of them worked there.
-        node: ['22.13.0', '22', '24']
+        # It was 22.5.0 until CI actually ran it, then 22.13.0 for one run. Both
+        # were wrong, and each was only found by pinning the floor and watching
+        # it fail. node:sqlite's DatabaseSync landed in 22.5 but stayed behind
+        # --experimental-sqlite until 22.13, and its bundled SQLite had no FTS5
+        # until 22.16. So on 22.5-22.12 `require("node:sqlite")` throws
+        # ERR_UNKNOWN_BUILTIN_MODULE and the service cannot start; on 22.13-22.15
+        # it starts and then dies with "no such module: fts5", because FTS5 is
+        # the BM25 half of hybrid retrieval. Verified against real binaries.
+        node: ['22.16.0', '22', '24']
 
     steps:
       - uses: actions/checkout@v4
@@ -107,7 +110,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-        node: ['22.13.0', '22', '24']
+        node: ['22.16.0', '22', '24']
         # Full OS coverage on the floor and on current; trim the middle line to
         # ubuntu to keep the matrix at 7 jobs rather than 9.
         exclude:

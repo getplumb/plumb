@@ -48,10 +48,12 @@ keyword-only says so instead of quietly returning worse results.
 ### Changed
 
 - **Licence: MIT → Elastic License 2.0.** Source-available, not OSI open source.
-- **Node floor raised to 22.13.** The index is read through the built-in
+- **Node floor raised to 22.16.** The index is read through the built-in
   `node:sqlite` module. `DatabaseSync` landed in 22.5, but stayed behind
-  `--experimental-sqlite` until 22.13 — on 22.5–22.12 `require("node:sqlite")`
-  throws `ERR_UNKNOWN_BUILTIN_MODULE` and the search service cannot start.
+  `--experimental-sqlite` until 22.13, and the bundled SQLite had no FTS5 until
+  22.16. On 22.5–22.12 `require("node:sqlite")` throws
+  `ERR_UNKNOWN_BUILTIN_MODULE`; on 22.13–22.15 the service starts and then fails
+  with `no such module: fts5`, FTS5 being the keyword half of hybrid retrieval.
 - Removed an unused `openai` dependency from `@getplumb/core`.
 - **`@getplumb/core` no longer uses `better-sqlite3`.** Its SQLite wrapper now
   uses the runtime's built-in `node:sqlite`, so `@getplumb/core` has no runtime

@@ -10,6 +10,22 @@ const DEFAULT_MODEL = 'Xenova/bge-small-en-v1.5'
 const EMBEDDING_DIMENSIONS = 384
 const RRF_K = 60
 const MAX_QUERY_LENGTH = 500
+// These ceilings only apply inside a memory-CAPPED cgroup. They were written for
+// one deployment shape -- this service alone in its own 1 GB cgroup -- where
+// memory.current is this service's own usage and loading the ~180 MB embedder on
+// top of an already-hot service can OOM the cgroup.
+//
+// They used to apply everywhere, and that made vector search dead on arrival for
+// every ordinary install. Outside a dedicated cgroup, /proc/self/cgroup resolves
+// to an ancestor covering the whole login session, so memory.current is the
+// machine's usage, not this process's. Measured on an idle Linux desktop:
+// 12,852 MB against a 450 MB ceiling, with memory.max reading "max" -- no limit
+// at all. Every query silently fell back to keyword-only BM25, which is the
+// exact failure the install smoke test was written to catch and did catch, once
+// it was finally allowed to run.
+//
+// The service test suites had papered over it by passing a 64 GB ceiling, so the
+// workaround lived in the tests while the bug shipped.
 const VECTOR_SEARCH_CGROUP_GUARD_BYTES = Number(process.env.WIKI_SEARCH_GUARD_BYTES) || 300 * 1024 * 1024
 // Fast mode holds the embedding model resident, so its guard must sit above the
 // model's own footprint or the guard would permanently disable the vectors it protects.
@@ -591,6 +607,9 @@ function contextualIndex(wikiDbPath) {
   return current
 }
 
+// Returns {current, max} for this process's cgroup, or null when there is no
+// cgroup v2 to read (macOS, Windows, cgroup v1). `max` is null when the cgroup
+// is unlimited -- the file reads the literal string "max".
 function currentCgroupMemory() {
   try {
     const cgroupPath = readFileSync('/proc/self/cgroup', 'utf8')
@@ -598,7 +617,18 @@ function currentCgroupMemory() {
       .find(line => line.startsWith('0::'))
       ?.slice(3)
     if (!cgroupPath) return null
-    return Number(readFileSync(join('/sys/fs/cgroup', cgroupPath, 'memory.current'), 'utf8').trim())
+    const base = join('/sys/fs/cgroup', cgroupPath)
+    const current = Number(readFileSync(join(base, 'memory.current'), 'utf8').trim())
+    if (!Number.isFinite(current)) return null
+    let max = null
+    try {
+      const raw = readFileSync(join(base, 'memory.max'), 'utf8').trim()
+      if (raw !== 'max') {
+        const parsed = Number(raw)
+        if (Number.isFinite(parsed)) max = parsed
+      }
+    } catch { /* no memory.max: treat as unlimited */ }
+    return { current, max }
   } catch {
     return null
   }
@@ -920,9 +950,14 @@ async function searchWikiUntracked(query, wikiDbPath, topK = 10) {
     try {
       const cgroupMemory = currentCgroupMemory()
       const guardBytes = fast ? FAST_VECTOR_SEARCH_CGROUP_GUARD_BYTES : VECTOR_SEARCH_CGROUP_GUARD_BYTES
-      if (cgroupMemory !== null && cgroupMemory > guardBytes) {
+      // The `max !== null` condition is the whole fix. See the constants above:
+      // comparing a cgroup's CURRENT USAGE against a fixed ceiling only means
+      // something when this service is what fills that cgroup, which is only
+      // true when the cgroup is memory-capped for it. Without a cap, this reads
+      // an ancestor cgroup covering the entire login session.
+      if (cgroupMemory !== null && cgroupMemory.max !== null && cgroupMemory.current > guardBytes) {
         if (fast) stopResidentEmbedder('cgroup memory guard')
-        throw new Error(`cgroup memory guard active at ${Math.round(cgroupMemory / 1024 / 1024)} MB`)
+        throw new Error(`cgroup memory guard active at ${Math.round(cgroupMemory.current / 1024 / 1024)} MB of a ${Math.round(cgroupMemory.max / 1024 / 1024)} MB cap`)
       }
       const queryVector = fast ? await residentEmbedQuery(cleanQuery) : await embedQuery(cleanQuery)
       vectorList = index.chunks.map(chunk => ({ id: chunk.id, distance: cosineDistance(queryVector, chunk.vector) }))

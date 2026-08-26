@@ -18,7 +18,7 @@ import { applyUserConfig, entryPoint, isInstalled, PACKAGE_NAME, runtimeDir } fr
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const INDEXER_PACKAGE = '@getplumb/wiki'
-const MIN_NODE = [22, 13, 0]
+const MIN_NODE = [22, 16, 0]
 
 const args = process.argv.slice(2)
 const flag = (name, fallback) => {
@@ -42,13 +42,14 @@ function finish(ok, summary) {
 
 // --- 1. Node version -------------------------------------------------------
 // node:sqlite's DatabaseSync landed in 22.5 but stayed behind
-// --experimental-sqlite until 22.13; on 22.5-22.12 `require("node:sqlite")`
-// throws ERR_UNKNOWN_BUILTIN_MODULE. 22.13 is the real floor. Below it the engine does not
+// --experimental-sqlite until 22.13, and its bundled SQLite had no FTS5 until 22.16. On 22.5-22.12
+// `require("node:sqlite")` throws ERR_UNKNOWN_BUILTIN_MODULE; on 22.13-22.15 the
+// BM25 half of hybrid search dies with "no such module: fts5". 22.16 is the real floor. Below it the engine does not
 // merely run slower, it cannot open the index at all.
 const current = process.versions.node.split('.').map(Number)
 const meetsFloor = current[0] > MIN_NODE[0] || (current[0] === MIN_NODE[0] && current[1] >= MIN_NODE[1])
-if (!record('node >= 22.13', meetsFloor, `found ${process.versions.node}`)) {
-  finish(false, `Node ${process.versions.node} is too old; Plumb needs 22.13 or newer for node:sqlite.`)
+if (!record('node >= 22.16', meetsFloor, `found ${process.versions.node}`)) {
+  finish(false, `Node ${process.versions.node} is too old; Plumb needs 22.16 or newer for node:sqlite with FTS5.`)
 }
 
 // --- 2. Install the engine -------------------------------------------------

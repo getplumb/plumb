@@ -26,8 +26,8 @@ const add = (check, status, detail, extra = {}) => {
 
 // --- environment -----------------------------------------------------------
 const nodeParts = process.versions.node.split('.').map(Number)
-const nodeOk = nodeParts[0] > 22 || (nodeParts[0] === 22 && nodeParts[1] >= 13)
-add('node', nodeOk ? 'ok' : 'fail', `${process.versions.node}${nodeOk ? '' : ' — below the 22.13 floor for node:sqlite'}`)
+const nodeOk = nodeParts[0] > 22 || (nodeParts[0] === 22 && nodeParts[1] >= 16)
+add('node', nodeOk ? 'ok' : 'fail', `${process.versions.node}${nodeOk ? '' : ' — below the 22.16 floor for node:sqlite with FTS5'}`)
 
 // --- engine ----------------------------------------------------------------
 const dir = runtimeDir()

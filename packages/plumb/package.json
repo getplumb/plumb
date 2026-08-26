@@ -20,7 +20,7 @@
     "mcp"
   ],
   "engines": {
-    "node": ">=22.13.0"
+    "node": ">=22.16.0"
   },
   "files": [
     "README.md",

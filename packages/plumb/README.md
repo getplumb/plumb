@@ -36,7 +36,7 @@ npx plumb-wiki-mcp                         # MCP server (stdio)
 npx plumb-wiki-hook --print-config         # hook wiring for settings.json
 ```
 
-Requires Node 22.13 or newer: the index is read through the built-in
+Requires Node 22.16 or newer: the index is read through the built-in
 `node:sqlite` module.
 
 ## Versioning note
