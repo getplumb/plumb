@@ -231,8 +231,15 @@ jobs:
         if: github.event_name == 'workflow_dispatch' && inputs.dry_run
         run: |
           set -euo pipefail
+          # "./$tgz", not "$tgz". A relative path containing a slash is read by
+          # npm as a GitHub owner/repo shorthand, not a file, so the bare form
+          # sent it looking for a git remote and the publish died on the first
+          # tarball:
+          #   npm error command git ls-remote
+          #     ssh://git@github.com/dist-tarballs/getplumb-core-1.0.0-rc.1.tgz.git
+          # Nothing published, so the failure was at least clean.
           for tgz in dist-tarballs/*.tgz; do
-            npm publish "$tgz" --access public --provenance \
+            npm publish "./$tgz" --access public --provenance \
               --tag "${{ needs.plan.outputs.dist_tag }}" --dry-run
           done
         env:
@@ -244,8 +251,15 @@ jobs:
           (github.event_name == 'workflow_dispatch' && !inputs.dry_run)
         run: |
           set -euo pipefail
+          # "./$tgz", not "$tgz". A relative path containing a slash is read by
+          # npm as a GitHub owner/repo shorthand, not a file, so the bare form
+          # sent it looking for a git remote and the publish died on the first
+          # tarball:
+          #   npm error command git ls-remote
+          #     ssh://git@github.com/dist-tarballs/getplumb-core-1.0.0-rc.1.tgz.git
+          # Nothing published, so the failure was at least clean.
           for tgz in dist-tarballs/*.tgz; do
-            npm publish "$tgz" --access public --provenance \
+            npm publish "./$tgz" --access public --provenance \
               --tag "${{ needs.plan.outputs.dist_tag }}"
           done
         env:
